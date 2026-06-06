@@ -2222,6 +2222,36 @@ async def v1_health_detailed():
 async def analytics_summary(days: int = 7):
     """Return analytics summary (matches Harness's analytics engine)."""
     return get_analytics_summary(days)
+=======
+# BROWSER-APP COMPATIBILITY ENDPOINTS
+# ===================================================================
+
+@app.get("/benchmark")
+async def benchmark():
+    """Simple system benchmark for the browser-app frontend."""
+    import time
+    start = time.time()
+    mem = psutil.virtual_memory()
+    return {
+        "cpu_percent": psutil.cpu_percent(interval=None),
+        "ram_used_gb": round(mem.used / (1024**3), 2),
+        "ram_total_gb": round(mem.total / (1024**3), 2),
+        "response_time_ms": round((time.time() - start) * 1000, 2),
+        "engine_version": "2.0.0",
+    }
+
+
+@app.get("/peers/tools")
+async def peers_tools():
+    """List tools available from peer nodes on the mesh."""
+    return {"tools": []}
+
+
+@app.get("/peers/tools/pull")
+async def peers_tools_pull(name: str):
+    """Pull a tool from a peer node on the mesh."""
+    return {"status": "not_found", "name": name,
+            "message": "No peers connected. Enable P2P discovery first."}
 
 
 # ===================================================================
