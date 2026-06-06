@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+.pytest_cache/
+
+# Conda environment
+searxng-env/
+
+# Node
+node_modules/
+browser-app/dist/
+browser-app/src-tauri/target/
+
+# Models & binaries
+models/
+*.tar.gz
+*.tar.bz2
+*.bin
+llama-b9496/
+
+# Logs
+*.log
+
+# System
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# OpenCode
+.omo/
+
+# Database files (generated at runtime)
+rag_data.db
+
+# Docker volumes
+valkey-data/
+
+# SearXNG config (contains local settings)
+searxng/
+searxng-config/
+searxng.log
+
+# Staged repo backup
+staged_repo/
+
+# Secrets (if any)
+*.key
+.env
