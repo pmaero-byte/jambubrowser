@@ -127,6 +127,33 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
         )
     """)
     
+    # Consensus engine tables (Phase 4: Federated Sovereign Mesh)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS proposals (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            description TEXT,
+            options_json TEXT NOT NULL DEFAULT '[]',
+            required_nodes INTEGER NOT NULL DEFAULT 3,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at REAL NOT NULL,
+            decided_at REAL,
+            winner TEXT
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS votes (
+            id TEXT PRIMARY KEY,
+            proposal_id TEXT NOT NULL,
+            node_id TEXT NOT NULL,
+            choice TEXT NOT NULL,
+            confidence REAL NOT NULL DEFAULT 1.0,
+            reasoning TEXT,
+            created_at REAL NOT NULL,
+            FOREIGN KEY (proposal_id) REFERENCES proposals(id),
+            UNIQUE(proposal_id, node_id)
+        )
+    """)
     # Browser session persistence table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS browser_sessions (

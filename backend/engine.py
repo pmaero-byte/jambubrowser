@@ -1834,6 +1834,71 @@ async def get_llm_config_info():
 
 
 # ===================================================================
+# PHASE 4 — Consensus Engine (Multi-Machine Decision Making)
+# ===================================================================
+
+from backend.modules.consensus_engine import ConsensusEngine
+_consensus = ConsensusEngine()
+
+
+class ConsensusProposeRequest(BaseModel):
+    title: str
+    description: str = ""
+    options: List[str] = ["Yes", "No"]
+    required_nodes: int = 3
+
+
+@app.post("/consensus/propose")
+async def consensus_propose(req: ConsensusProposeRequest):
+    """Create a new consensus proposal for multi-node decision making."""
+    return _consensus.create_proposal(req.title, req.description, req.options, req.required_nodes)
+
+
+@app.get("/consensus/list")
+async def consensus_list(status: Optional[str] = None):
+    """List all consensus proposals."""
+    return {"proposals": _consensus.list_proposals(status)}
+
+
+@app.get("/consensus/proposal/{proposal_id}")
+async def consensus_get(proposal_id: str):
+    """Get details of a specific proposal."""
+    return _consensus.get_proposal(proposal_id)
+
+
+class ConsensusVoteRequest(BaseModel):
+    proposal_id: str
+    node_id: str
+    choice: str
+    confidence: float = 1.0
+    reasoning: str = ""
+
+
+@app.post("/consensus/vote")
+async def consensus_vote(req: ConsensusVoteRequest):
+    """Cast a vote on a proposal."""
+    return _consensus.vote(req.proposal_id, req.node_id, req.choice, req.confidence, req.reasoning)
+
+
+@app.get("/consensus/tally/{proposal_id}")
+async def consensus_tally(proposal_id: str):
+    """Tally votes for a proposal."""
+    return _consensus.tally_votes(proposal_id)
+
+
+@app.get("/consensus/check/{proposal_id}")
+async def consensus_check(proposal_id: str):
+    """Check if consensus has been reached."""
+    return _consensus.check_consensus(proposal_id)
+
+
+@app.post("/consensus/close/{proposal_id}")
+async def consensus_close(proposal_id: str):
+    """Close a proposal and record the result."""
+    return _consensus.close_proposal(proposal_id)
+
+
+# ===================================================================
 # ENTRY POINT
 # ===================================================================
 
