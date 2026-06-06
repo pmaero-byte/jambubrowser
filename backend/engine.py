@@ -1899,6 +1899,66 @@ async def consensus_close(proposal_id: str):
 
 
 # ===================================================================
+# HARNESS BRIDGE - MULTI-AGENT ORCHESTRATION
+# ===================================================================
+
+@app.get("/harness/status")
+async def harness_status():
+    """Check Harness gateway availability and list connectors."""
+    from backend.modules.harness_bridge import get_harness_bridge
+    return await get_harness_bridge().get_status()
+
+
+@app.post("/harness/research")
+async def harness_research(query: str, use_swarm: bool = True, domain: str = "general"):
+    """Delegate research to Harness multi-agent swarm."""
+    from backend.modules.harness_bridge import get_harness_bridge
+    bridge = get_harness_bridge()
+    if not await bridge.is_available():
+        return {"status": "unavailable", "fallback": True,
+                "message": "Harness not running. Using built-in research engine."}
+    return await bridge.jambu_research(query, use_swarm, domain)
+
+
+@app.post("/harness/research/single")
+async def harness_research_single(query: str, connector: str = "hermes"):
+    """Delegate research to a single Harness connector."""
+    from backend.modules.harness_bridge import get_harness_bridge
+    return await get_harness_bridge().research_single(query, connector)
+
+
+@app.post("/harness/browse")
+async def harness_browse(url: str, action: str = "scrape",
+                          selector: str = None, value: str = None):
+    """Use Harness Playwright MCP for browser automation."""
+    from backend.modules.harness_bridge import get_harness_bridge
+    return await get_harness_bridge().browse(url, action, selector, value)
+
+
+@app.post("/harness/llm")
+async def harness_llm(prompt: str, model: str = "gemma4:12b",
+                       temperature: float = 0.7):
+    """Send LLM request through Harness bridge (local + cloud models)."""
+    from backend.modules.harness_bridge import get_harness_bridge
+    return await get_harness_bridge().llm_chat(prompt, model, temperature=temperature)
+
+
+@app.post("/harness/context/store")
+async def harness_store_context(key: str, value: str, tags: str = ""):
+    """Store context in Harness shared memory."""
+    from backend.modules.harness_bridge import get_harness_bridge
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+    return await get_harness_bridge().store_context(key, value, tag_list)
+
+
+@app.post("/harness/context/search")
+async def harness_search_context(query: str):
+    """Search Harness shared memory for relevant context."""
+    from backend.modules.harness_bridge import get_harness_bridge
+    return await get_harness_bridge().search_context(query)
+
+
+# ===================================================================
 # ENTRY POINT
 # ===================================================================
 

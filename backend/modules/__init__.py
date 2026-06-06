@@ -69,3 +69,6 @@ from backend.modules.youtube import (
 from backend.modules.model_manager import (
     ModelManager, ModelInfo, get_model_manager, GEMMA4_MODELS,
 )
+from backend.modules.harness_bridge import (
+    HarnessBridge, HarnessResult, get_harness_bridge,
+)
