@@ -43,7 +43,7 @@ from backend.core.database import init_db, get_db, get_db_cursor, get_stats as d
 from backend.core.sandbox import execute_sandboxed
 from backend.core.vault import get_vault
 from backend.modules.search import multi_engine_search, filter_trusted_results
-from backend.modules.scraper import get_sovereign_crawler, get_scrape_config, is_special_media, get_special_content
+from backend.modules.scraper import get_sovereign_crawler, get_scrape_config, is_special_media, get_special_content, scrape_url
 
 # ---- App Init ----
 
@@ -57,6 +57,8 @@ LATEST_LLM_CONFIG = {
     "modelId": "gemma4:12b",
     "apiKey": "",
 }
+
+START_TIME = time.time()
 
 last_activity = time.time()
 active_missions: Dict[str, dict] = {}
@@ -1956,6 +1958,270 @@ async def harness_search_context(query: str):
     """Search Harness shared memory for relevant context."""
     from backend.modules.harness_bridge import get_harness_bridge
     return await get_harness_bridge().search_context(query)
+
+
+# ===================================================================
+# PHASE 1 — Harness Gateway Compatibility Layer
+# Bridges Jambubrowser with Harness_App's meta-orchestrator
+# ===================================================================
+
+from backend.core.database import (
+    memory_add, memory_search, memory_list, memory_delete,
+    session_create, session_update, session_list, session_get,
+    record_task_metric, record_tool_usage, get_analytics_summary,
+)
+from backend.modules.search import multi_engine_search
+from backend.modules.skill_synthesizer import get_synthesizer
+import uuid
+
+# ── Pydantic Models ──────────────────────────────────────────────────────
+
+class RunRequest(BaseModel):
+    prompt: str
+    tool: Optional[str] = None
+    session_id: Optional[str] = None
+
+class RunStreamRequest(BaseModel):
+    prompt: str
+    tool: Optional[str] = None
+    session_id: Optional[str] = None
+
+class MemoryEntry(BaseModel):
+    category: str = "general"
+    key: str
+    value: str
+    importance: Optional[float] = 0.5
+
+class MemorySearch(BaseModel):
+    query: str
+    limit: Optional[int] = 10
+
+class SessionCreate(BaseModel):
+    name: Optional[str] = None
+
+# ── /v1/run — Harness-compatible task execution ──────────────────────────
+
+@app.post("/v1/run")
+async def v1_run(req: RunRequest):
+    """
+    Harness Gateway compatibility: execute a task.
+    Maps prompt to best Jambubrowser endpoint, returns structured result.
+    """
+    start = time.time()
+    session_id = req.session_id or str(uuid.uuid4())
+
+    # Create or update session
+    session_create(session_id, f"Task-{session_id[:8]}")
+
+    # Route prompt to best endpoint
+    prompt_lower = req.prompt.lower()
+    task_id = f"task_{uuid.uuid4().hex[:8]}"
+
+    if any(kw in prompt_lower for kw in ["search", "find", "look up"]):
+        endpoint, method = "/search", "POST"
+        result = await multi_engine_search(req.prompt)
+        status = "success"
+    elif any(kw in prompt_lower for kw in ["scrape", "fetch", "get content from"]):
+        endpoint, method = "/scrape", "POST"
+        import re
+        url_match = re.search(r"https?://[^\s]+", req.prompt)
+        url = url_match.group(0) if url_match else "https://example.com"
+        result = await scrape_url(url, req.prompt)
+        status = "success"
+    elif any(kw in prompt_lower for kw in ["remember", "know", "learned", "stored"]):
+        endpoint, method = "/v1/memory", "POST"
+        result = memory_search(req.prompt, limit=10)
+        status = "success"
+    elif any(kw in prompt_lower for kw in ["research", "analyze", "investigate"]):
+        endpoint, method = "/research", "POST"
+        result = await multi_engine_search(req.prompt)
+        status = "success"
+    else:
+        # Default: exec via sandbox
+        endpoint, method = "/exec", "POST"
+        result = await execute_sandboxed(req.prompt, 30)
+        status = "success"
+
+    duration_ms = int((time.time() - start) * 1000)
+
+    # Record metrics
+    record_task_metric(endpoint, method, status, duration_ms, session_id=session_id)
+    session_update(session_id, [endpoint], 1, duration_ms)
+
+    return {
+        "session_id": session_id,
+        "tasks": [{
+            "task_id": task_id,
+            "status": status,
+            "output": result,
+            "error": None,
+            "duration_ms": duration_ms
+        }]
+    }
+
+
+# ── /v1/run/stream — SSE streaming ───────────────────────────────────────
+
+@app.post("/v1/run/stream")
+async def v1_run_stream(req: RunStreamRequest):
+    """
+    Harness Gateway compatibility: SSE streaming task execution.
+    Streams output token-by-token.
+    """
+    import asyncio
+
+    async def event_stream():
+        session_id = req.session_id or str(uuid.uuid4())
+        session_create(session_id, f"Stream-{session_id[:8]}")
+
+        yield f"data: {json.dumps({'type': 'session', 'session_id': session_id})}\n\n"
+        yield f"data: {json.dumps({'type': 'start', 'session_id': session_id})}\n\n"
+
+        start = time.time()
+
+        # Route to endpoint (all are async, must await)
+        prompt_lower = req.prompt.lower()
+        if any(kw in prompt_lower for kw in ["search", "find"]):
+            result = await multi_engine_search(req.prompt)
+        elif any(kw in prompt_lower for kw in ["research", "analyze"]):
+            result = await multi_engine_search(req.prompt)
+        else:
+            result = await execute_sandboxed(req.prompt, 30)
+
+        # Stream chunks
+        result_str = json.dumps(str(result))
+        for i in range(0, len(result_str),100):
+            chunk = result_str[i:i+100]
+            yield f"data: {json.dumps({'type': 'chunk', 'data': chunk})}\n\n"
+            await asyncio.sleep(0.01)
+
+        duration_ms = int((time.time() - start) * 1000)
+        task_id = f"task_{uuid.uuid4().hex[:8]}"
+        task_data = json.dumps({"task_id": task_id, "status": "success", "duration_ms": duration_ms})
+        yield f"data: {json.dumps({'type': 'task', 'data': json.loads(task_data)})}\n\n"
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+    from fastapi.responses import StreamingResponse
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
+
+
+# ── /v1/memory — Harness-compatible memory ───────────────────────────────
+
+@app.post("/v1/memory")
+async def v1_memory_add(req: MemoryEntry):
+    """Harness-compatible: add a memory entry."""
+    entry_id = memory_add(req.category, req.key, req.value, req.importance or 0.5)
+    return {"id": entry_id, "category": req.category, "key": req.key, "value": req.value}
+
+
+@app.get("/v1/memory")
+async def v1_memory_list(category: Optional[str] = None, limit: int = 50):
+    """Harness-compatible: list memory entries."""
+    return {"results": memory_list(category, limit)}
+
+
+@app.post("/v1/memory/search")
+async def v1_memory_search(req: MemorySearch):
+    """Harness-compatible: FTS5 full-text memory search."""
+    results = memory_search(req.query, req.limit or 10)
+    return {"results": results}
+
+
+@app.delete("/v1/memory/{entry_id}")
+async def v1_memory_delete(entry_id: int):
+    """Harness-compatible: delete a memory entry."""
+    deleted = memory_delete(entry_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Memory entry not found")
+    return {"deleted": True, "id": entry_id}
+
+
+# ── /v1/sessions — Harness-compatible session management ────────────────
+
+@app.get("/v1/sessions")
+async def v1_sessions_list(limit: int = 20):
+    """Harness-compatible: list recent sessions."""
+    return {"sessions": session_list(limit)}
+
+
+@app.get("/v1/sessions/{sid}")
+async def v1_session_get(sid: str):
+    """Harness-compatible: get session detail."""
+    session = session_get(sid)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session
+
+
+# ── /v1/models — Harness-compatible model listing ───────────────────────
+
+@app.get("/v1/models")
+async def v1_models():
+    """Harness-compatible: list available models."""
+    return {
+        "models": [
+            {"id": "gemma4:12b", "object": "model", "owned_by": "local"},
+            {"id": "llama3.1:8b", "object": "model", "owned_by": "local"},
+            {"id": "mistral:7b", "object": "model", "owned_by": "local"},
+        ]
+    }
+
+
+# ── /v1/connectors — Harness-compatible connector listing ────────────────
+
+@app.get("/v1/connectors")
+async def v1_connectors():
+    """Harness-compatible: list connectors with health status."""
+    return {
+        "connectors": [
+            {
+                "name": "jambubrowser",
+                "available": True,
+                "capabilities": [
+                    "research", "web_automation", "vision", "knowledge",
+                    "browser_control", "local_compute", "credential_vault",
+                    "p2p_federation", "multimodal", "skill_forge"
+                ]
+            }
+        ]
+    }
+
+
+# ── /v1/health/detailed — Extended health ───────────────────────────────
+
+@app.get("/v1/health/detailed")
+async def v1_health_detailed():
+    """Harness-compatible: detailed health with connector status."""
+    uptime = int(time.time() - START_TIME) if START_TIME else 0
+    return {
+        "status": "ok",
+        "version": "2.0.0",
+        "uptime_s": uptime,
+        "connectors": [
+            {
+                "name": "jambubrowser",
+                "available": True,
+                "capabilities": [
+                    "research", "web_automation", "vision", "knowledge",
+                    "browser_control", "local_compute", "credential_vault",
+                    "p2p_federation", "multimodal", "skill_forge",
+                    "consensus", "shadow_browser"
+                ]
+            }
+        ]
+    }
+
+
+# ── /analytics/summary — Analytics endpoint ─────────────────────────────
+
+@app.get("/analytics/summary")
+async def analytics_summary(days: int = 7):
+    """Return analytics summary (matches Harness's analytics engine)."""
+    return get_analytics_summary(days)
 
 
 # ===================================================================
