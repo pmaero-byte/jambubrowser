@@ -66,3 +66,6 @@ from backend.modules.federated_rag import (
 from backend.modules.youtube import (
     YouTubeAnalyzer, YouTubeVideo, YouTubeTranscript, get_youtube_analyzer,
 )
+from backend.modules.model_manager import (
+    ModelManager, ModelInfo, get_model_manager, GEMMA4_MODELS,
+)

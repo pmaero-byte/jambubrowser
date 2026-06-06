@@ -53,8 +53,8 @@ SEARXNG_URL = os.environ.get("SEARXNG_URL", "http://localhost:8888/search")
 GLOBAL_VPN_PROXY = os.environ.get("AGENT_VPN_PROXY", None)
 
 LATEST_LLM_CONFIG = {
-    "baseUrl": "http://localhost:8080/v1",
-    "modelId": "gemma-4-12b",
+    "baseUrl": "http://localhost:11434/v1",
+    "modelId": "gemma4:12b",
     "apiKey": "",
 }
 
@@ -1744,6 +1744,92 @@ async def youtube_search_transcript(url: str, query: str):
         "query": query,
         "matches": len(results),
         "segments": [{"text": r.text, "start": r.start} for r in results[:10]],
+    }
+
+
+# ===================================================================
+# MODEL MANAGER - GEMMA 4 LOCAL INTELLIGENCE
+# ===================================================================
+
+@app.get("/models/available")
+async def list_available_models():
+    """List all available Gemma 4 models with specs."""
+    from backend.modules.model_manager import get_model_manager
+    return {"models": get_model_manager().get_available_models()}
+
+
+@app.get("/models/installed")
+async def list_installed_models():
+    """List all installed models across all providers."""
+    from backend.modules.model_manager import get_model_manager
+    manager = get_model_manager()
+    models = await manager.list_all_models()
+    return {
+        "models": [
+            {
+                "name": m.name, "family": m.family, "size": m.size,
+                "provider": m.provider, "status": m.status,
+                "modified_at": m.modified_at,
+            }
+            for m in models
+        ],
+    }
+
+
+@app.get("/models/status")
+async def model_status(model: str = None):
+    """Get status of a specific model or the default model."""
+    from backend.modules.model_manager import get_model_manager
+    manager = get_model_manager()
+    model_name = model or manager.get_default_model()
+    return await manager.get_model_status(model_name)
+
+
+@app.post("/models/pull")
+async def pull_model(model: str = None):
+    """Pull a Gemma 4 model via Ollama. Default: gemma4:12b."""
+    from backend.modules.model_manager import get_model_manager
+    manager = get_model_manager()
+    model_name = model or manager.get_default_model()
+    return await manager.pull_model(model_name)
+
+
+@app.get("/models/recommend")
+async def recommend_model():
+    """Get recommended Gemma 4 model based on available system RAM."""
+    from backend.modules.model_manager import get_model_manager
+    return await get_model_manager().recommend_model()
+
+
+@app.post("/models/setup")
+async def setup_gemma4(model_size: str = "12b"):
+    """One-click Gemma 4 setup: detects provider and pulls recommended model."""
+    from backend.modules.model_manager import get_model_manager
+    return await get_model_manager().setup_gemma4(model_size)
+
+
+@app.get("/models/providers")
+async def check_providers():
+    """Check which LLM providers are available (Ollama, llama.cpp)."""
+    from backend.modules.model_manager import get_model_manager
+    manager = get_model_manager()
+    return {
+        "ollama": await manager.is_ollama_running(),
+        "llamacpp": await manager.is_llamacpp_running(),
+        "recommended": "ollama",
+    }
+
+
+@app.get("/llm/config")
+async def get_llm_config_info():
+    """Get current LLM configuration with auto-detection."""
+    from backend.core.llm_config import get_llm_config
+    config = get_llm_config()
+    return {
+        "current": LATEST_LLM_CONFIG,
+        "provider": config.detect_provider(),
+        "default_model": "gemma4:12b",
+        "system_info": config.get_system_info(),
     }
 
 
