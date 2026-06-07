@@ -482,7 +482,14 @@ async def research(req: ResearchRequest):
         search_results = unique[:req.top_n]
 
         if not search_results:
-            return {"context": "", "sources": [], "doc_count": 0}
+            # Fall back to brain_only search when external search fails
+            brain_result = await _brain_only_research(req.query)
+            return {
+                "answer": brain_result.get("answer", "No results found. Try brain_only mode or start SearXNG."),
+                "context": brain_result.get("context", ""),
+                "sources": brain_result.get("sources", []),
+                "doc_count": brain_result.get("doc_count", 0),
+            }
 
         # Security screening
         safe_urls = []
