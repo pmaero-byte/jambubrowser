@@ -17,7 +17,13 @@ import {
   Cpu,
   Activity,
   Plus,
-  Trees
+  Trees,
+  Compass,
+  ArrowLeft,
+  ArrowRight,
+  RotateCw,
+  Search,
+  ExternalLink
 } from "lucide-react";
 import { localFetch } from "./utils/api";
 import { BrainGraph3D } from "./BrainGraph3D";
@@ -44,7 +50,7 @@ interface Artifact {
   title: string;
 }
 
-const MarkdownText = ({ content, sources }: { content: string, sources: string[] }) => {
+const MarkdownText = ({ content, sources, onNavigate }: { content: string, sources: string[], onNavigate?: (url: string) => void }) => {
   const parts = content.split(/(\[\d+\])/g);
   return (
     <div className="answer">
@@ -55,11 +61,11 @@ const MarkdownText = ({ content, sources }: { content: string, sources: string[]
           const url = sources[index] || "#";
           return (
             <span key={i} className="citation-wrapper">
-              <a href={url} target="_blank" rel="noreferrer" className="citation-tag">{part}</a>
+              <a href="#" onClick={(e) => { e.preventDefault(); if (onNavigate) onNavigate(url); }} className="citation-tag">{part}</a>
               <div className="citation-peek glass">
-                <div className="source-domain">{new URL(url).hostname}</div>
+                <div className="source-domain">{url.replace(/^https?:\/\//, '').split('/')[0]}</div>
                 <div className="source-url">{url}</div>
-                <div className="peek-hint">Click to visit source</div>
+                <div className="peek-hint">Click to navigate browser</div>
               </div>
             </span>
           );
@@ -71,7 +77,7 @@ const MarkdownText = ({ content, sources }: { content: string, sources: string[]
 };
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'chat' | 'stealth' | 'graph' | 'workspace' | 'toolbox'>('chat');
+  const [activeTab, setActiveTab] = useState<'browser' | 'chat' | 'stealth' | 'graph' | 'workspace' | 'toolbox'>('browser');
   const [theme, setTheme] = useState<'dark' | 'deep-blue'>('dark');
   const [showHistory, setShowHistory] = useState(false);
   const [historySearch, setHistorySearch] = useState("");
@@ -118,10 +124,25 @@ function App() {
 
   const [llmConfig] = useState({
     provider: "local",
-    baseUrl: "http://localhost:8080/v1",
-    modelId: "gemma-4-12b",
+    baseUrl: "http://localhost:11434/v1",
+    modelId: "gemma4:12b",
     apiKey: ""
   });
+
+  const [browserUrl, setBrowserUrl] = useState("https://en.wikipedia.org/wiki/Main_Page");
+  const [browserInput, setBrowserInput] = useState("");
+  const [browserTitle, setBrowserTitle] = useState("");
+
+  const navigateToUrl = (url: string) => {
+    const target = url.startsWith('http') ? url : `https://${url}`;
+    setBrowserUrl(target);
+    setBrowserInput(target);
+    setActiveTab('browser');
+  };
+  const handleBrowserSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    navigateToUrl(browserInput);
+  };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -370,6 +391,7 @@ function App() {
         </div>
 
         <div className="tabs">
+          <button className={activeTab === 'browser' ? 'active' : ''} onClick={() => setActiveTab('browser')}><Compass size={14}/> Browser</button>
           <button className={activeTab === 'chat' ? 'active' : ''} onClick={() => setActiveTab('chat')}><Zap size={14}/> Research</button>
           <button className={activeTab === 'graph' ? 'active' : ''} onClick={() => setActiveTab('graph')}><BrainCircuit size={14}/> Intelligence</button>
           <button className={activeTab === 'workspace' ? 'active' : ''} onClick={() => setActiveTab('workspace')}><Box size={14}/> Workspace</button>
@@ -429,7 +451,31 @@ function App() {
              {benchmark.duration > 0 && <span><Activity size={12}/> {benchmark.duration.toFixed(1)}s</span>}
           </div>
 
-          {activeTab === 'chat' ? (
+          {activeTab === 'browser' ? (
+            <div className="browser-view">
+              <form className="browser-urlbar glass" onSubmit={handleBrowserSubmit}>
+                <button type="button" className="browser-nav-btn" onClick={() => setBrowserUrl(browserUrl)}><ArrowLeft size={16}/></button>
+                <button type="button" className="browser-nav-btn" onClick={() => setBrowserUrl(browserUrl)}><ArrowRight size={16}/></button>
+                <button type="button" className="browser-nav-btn" onClick={() => setBrowserUrl(browserUrl + '')}><RotateCw size={16}/></button>
+                <Globe size={14} style={{opacity:0.5}}/>
+                <input 
+                  value={browserInput || browserUrl} 
+                  onChange={e => setBrowserInput(e.target.value)}
+                  onFocus={() => setBrowserInput(browserUrl)}
+                  placeholder="Enter URL or search..."
+                />
+                <button type="submit"><Search size={16}/></button>
+              </form>
+              <div className="browser-frame">
+                <iframe 
+                  src={browserUrl}
+                  title="Jambu Browser"
+                  sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+                  style={{ width: '100%', height: '100%', border: 'none', borderRadius: '12px' }}
+                />
+              </div>
+            </div>
+          ) : activeTab === 'chat' ? (
             <>
               <div className="chat-window" ref={scrollRef}>
                 {messages.length === 0 && (
@@ -463,12 +509,12 @@ function App() {
                           <ul>{msg.facts.map((f, fi) => <li key={fi} className="fact-item">{f} <button className="pin-btn" onClick={() => { setArtifacts(p => [...p, {id: Date.now().toString(), type: "text", content: f, title: "Fact"}]); addNotification("Pinned."); }}>📌</button></li>)}</ul>
                         </div>
                       )}
-                      <MarkdownText content={msg.content} sources={msg.sources || []} />
+                      <MarkdownText content={msg.content} sources={msg.sources || []} onNavigate={navigateToUrl} />
                       {msg.sources && msg.sources.length > 0 && (
                         <div className="source-grid">
                           {msg.sources.map((src, si) => (
-                            <a key={si} href={src} target="_blank" rel="noreferrer" className="source-card glass">
-                              <div className="source-domain">{new URL(src).hostname} <ArrowUpRight size={10}/></div>
+                            <a key={si} href="#" onClick={(e) => { e.preventDefault(); navigateToUrl(src); }} className="source-card glass">
+                              <div className="source-domain">{src.replace(/^https?:\/\//, '').split('/')[0]} <ArrowUpRight size={10}/></div>
                               <div className="source-url">{src}</div>
                             </a>
                           ))}
