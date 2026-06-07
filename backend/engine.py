@@ -2591,7 +2591,8 @@ async def execute_plugin_chain(req: PluginChainRequest):
         "total_steps": len(results),
         "all_success": all(r.success for r in results),
     }
-=======
+
+
 # GOAL ORCHESTRATOR — SOVEREIGN GOAL-DRIVEN AGENT
 # ===================================================================
 
