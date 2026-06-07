@@ -214,9 +214,9 @@ function App() {
   }, [agentClientId, currentTaskId]);
 
   const [llmConfig] = useState({
-    provider: "local",
+    provider: "ollama",
     baseUrl: "http://localhost:11434/v1",
-    modelId: "gemma4:12b",
+    modelId: "gemma4:12b-it-qat",
     apiKey: ""
   });
 

@@ -91,6 +91,8 @@ async def _call_llm(prompt: str, system: str | None = None, *, max_tokens: int =
     """Unified LLM call. Returns (answer_text, usage_dict). Provider-aware."""
     cfg = _resolve_llm_config({})
     provider = cfg.get("provider", "ollama")
+    if provider in ("local", "ollama"):
+        provider = "ollama"
     base_url = cfg.get("baseUrl", "http://localhost:11434/v1").rstrip("/")
     model_id = cfg.get("modelId", "gemma4:12b-it-qat")
     api_key = cfg.get("apiKey", "")
