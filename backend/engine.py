@@ -116,6 +116,7 @@ async def _call_llm(prompt: str, system: str | None = None, *, max_tokens: int =
             messages.append({"role": "user", "content": prompt})
             payload = {"model": model_id, "messages": messages, "temperature": temperature, "max_tokens": max_tokens}
 
+        print(f"[LLM] → {provider} {model_id} prompt_len={len(prompt)} url={url}")
         resp = await client.post(url, json=payload, headers=headers, timeout=timeout)
         if resp.status_code != 200:
             raise RuntimeError(f"LLM {provider} {resp.status_code}: {resp.text[:200]}")
@@ -128,7 +129,9 @@ async def _call_llm(prompt: str, system: str | None = None, *, max_tokens: int =
             text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
             usage = data.get("usage", {})
 
-        return _strip_think(text), usage
+        stripped = _strip_think(text)
+        print(f"[LLM] provider={provider} model={model_id} text_len={len(text)} stripped_len={len(stripped)} usage={usage}")
+        return stripped, usage
 
 START_TIME = time.time()
 
@@ -645,7 +648,7 @@ async def research(req: ResearchRequest):
     try:
         if req.llm_provider and req.llm_provider != "ollama":
             preset = CLOUD_PROVIDERS.get(req.llm_provider, {})
-            LATEST_LLM_CONFIG = {**LATEST_LLM_CONFIG, "provider": req.llm_provider, **preset, **(req.llm_config or {})}
+            LATEST_LLM_CONFIG = {**LATEST_LLM_CONFIG, "provider": req.llm_provider, **preset}
         else:
             LATEST_LLM_CONFIG = {**LATEST_LLM_CONFIG, **(req.llm_config or {})}
 
