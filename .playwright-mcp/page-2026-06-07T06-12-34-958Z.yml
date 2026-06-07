@@ -1,0 +1,54 @@
+- main [ref=e3]:
+  - generic [ref=e4]:
+    - heading "JambuAI Browser RC1" [level=1] [ref=e6]:
+      - img [ref=e7]
+      - text: JambuAI Browser RC1
+    - generic [ref=e10]:
+      - button "Research" [ref=e11] [cursor=pointer]:
+        - img [ref=e12]
+        - text: Research
+      - button "Intelligence" [ref=e14] [cursor=pointer]:
+        - img [ref=e15]
+        - text: Intelligence
+      - button "Workspace" [ref=e27] [cursor=pointer]:
+        - img [ref=e28]
+        - text: Workspace
+      - button "🧰 Toolbox" [ref=e31] [cursor=pointer]
+      - button "Stealth" [ref=e32] [cursor=pointer]:
+        - img [ref=e33]
+        - text: Stealth
+    - generic [ref=e35]:
+      - button "History" [ref=e36] [cursor=pointer]:
+        - img [ref=e37]
+        - text: History
+      - generic [ref=e41]:
+        - checkbox "🔥 FULL POWER" [ref=e42]
+        - text: 🔥 FULL POWER
+  - generic [ref=e44]:
+    - generic [ref=e45]:
+      - generic [ref=e46]:
+        - img [ref=e47]
+        - text: 0 nodes
+      - generic [ref=e59]:
+        - img [ref=e60]
+        - text: 0 tokens
+      - generic [ref=e62]:
+        - img [ref=e63]
+        - text: 0.0GB RAM
+    - generic [ref=e67]:
+      - img [ref=e68]
+      - heading "Sovereign Intelligence Active." [level=2] [ref=e71]
+      - paragraph [ref=e72]: Start a secure research mission with JambuAI.
+    - generic [ref=e73]:
+      - generic [ref=e74]:
+        - button "General" [ref=e75] [cursor=pointer]
+        - button "Academic" [ref=e76] [cursor=pointer]
+        - button "Coding" [ref=e77] [cursor=pointer]
+      - generic [ref=e78]:
+        - button [ref=e79] [cursor=pointer]:
+          - img [ref=e80]
+        - button [ref=e83] [cursor=pointer]:
+          - img [ref=e84]
+        - textbox "Send a command or search query..." [ref=e86]
+        - button [ref=e87] [cursor=pointer]:
+          - img [ref=e88]

@@ -58,7 +58,7 @@ class ObsidianConnector:
     - Reading notes by path/title
     """
 
-    DEFAULT_VAULT_PATH = Path.home() / "Documents" / "Obsidian"
+    DEFAULT_VAULT_PATH = Path(os.environ.get("JAMBU_OBSIDIAN_PATH", str(Path.home() / "Documents" / "Obsidian")))
 
     def __init__(self, vault_path: str = None):
         self.vault_path = Path(vault_path) if vault_path else self.DEFAULT_VAULT_PATH

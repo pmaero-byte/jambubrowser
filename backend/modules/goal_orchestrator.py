@@ -552,6 +552,35 @@ See individual approach files for detailed iteration documentation.
         except ImportError:
             pass  # RAG indexing is optional
 
+    def query_learnings(self, query: str, limit: int = 10) -> List[dict]:
+        """Query the RAG knowledge vault for past iteration learnings."""
+        try:
+            from sentence_transformers import SentenceTransformer
+            import numpy as np
+
+            model = SentenceTransformer("all-MiniLM-L6-v2")
+            query_vec = model.encode(query).astype(np.float32).tobytes()
+
+            with get_db_cursor() as cursor:
+                cursor.execute(
+                    """SELECT d.text, d.url FROM vec_documents v 
+                       JOIN documents d ON v.id = d.id 
+                       WHERE d.url LIKE 'goal://%' AND v.embedding MATCH ? AND k = ?""",
+                    (query_vec, limit * 2),
+                )
+                rows = cursor.fetchall()
+
+            results = []
+            for row in rows:
+                text = row['text'] or ''
+                url = row['url'] or ''
+                if query.lower() in text.lower():
+                    results.append({'text': text[:500], 'source': url})
+
+            return results[:limit]
+        except ImportError:
+            return []
+
 
 # Module-level singleton
 _orchestrator: Optional[GoalOrchestrator] = None

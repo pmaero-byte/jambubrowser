@@ -2735,6 +2735,13 @@ async def goal_context():
     return {"context": get_goal_orchestrator().get_goal_context_for_llm()}
 
 
+@app.get("/goal/learnings")
+async def goal_learnings(query: str, limit: int = 10):
+    """Query RAG knowledge vault for past iteration learnings."""
+    from backend.modules.goal_orchestrator import get_goal_orchestrator
+    return {"learnings": get_goal_orchestrator().query_learnings(query, limit)}
+
+
 # ===================================================================
 # ENTRY POINT
 # ===================================================================

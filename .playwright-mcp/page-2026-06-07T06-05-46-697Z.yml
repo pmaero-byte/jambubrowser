@@ -1,0 +1,2117 @@
+- generic [ref=e3]:
+  - generic:
+    - img
+  - generic [ref=e4]:
+    - generic [ref=e8]:
+      - heading "Jambubrowser Engine v2.0 0.1.0 OAS 3.1" [level=1] [ref=e9]:
+        - text: Jambubrowser Engine v2.0
+        - generic [ref=e10]:
+          - generic [ref=e12]: 0.1.0
+          - generic [ref=e14]: OAS 3.1
+      - link "/openapi.json" [ref=e15] [cursor=pointer]:
+        - /url: /openapi.json
+        - generic [ref=e16]: /openapi.json
+    - generic [ref=e21]:
+      - heading "default Collapse operation" [level=3] [ref=e22] [cursor=pointer]:
+        - link "default" [ref=e23]:
+          - /url: "#/default"
+        - button "Collapse operation" [expanded] [ref=e24]:
+          - img [ref=e25]
+      - generic [ref=e28]:
+        - generic [ref=e31] [cursor=pointer]:
+          - button "GET /health Health" [ref=e32]:
+            - generic [ref=e33]: GET
+            - generic [ref=e34]:
+              - link "/health" [ref=e36]:
+                - /url: "#/default/health_health_get"
+              - generic [ref=e37]: Health
+          - generic "Copy to clipboard"
+          - button "get /health" [ref=e40]:
+            - img [ref=e41]
+        - generic [ref=e45] [cursor=pointer]:
+          - button "GET /stats Get Stats" [ref=e46]:
+            - generic [ref=e47]: GET
+            - generic [ref=e48]:
+              - link "/stats" [ref=e50]:
+                - /url: "#/default/get_stats_stats_get"
+              - generic [ref=e51]: Get Stats
+          - generic "Copy to clipboard"
+          - button "get /stats" [ref=e54]:
+            - img [ref=e55]
+        - generic [ref=e59] [cursor=pointer]:
+          - button "POST /research Research" [ref=e60]:
+            - generic [ref=e61]: POST
+            - generic [ref=e62]:
+              - link "/research" [ref=e64]:
+                - /url: "#/default/research_research_post"
+              - generic [ref=e65]: Research
+          - generic "Copy to clipboard"
+          - button "post /research" [ref=e68]:
+            - img [ref=e69]
+        - generic [ref=e73] [cursor=pointer]:
+          - button "GET /search Search" [ref=e74]:
+            - generic [ref=e75]: GET
+            - generic [ref=e76]:
+              - link "/search" [ref=e78]:
+                - /url: "#/default/search_search_get"
+              - generic [ref=e79]: Search
+          - generic "Copy to clipboard"
+          - button "get /search" [ref=e82]:
+            - img [ref=e83]
+        - generic [ref=e87] [cursor=pointer]:
+          - button "POST /scrape Scrape" [ref=e88]:
+            - generic [ref=e89]: POST
+            - generic [ref=e90]:
+              - link "/scrape" [ref=e92]:
+                - /url: "#/default/scrape_scrape_post"
+              - generic [ref=e93]: Scrape
+          - generic "Copy to clipboard"
+          - button "post /scrape" [ref=e96]:
+            - img [ref=e97]
+        - generic [ref=e101] [cursor=pointer]:
+          - button "POST /exec Execute Code" [ref=e102]:
+            - generic [ref=e103]: POST
+            - generic [ref=e104]:
+              - link "/exec" [ref=e106]:
+                - /url: "#/default/execute_code_exec_post"
+              - generic [ref=e107]: Execute Code
+          - generic "Copy to clipboard"
+          - button "post /exec" [ref=e110]:
+            - img [ref=e111]
+        - generic [ref=e115] [cursor=pointer]:
+          - button "POST /act Perform Actions" [ref=e116]:
+            - generic [ref=e117]: POST
+            - generic [ref=e118]:
+              - link "/act" [ref=e120]:
+                - /url: "#/default/perform_actions_act_post"
+              - generic [ref=e121]: Perform Actions
+          - generic "Copy to clipboard"
+          - button "post /act" [ref=e124]:
+            - img [ref=e125]
+        - generic [ref=e129] [cursor=pointer]:
+          - button "POST /workflow/execute Execute Workflow" [ref=e130]:
+            - generic [ref=e131]: POST
+            - generic [ref=e132]:
+              - link "/workflow/execute" [ref=e134]:
+                - /url: "#/default/execute_workflow_workflow_execute_post"
+                - generic [ref=e135]:
+                  - text: /workflow
+                  - text: /execute
+              - generic [ref=e136]: Execute Workflow
+          - generic "Copy to clipboard"
+          - button "post /workflow/execute" [ref=e139]:
+            - img [ref=e140]
+        - generic [ref=e144] [cursor=pointer]:
+          - button "POST /login Perform Login" [ref=e145]:
+            - generic [ref=e146]: POST
+            - generic [ref=e147]:
+              - link "/login" [ref=e149]:
+                - /url: "#/default/perform_login_login_post"
+              - generic [ref=e150]: Perform Login
+          - generic "Copy to clipboard"
+          - button "post /login" [ref=e153]:
+            - img [ref=e154]
+        - generic [ref=e158] [cursor=pointer]:
+          - button "GET /vault/domains List Vault Domains" [ref=e159]:
+            - generic [ref=e160]: GET
+            - generic [ref=e161]:
+              - link "/vault/domains" [ref=e163]:
+                - /url: "#/default/list_vault_domains_vault_domains_get"
+                - generic [ref=e164]:
+                  - text: /vault
+                  - text: /domains
+              - generic [ref=e165]: List Vault Domains
+          - generic "Copy to clipboard"
+          - button "get /vault/domains" [ref=e168]:
+            - img [ref=e169]
+        - generic [ref=e173] [cursor=pointer]:
+          - button "GET /vault/credential Get Vault Credential" [ref=e174]:
+            - generic [ref=e175]: GET
+            - generic [ref=e176]:
+              - link "/vault/credential" [ref=e178]:
+                - /url: "#/default/get_vault_credential_vault_credential_get"
+                - generic [ref=e179]:
+                  - text: /vault
+                  - text: /credential
+              - generic [ref=e180]: Get Vault Credential
+          - generic "Copy to clipboard"
+          - button "get /vault/credential" [ref=e183]:
+            - img [ref=e184]
+        - generic [ref=e188] [cursor=pointer]:
+          - button "POST /vision/grounding Vision Grounding" [ref=e189]:
+            - generic [ref=e190]: POST
+            - generic [ref=e191]:
+              - link "/vision/grounding" [ref=e193]:
+                - /url: "#/default/vision_grounding_vision_grounding_post"
+                - generic [ref=e194]:
+                  - text: /vision
+                  - text: /grounding
+              - generic [ref=e195]: Vision Grounding
+          - generic "Copy to clipboard"
+          - button "post /vision/grounding" [ref=e198]:
+            - img [ref=e199]
+        - generic [ref=e203] [cursor=pointer]:
+          - button "GET /memory/recall Recall Memory" [ref=e204]:
+            - generic [ref=e205]: GET
+            - generic [ref=e206]:
+              - link "/memory/recall" [ref=e208]:
+                - /url: "#/default/recall_memory_memory_recall_get"
+                - generic [ref=e209]:
+                  - text: /memory
+                  - text: /recall
+              - generic [ref=e210]: Recall Memory
+          - generic "Copy to clipboard"
+          - button "get /memory/recall" [ref=e213]:
+            - img [ref=e214]
+        - generic [ref=e218] [cursor=pointer]:
+          - button "GET /graph_data Get Graph Data" [ref=e219]:
+            - generic [ref=e220]: GET
+            - generic [ref=e221]:
+              - link "/graph_data" [ref=e223]:
+                - /url: "#/default/get_graph_data_graph_data_get"
+              - generic [ref=e224]: Get Graph Data
+          - generic "Copy to clipboard"
+          - button "get /graph_data" [ref=e227]:
+            - img [ref=e228]
+        - generic [ref=e232] [cursor=pointer]:
+          - button "POST /mission Start Mission" [ref=e233]:
+            - generic [ref=e234]: POST
+            - generic [ref=e235]:
+              - link "/mission" [ref=e237]:
+                - /url: "#/default/start_mission_mission_post"
+              - generic [ref=e238]: Start Mission
+          - generic "Copy to clipboard"
+          - button "post /mission" [ref=e241]:
+            - img [ref=e242]
+        - generic [ref=e246] [cursor=pointer]:
+          - button "POST /mission/stop Stop Mission" [ref=e247]:
+            - generic [ref=e248]: POST
+            - generic [ref=e249]:
+              - link "/mission/stop" [ref=e251]:
+                - /url: "#/default/stop_mission_mission_stop_post"
+                - generic [ref=e252]:
+                  - text: /mission
+                  - text: /stop
+              - generic [ref=e253]: Stop Mission
+          - generic "Copy to clipboard"
+          - button "post /mission/stop" [ref=e256]:
+            - img [ref=e257]
+        - generic [ref=e261] [cursor=pointer]:
+          - button "POST /tool/save Save Custom Tool" [ref=e262]:
+            - generic [ref=e263]: POST
+            - generic [ref=e264]:
+              - link "/tool/save" [ref=e266]:
+                - /url: "#/default/save_custom_tool_tool_save_post"
+                - generic [ref=e267]:
+                  - text: /tool
+                  - text: /save
+              - generic [ref=e268]: Save Custom Tool
+          - generic "Copy to clipboard"
+          - button "post /tool/save" [ref=e271]:
+            - img [ref=e272]
+        - generic [ref=e276] [cursor=pointer]:
+          - button "GET /tools List Tools" [ref=e277]:
+            - generic [ref=e278]: GET
+            - generic [ref=e279]:
+              - link "/tools" [ref=e281]:
+                - /url: "#/default/list_tools_tools_get"
+              - generic [ref=e282]: List Tools
+          - generic "Copy to clipboard"
+          - button "get /tools" [ref=e285]:
+            - img [ref=e286]
+        - generic [ref=e290] [cursor=pointer]:
+          - button "POST /tool/exec Execute Custom Tool" [ref=e291]:
+            - generic [ref=e292]: POST
+            - generic [ref=e293]:
+              - link "/tool/exec" [ref=e295]:
+                - /url: "#/default/execute_custom_tool_tool_exec_post"
+                - generic [ref=e296]:
+                  - text: /tool
+                  - text: /exec
+              - generic [ref=e297]: Execute Custom Tool
+          - generic "Copy to clipboard"
+          - button "post /tool/exec" [ref=e300]:
+            - img [ref=e301]
+        - generic [ref=e305] [cursor=pointer]:
+          - button "POST /discover_api Discover Api" [ref=e306]:
+            - generic [ref=e307]: POST
+            - generic [ref=e308]:
+              - link "/discover_api" [ref=e310]:
+                - /url: "#/default/discover_api_discover_api_post"
+              - generic [ref=e311]: Discover Api
+          - generic "Copy to clipboard"
+          - button "post /discover_api" [ref=e314]:
+            - img [ref=e315]
+        - generic [ref=e319] [cursor=pointer]:
+          - button "POST /api/call Call Dynamic Api" [ref=e320]:
+            - generic [ref=e321]: POST
+            - generic [ref=e322]:
+              - link "/api/call" [ref=e324]:
+                - /url: "#/default/call_dynamic_api_api_call_post"
+                - generic [ref=e325]:
+                  - text: /api
+                  - text: /call
+              - generic [ref=e326]: Call Dynamic Api
+          - generic "Copy to clipboard"
+          - button "post /api/call" [ref=e329]:
+            - img [ref=e330]
+        - generic [ref=e334] [cursor=pointer]:
+          - button "GET /peers/discover Discover Peers" [ref=e335]:
+            - generic [ref=e336]: GET
+            - generic [ref=e337]:
+              - link "/peers/discover" [ref=e339]:
+                - /url: "#/default/discover_peers_peers_discover_get"
+                - generic [ref=e340]:
+                  - text: /peers
+                  - text: /discover
+              - generic [ref=e341]: Discover Peers
+          - generic "Copy to clipboard"
+          - button "get /peers/discover" [ref=e344]:
+            - img [ref=e345]
+        - generic [ref=e349] [cursor=pointer]:
+          - button "POST /peer/sync Peer Sync" [ref=e350]:
+            - generic [ref=e351]: POST
+            - generic [ref=e352]:
+              - link "/peer/sync" [ref=e354]:
+                - /url: "#/default/peer_sync_peer_sync_post"
+                - generic [ref=e355]:
+                  - text: /peer
+                  - text: /sync
+              - generic [ref=e356]: Peer Sync
+          - generic "Copy to clipboard"
+          - button "post /peer/sync" [ref=e359]:
+            - img [ref=e360]
+        - generic [ref=e364] [cursor=pointer]:
+          - button "POST /shield/check Shield Check" [ref=e365]:
+            - generic [ref=e366]: POST
+            - generic [ref=e367]:
+              - link "/shield/check" [ref=e369]:
+                - /url: "#/default/shield_check_shield_check_post"
+                - generic [ref=e370]:
+                  - text: /shield
+                  - text: /check
+              - generic [ref=e371]: Shield Check
+          - generic "Copy to clipboard"
+          - button "post /shield/check" [ref=e374]:
+            - img [ref=e375]
+        - generic [ref=e379] [cursor=pointer]:
+          - button "POST /shield/batch Shield Batch" [ref=e380]:
+            - generic [ref=e381]: POST
+            - generic [ref=e382]:
+              - link "/shield/batch" [ref=e384]:
+                - /url: "#/default/shield_batch_shield_batch_post"
+                - generic [ref=e385]:
+                  - text: /shield
+                  - text: /batch
+              - generic [ref=e386]: Shield Batch
+          - generic "Copy to clipboard"
+          - button "post /shield/batch" [ref=e389]:
+            - img [ref=e390]
+        - generic [ref=e394] [cursor=pointer]:
+          - button "GET /shield/stats Shield Stats" [ref=e395]:
+            - generic [ref=e396]: GET
+            - generic [ref=e397]:
+              - link "/shield/stats" [ref=e399]:
+                - /url: "#/default/shield_stats_shield_stats_get"
+                - generic [ref=e400]:
+                  - text: /shield
+                  - text: /stats
+              - generic [ref=e401]: Shield Stats
+          - generic "Copy to clipboard"
+          - button "get /shield/stats" [ref=e404]:
+            - img [ref=e405]
+        - generic [ref=e409] [cursor=pointer]:
+          - button "POST /mission/schedule Schedule Mission" [ref=e410]:
+            - generic [ref=e411]: POST
+            - generic [ref=e412]:
+              - link "/mission/schedule" [ref=e414]:
+                - /url: "#/default/schedule_mission_mission_schedule_post"
+                - generic [ref=e415]:
+                  - text: /mission
+                  - text: /schedule
+              - generic [ref=e416]: Schedule Mission
+          - generic "Copy to clipboard"
+          - button "post /mission/schedule" [ref=e419]:
+            - img [ref=e420]
+        - generic [ref=e424] [cursor=pointer]:
+          - button "GET /mission/list List Missions" [ref=e425]:
+            - generic [ref=e426]: GET
+            - generic [ref=e427]:
+              - link "/mission/list" [ref=e429]:
+                - /url: "#/default/list_missions_mission_list_get"
+                - generic [ref=e430]:
+                  - text: /mission
+                  - text: /list
+              - generic [ref=e431]: List Missions
+          - generic "Copy to clipboard"
+          - button "get /mission/list" [ref=e434]:
+            - img [ref=e435]
+        - generic [ref=e439] [cursor=pointer]:
+          - button "POST /mission/start-scheduler Start Mission Scheduler" [ref=e440]:
+            - generic [ref=e441]: POST
+            - generic [ref=e442]:
+              - link "/mission/start-scheduler" [ref=e444]:
+                - /url: "#/default/start_mission_scheduler_mission_start_scheduler_post"
+                - generic [ref=e445]:
+                  - text: /mission
+                  - text: /start-scheduler
+              - generic [ref=e446]: Start Mission Scheduler
+          - generic "Copy to clipboard"
+          - button "post /mission/start-scheduler" [ref=e449]:
+            - img [ref=e450]
+        - generic [ref=e454] [cursor=pointer]:
+          - button "POST /mission/stop-scheduler Stop Mission Scheduler" [ref=e455]:
+            - generic [ref=e456]: POST
+            - generic [ref=e457]:
+              - link "/mission/stop-scheduler" [ref=e459]:
+                - /url: "#/default/stop_mission_scheduler_mission_stop_scheduler_post"
+                - generic [ref=e460]:
+                  - text: /mission
+                  - text: /stop-scheduler
+              - generic [ref=e461]: Stop Mission Scheduler
+          - generic "Copy to clipboard"
+          - button "post /mission/stop-scheduler" [ref=e464]:
+            - img [ref=e465]
+        - generic [ref=e469] [cursor=pointer]:
+          - button "POST /shadow/start Start Shadow Browser" [ref=e470]:
+            - generic [ref=e471]: POST
+            - generic [ref=e472]:
+              - link "/shadow/start" [ref=e474]:
+                - /url: "#/default/start_shadow_browser_shadow_start_post"
+                - generic [ref=e475]:
+                  - text: /shadow
+                  - text: /start
+              - generic [ref=e476]: Start Shadow Browser
+          - generic "Copy to clipboard"
+          - button "post /shadow/start" [ref=e479]:
+            - img [ref=e480]
+        - generic [ref=e484] [cursor=pointer]:
+          - button "GET /shadow/stats Shadow Browser Stats" [ref=e485]:
+            - generic [ref=e486]: GET
+            - generic [ref=e487]:
+              - link "/shadow/stats" [ref=e489]:
+                - /url: "#/default/shadow_browser_stats_shadow_stats_get"
+                - generic [ref=e490]:
+                  - text: /shadow
+                  - text: /stats
+              - generic [ref=e491]: Shadow Browser Stats
+          - generic "Copy to clipboard"
+          - button "get /shadow/stats" [ref=e494]:
+            - img [ref=e495]
+        - generic [ref=e499] [cursor=pointer]:
+          - button "GET /shadow/interests Shadow Interests" [ref=e500]:
+            - generic [ref=e501]: GET
+            - generic [ref=e502]:
+              - link "/shadow/interests" [ref=e504]:
+                - /url: "#/default/shadow_interests_shadow_interests_get"
+                - generic [ref=e505]:
+                  - text: /shadow
+                  - text: /interests
+              - generic [ref=e506]: Shadow Interests
+          - generic "Copy to clipboard"
+          - button "get /shadow/interests" [ref=e509]:
+            - img [ref=e510]
+        - generic [ref=e514] [cursor=pointer]:
+          - button "POST /shadow/interests Add Shadow Interest" [ref=e515]:
+            - generic [ref=e516]: POST
+            - generic [ref=e517]:
+              - link "/shadow/interests" [ref=e519]:
+                - /url: "#/default/add_shadow_interest_shadow_interests_post"
+                - generic [ref=e520]:
+                  - text: /shadow
+                  - text: /interests
+              - generic [ref=e521]: Add Shadow Interest
+          - generic "Copy to clipboard"
+          - button "post /shadow/interests" [ref=e524]:
+            - img [ref=e525]
+        - generic [ref=e529] [cursor=pointer]:
+          - 'button "DELETE /shadow/interests/{name} Remove Shadow Interest" [ref=e530]':
+            - generic [ref=e531]: DELETE
+            - generic [ref=e532]:
+              - 'link "/shadow/interests/{name}" [ref=e534]':
+                - /url: "#/default/remove_shadow_interest_shadow_interests__name__delete"
+                - generic [ref=e535]:
+                  - text: /shadow
+                  - text: /interests
+                  - text: "/{name}"
+              - generic [ref=e536]: Remove Shadow Interest
+          - generic "Copy to clipboard"
+          - 'button "delete /shadow/interests/{name}" [ref=e539]':
+            - img [ref=e540]
+        - generic [ref=e544] [cursor=pointer]:
+          - button "POST /shadow/stop Stop Shadow Browser" [ref=e545]:
+            - generic [ref=e546]: POST
+            - generic [ref=e547]:
+              - link "/shadow/stop" [ref=e549]:
+                - /url: "#/default/stop_shadow_browser_shadow_stop_post"
+                - generic [ref=e550]:
+                  - text: /shadow
+                  - text: /stop
+              - generic [ref=e551]: Stop Shadow Browser
+          - generic "Copy to clipboard"
+          - button "post /shadow/stop" [ref=e554]:
+            - img [ref=e555]
+        - generic [ref=e559] [cursor=pointer]:
+          - button "GET /notifications/history Notification History" [ref=e560]:
+            - generic [ref=e561]: GET
+            - generic [ref=e562]:
+              - link "/notifications/history" [ref=e564]:
+                - /url: "#/default/notification_history_notifications_history_get"
+                - generic [ref=e565]:
+                  - text: /notifications
+                  - text: /history
+              - generic [ref=e566]: Notification History
+          - generic "Copy to clipboard"
+          - button "get /notifications/history" [ref=e569]:
+            - img [ref=e570]
+        - generic [ref=e574] [cursor=pointer]:
+          - button "POST /notifications/send Send Notification Endpoint" [ref=e575]:
+            - generic [ref=e576]: POST
+            - generic [ref=e577]:
+              - link "/notifications/send" [ref=e579]:
+                - /url: "#/default/send_notification_endpoint_notifications_send_post"
+                - generic [ref=e580]:
+                  - text: /notifications
+                  - text: /send
+              - generic [ref=e581]: Send Notification Endpoint
+          - generic "Copy to clipboard"
+          - button "post /notifications/send" [ref=e584]:
+            - img [ref=e585]
+        - generic [ref=e589] [cursor=pointer]:
+          - button "POST /vision/analyze Vision Analyze" [ref=e590]:
+            - generic [ref=e591]: POST
+            - generic [ref=e592]:
+              - link "/vision/analyze" [ref=e594]:
+                - /url: "#/default/vision_analyze_vision_analyze_post"
+                - generic [ref=e595]:
+                  - text: /vision
+                  - text: /analyze
+              - generic [ref=e596]: Vision Analyze
+          - generic "Copy to clipboard"
+          - button "post /vision/analyze" [ref=e599]:
+            - img [ref=e600]
+        - generic [ref=e604] [cursor=pointer]:
+          - button "POST /forms/detect Detect Forms" [ref=e605]:
+            - generic [ref=e606]: POST
+            - generic [ref=e607]:
+              - link "/forms/detect" [ref=e609]:
+                - /url: "#/default/detect_forms_forms_detect_post"
+                - generic [ref=e610]:
+                  - text: /forms
+                  - text: /detect
+              - generic [ref=e611]: Detect Forms
+          - generic "Copy to clipboard"
+          - button "post /forms/detect" [ref=e614]:
+            - img [ref=e615]
+        - generic [ref=e619] [cursor=pointer]:
+          - button "POST /forms/fill-script Generate Fill Script" [ref=e620]:
+            - generic [ref=e621]: POST
+            - generic [ref=e622]:
+              - link "/forms/fill-script" [ref=e624]:
+                - /url: "#/default/generate_fill_script_forms_fill_script_post"
+                - generic [ref=e625]:
+                  - text: /forms
+                  - text: /fill-script
+              - generic [ref=e626]: Generate Fill Script
+          - generic "Copy to clipboard"
+          - button "post /forms/fill-script" [ref=e629]:
+            - img [ref=e630]
+        - generic [ref=e634] [cursor=pointer]:
+          - button "POST /local/obsidian/create Obsidian Create" [ref=e635]:
+            - generic [ref=e636]: POST
+            - generic [ref=e637]:
+              - link "/local/obsidian/create" [ref=e639]:
+                - /url: "#/default/obsidian_create_local_obsidian_create_post"
+                - generic [ref=e640]:
+                  - text: /local
+                  - text: /obsidian
+                  - text: /create
+              - generic [ref=e641]: Obsidian Create
+          - generic "Copy to clipboard"
+          - button "post /local/obsidian/create" [ref=e644]:
+            - img [ref=e645]
+        - generic [ref=e649] [cursor=pointer]:
+          - button "POST /local/obsidian/append Obsidian Append" [ref=e650]:
+            - generic [ref=e651]: POST
+            - generic [ref=e652]:
+              - link "/local/obsidian/append" [ref=e654]:
+                - /url: "#/default/obsidian_append_local_obsidian_append_post"
+                - generic [ref=e655]:
+                  - text: /local
+                  - text: /obsidian
+                  - text: /append
+              - generic [ref=e656]: Obsidian Append
+          - generic "Copy to clipboard"
+          - button "post /local/obsidian/append" [ref=e659]:
+            - img [ref=e660]
+        - generic [ref=e664] [cursor=pointer]:
+          - button "GET /local/obsidian/read Obsidian Read" [ref=e665]:
+            - generic [ref=e666]: GET
+            - generic [ref=e667]:
+              - link "/local/obsidian/read" [ref=e669]:
+                - /url: "#/default/obsidian_read_local_obsidian_read_get"
+                - generic [ref=e670]:
+                  - text: /local
+                  - text: /obsidian
+                  - text: /read
+              - generic [ref=e671]: Obsidian Read
+          - generic "Copy to clipboard"
+          - button "get /local/obsidian/read" [ref=e674]:
+            - img [ref=e675]
+        - generic [ref=e679] [cursor=pointer]:
+          - button "GET /local/obsidian/search Obsidian Search" [ref=e680]:
+            - generic [ref=e681]: GET
+            - generic [ref=e682]:
+              - link "/local/obsidian/search" [ref=e684]:
+                - /url: "#/default/obsidian_search_local_obsidian_search_get"
+                - generic [ref=e685]:
+                  - text: /local
+                  - text: /obsidian
+                  - text: /search
+              - generic [ref=e686]: Obsidian Search
+          - generic "Copy to clipboard"
+          - button "get /local/obsidian/search" [ref=e689]:
+            - img [ref=e690]
+        - generic [ref=e694] [cursor=pointer]:
+          - button "GET /local/obsidian/stats Obsidian Stats" [ref=e695]:
+            - generic [ref=e696]: GET
+            - generic [ref=e697]:
+              - link "/local/obsidian/stats" [ref=e699]:
+                - /url: "#/default/obsidian_stats_local_obsidian_stats_get"
+                - generic [ref=e700]:
+                  - text: /local
+                  - text: /obsidian
+                  - text: /stats
+              - generic [ref=e701]: Obsidian Stats
+          - generic "Copy to clipboard"
+          - button "get /local/obsidian/stats" [ref=e704]:
+            - img [ref=e705]
+        - generic [ref=e709] [cursor=pointer]:
+          - button "POST /local/reminders/create Reminders Create" [ref=e710]:
+            - generic [ref=e711]: POST
+            - generic [ref=e712]:
+              - link "/local/reminders/create" [ref=e714]:
+                - /url: "#/default/reminders_create_local_reminders_create_post"
+                - generic [ref=e715]:
+                  - text: /local
+                  - text: /reminders
+                  - text: /create
+              - generic [ref=e716]: Reminders Create
+          - generic "Copy to clipboard"
+          - button "post /local/reminders/create" [ref=e719]:
+            - img [ref=e720]
+        - generic [ref=e724] [cursor=pointer]:
+          - button "POST /local/clipboard/copy Clipboard Copy" [ref=e725]:
+            - generic [ref=e726]: POST
+            - generic [ref=e727]:
+              - link "/local/clipboard/copy" [ref=e729]:
+                - /url: "#/default/clipboard_copy_local_clipboard_copy_post"
+                - generic [ref=e730]:
+                  - text: /local
+                  - text: /clipboard
+                  - text: /copy
+              - generic [ref=e731]: Clipboard Copy
+          - generic "Copy to clipboard"
+          - button "post /local/clipboard/copy" [ref=e734]:
+            - img [ref=e735]
+        - generic [ref=e739] [cursor=pointer]:
+          - button "GET /local/clipboard/paste Clipboard Paste" [ref=e740]:
+            - generic [ref=e741]: GET
+            - generic [ref=e742]:
+              - link "/local/clipboard/paste" [ref=e744]:
+                - /url: "#/default/clipboard_paste_local_clipboard_paste_get"
+                - generic [ref=e745]:
+                  - text: /local
+                  - text: /clipboard
+                  - text: /paste
+              - generic [ref=e746]: Clipboard Paste
+          - generic "Copy to clipboard"
+          - button "get /local/clipboard/paste" [ref=e749]:
+            - img [ref=e750]
+        - generic [ref=e754] [cursor=pointer]:
+          - button "POST /local/notes/save Save Research Note" [ref=e755]:
+            - generic [ref=e756]: POST
+            - generic [ref=e757]:
+              - link "/local/notes/save" [ref=e759]:
+                - /url: "#/default/save_research_note_local_notes_save_post"
+                - generic [ref=e760]:
+                  - text: /local
+                  - text: /notes
+                  - text: /save
+              - generic [ref=e761]: Save Research Note
+          - generic "Copy to clipboard"
+          - button "post /local/notes/save" [ref=e764]:
+            - img [ref=e765]
+        - generic [ref=e769] [cursor=pointer]:
+          - button "GET /computer/capture Computer Capture" [ref=e770]:
+            - generic [ref=e771]: GET
+            - generic [ref=e772]:
+              - link "/computer/capture" [ref=e774]:
+                - /url: "#/default/computer_capture_computer_capture_get"
+                - generic [ref=e775]:
+                  - text: /computer
+                  - text: /capture
+              - generic [ref=e776]: Computer Capture
+          - generic "Copy to clipboard"
+          - button "get /computer/capture" [ref=e779]:
+            - img [ref=e780]
+        - generic [ref=e784] [cursor=pointer]:
+          - button "POST /computer/mouse Computer Mouse" [ref=e785]:
+            - generic [ref=e786]: POST
+            - generic [ref=e787]:
+              - link "/computer/mouse" [ref=e789]:
+                - /url: "#/default/computer_mouse_computer_mouse_post"
+                - generic [ref=e790]:
+                  - text: /computer
+                  - text: /mouse
+              - generic [ref=e791]: Computer Mouse
+          - generic "Copy to clipboard"
+          - button "post /computer/mouse" [ref=e794]:
+            - img [ref=e795]
+        - generic [ref=e799] [cursor=pointer]:
+          - button "POST /computer/keyboard Computer Keyboard" [ref=e800]:
+            - generic [ref=e801]: POST
+            - generic [ref=e802]:
+              - link "/computer/keyboard" [ref=e804]:
+                - /url: "#/default/computer_keyboard_computer_keyboard_post"
+                - generic [ref=e805]:
+                  - text: /computer
+                  - text: /keyboard
+              - generic [ref=e806]: Computer Keyboard
+          - generic "Copy to clipboard"
+          - button "post /computer/keyboard" [ref=e809]:
+            - img [ref=e810]
+        - generic [ref=e814] [cursor=pointer]:
+          - button "POST /computer/launch Computer Launch" [ref=e815]:
+            - generic [ref=e816]: POST
+            - generic [ref=e817]:
+              - link "/computer/launch" [ref=e819]:
+                - /url: "#/default/computer_launch_computer_launch_post"
+                - generic [ref=e820]:
+                  - text: /computer
+                  - text: /launch
+              - generic [ref=e821]: Computer Launch
+          - generic "Copy to clipboard"
+          - button "post /computer/launch" [ref=e824]:
+            - img [ref=e825]
+        - generic [ref=e829] [cursor=pointer]:
+          - button "GET /computer/apps Computer List Apps" [ref=e830]:
+            - generic [ref=e831]: GET
+            - generic [ref=e832]:
+              - link "/computer/apps" [ref=e834]:
+                - /url: "#/default/computer_list_apps_computer_apps_get"
+                - generic [ref=e835]:
+                  - text: /computer
+                  - text: /apps
+              - generic [ref=e836]: Computer List Apps
+          - generic "Copy to clipboard"
+          - button "get /computer/apps" [ref=e839]:
+            - img [ref=e840]
+        - generic [ref=e844] [cursor=pointer]:
+          - button "POST /vision/ocr Vision Ocr" [ref=e845]:
+            - generic [ref=e846]: POST
+            - generic [ref=e847]:
+              - link "/vision/ocr" [ref=e849]:
+                - /url: "#/default/vision_ocr_vision_ocr_post"
+                - generic [ref=e850]:
+                  - text: /vision
+                  - text: /ocr
+              - generic [ref=e851]: Vision Ocr
+          - generic "Copy to clipboard"
+          - button "post /vision/ocr" [ref=e854]:
+            - img [ref=e855]
+        - generic [ref=e859] [cursor=pointer]:
+          - button "POST /vision/ui-elements Vision Ui Elements" [ref=e860]:
+            - generic [ref=e861]: POST
+            - generic [ref=e862]:
+              - link "/vision/ui-elements" [ref=e864]:
+                - /url: "#/default/vision_ui_elements_vision_ui_elements_post"
+                - generic [ref=e865]:
+                  - text: /vision
+                  - text: /ui-elements
+              - generic [ref=e866]: Vision Ui Elements
+          - generic "Copy to clipboard"
+          - button "post /vision/ui-elements" [ref=e869]:
+            - img [ref=e870]
+        - generic [ref=e874] [cursor=pointer]:
+          - button "POST /vision/verify Vision Verify" [ref=e875]:
+            - generic [ref=e876]: POST
+            - generic [ref=e877]:
+              - link "/vision/verify" [ref=e879]:
+                - /url: "#/default/vision_verify_vision_verify_post"
+                - generic [ref=e880]:
+                  - text: /vision
+                  - text: /verify
+              - generic [ref=e881]: Vision Verify
+          - generic "Copy to clipboard"
+          - button "post /vision/verify" [ref=e884]:
+            - img [ref=e885]
+        - generic [ref=e889] [cursor=pointer]:
+          - button "POST /knowledge/ingest Knowledge Ingest" [ref=e890]:
+            - generic [ref=e891]: POST
+            - generic [ref=e892]:
+              - link "/knowledge/ingest" [ref=e894]:
+                - /url: "#/default/knowledge_ingest_knowledge_ingest_post"
+                - generic [ref=e895]:
+                  - text: /knowledge
+                  - text: /ingest
+              - generic [ref=e896]: Knowledge Ingest
+          - generic "Copy to clipboard"
+          - button "post /knowledge/ingest" [ref=e899]:
+            - img [ref=e900]
+        - generic [ref=e904] [cursor=pointer]:
+          - button "GET /knowledge/graph Knowledge Graph Data" [ref=e905]:
+            - generic [ref=e906]: GET
+            - generic [ref=e907]:
+              - link "/knowledge/graph" [ref=e909]:
+                - /url: "#/default/knowledge_graph_data_knowledge_graph_get"
+                - generic [ref=e910]:
+                  - text: /knowledge
+                  - text: /graph
+              - generic [ref=e911]: Knowledge Graph Data
+          - generic "Copy to clipboard"
+          - button "get /knowledge/graph" [ref=e914]:
+            - img [ref=e915]
+        - generic [ref=e919] [cursor=pointer]:
+          - button "GET /knowledge/search Knowledge Search" [ref=e920]:
+            - generic [ref=e921]: GET
+            - generic [ref=e922]:
+              - link "/knowledge/search" [ref=e924]:
+                - /url: "#/default/knowledge_search_knowledge_search_get"
+                - generic [ref=e925]:
+                  - text: /knowledge
+                  - text: /search
+              - generic [ref=e926]: Knowledge Search
+          - generic "Copy to clipboard"
+          - button "get /knowledge/search" [ref=e929]:
+            - img [ref=e930]
+        - generic [ref=e934] [cursor=pointer]:
+          - 'button "GET /knowledge/entity/{entity_id} Knowledge Entity" [ref=e935]':
+            - generic [ref=e936]: GET
+            - generic [ref=e937]:
+              - 'link "/knowledge/entity/{entity_id}" [ref=e939]':
+                - /url: "#/default/knowledge_entity_knowledge_entity__entity_id__get"
+                - generic [ref=e940]:
+                  - text: /knowledge
+                  - text: /entity
+                  - text: "/{entity_id}"
+              - generic [ref=e941]: Knowledge Entity
+          - generic "Copy to clipboard"
+          - 'button "get /knowledge/entity/{entity_id}" [ref=e944]':
+            - img [ref=e945]
+        - generic [ref=e949] [cursor=pointer]:
+          - button "GET /knowledge/clusters Knowledge Clusters" [ref=e950]:
+            - generic [ref=e951]: GET
+            - generic [ref=e952]:
+              - link "/knowledge/clusters" [ref=e954]:
+                - /url: "#/default/knowledge_clusters_knowledge_clusters_get"
+                - generic [ref=e955]:
+                  - text: /knowledge
+                  - text: /clusters
+              - generic [ref=e956]: Knowledge Clusters
+          - generic "Copy to clipboard"
+          - button "get /knowledge/clusters" [ref=e959]:
+            - img [ref=e960]
+        - generic [ref=e964] [cursor=pointer]:
+          - button "GET /knowledge/stats Knowledge Stats" [ref=e965]:
+            - generic [ref=e966]: GET
+            - generic [ref=e967]:
+              - link "/knowledge/stats" [ref=e969]:
+                - /url: "#/default/knowledge_stats_knowledge_stats_get"
+                - generic [ref=e970]:
+                  - text: /knowledge
+                  - text: /stats
+              - generic [ref=e971]: Knowledge Stats
+          - generic "Copy to clipboard"
+          - button "get /knowledge/stats" [ref=e974]:
+            - img [ref=e975]
+        - generic [ref=e979] [cursor=pointer]:
+          - button "GET /p2p/info P2P Node Info" [ref=e980]:
+            - generic [ref=e981]: GET
+            - generic [ref=e982]:
+              - link "/p2p/info" [ref=e984]:
+                - /url: "#/default/p2p_node_info_p2p_info_get"
+                - generic [ref=e985]:
+                  - text: /p2p
+                  - text: /info
+              - generic [ref=e986]: P2P Node Info
+          - generic "Copy to clipboard"
+          - button "get /p2p/info" [ref=e989]:
+            - img [ref=e990]
+        - generic [ref=e994] [cursor=pointer]:
+          - button "POST /p2p/discover P2P Discover" [ref=e995]:
+            - generic [ref=e996]: POST
+            - generic [ref=e997]:
+              - link "/p2p/discover" [ref=e999]:
+                - /url: "#/default/p2p_discover_p2p_discover_post"
+                - generic [ref=e1000]:
+                  - text: /p2p
+                  - text: /discover
+              - generic [ref=e1001]: P2P Discover
+          - generic "Copy to clipboard"
+          - button "post /p2p/discover" [ref=e1004]:
+            - img [ref=e1005]
+        - generic [ref=e1009] [cursor=pointer]:
+          - button "GET /p2p/peers P2P List Peers" [ref=e1010]:
+            - generic [ref=e1011]: GET
+            - generic [ref=e1012]:
+              - link "/p2p/peers" [ref=e1014]:
+                - /url: "#/default/p2p_list_peers_p2p_peers_get"
+                - generic [ref=e1015]:
+                  - text: /p2p
+                  - text: /peers
+              - generic [ref=e1016]: P2P List Peers
+          - generic "Copy to clipboard"
+          - button "get /p2p/peers" [ref=e1019]:
+            - img [ref=e1020]
+        - generic [ref=e1024] [cursor=pointer]:
+          - button "POST /p2p/query P2P Query Peer" [ref=e1025]:
+            - generic [ref=e1026]: POST
+            - generic [ref=e1027]:
+              - link "/p2p/query" [ref=e1029]:
+                - /url: "#/default/p2p_query_peer_p2p_query_post"
+                - generic [ref=e1030]:
+                  - text: /p2p
+                  - text: /query
+              - generic [ref=e1031]: P2P Query Peer
+          - generic "Copy to clipboard"
+          - button "post /p2p/query" [ref=e1034]:
+            - img [ref=e1035]
+        - generic [ref=e1039] [cursor=pointer]:
+          - button "POST /p2p/start-discovery P2P Start Discovery" [ref=e1040]:
+            - generic [ref=e1041]: POST
+            - generic [ref=e1042]:
+              - link "/p2p/start-discovery" [ref=e1044]:
+                - /url: "#/default/p2p_start_discovery_p2p_start_discovery_post"
+                - generic [ref=e1045]:
+                  - text: /p2p
+                  - text: /start-discovery
+              - generic [ref=e1046]: P2P Start Discovery
+          - generic "Copy to clipboard"
+          - button "post /p2p/start-discovery" [ref=e1049]:
+            - img [ref=e1050]
+        - generic [ref=e1054] [cursor=pointer]:
+          - button "GET /p2p/stats P2P Stats" [ref=e1055]:
+            - generic [ref=e1056]: GET
+            - generic [ref=e1057]:
+              - link "/p2p/stats" [ref=e1059]:
+                - /url: "#/default/p2p_stats_p2p_stats_get"
+                - generic [ref=e1060]:
+                  - text: /p2p
+                  - text: /stats
+              - generic [ref=e1061]: P2P Stats
+          - generic "Copy to clipboard"
+          - button "get /p2p/stats" [ref=e1064]:
+            - img [ref=e1065]
+        - generic [ref=e1069] [cursor=pointer]:
+          - button "GET /peer/info Peer Info Handler" [ref=e1070]:
+            - generic [ref=e1071]: GET
+            - generic [ref=e1072]:
+              - link "/peer/info" [ref=e1074]:
+                - /url: "#/default/peer_info_handler_peer_info_get"
+                - generic [ref=e1075]:
+                  - text: /peer
+                  - text: /info
+              - generic [ref=e1076]: Peer Info Handler
+          - generic "Copy to clipboard"
+          - button "get /peer/info" [ref=e1079]:
+            - img [ref=e1080]
+        - generic [ref=e1084] [cursor=pointer]:
+          - button "POST /peer/query Peer Query Handler" [ref=e1085]:
+            - generic [ref=e1086]: POST
+            - generic [ref=e1087]:
+              - link "/peer/query" [ref=e1089]:
+                - /url: "#/default/peer_query_handler_peer_query_post"
+                - generic [ref=e1090]:
+                  - text: /peer
+                  - text: /query
+              - generic [ref=e1091]: Peer Query Handler
+          - generic "Copy to clipboard"
+          - button "post /peer/query" [ref=e1094]:
+            - img [ref=e1095]
+        - generic [ref=e1099] [cursor=pointer]:
+          - button "POST /multimodal/image Multimodal Image" [ref=e1100]:
+            - generic [ref=e1101]: POST
+            - generic [ref=e1102]:
+              - link "/multimodal/image" [ref=e1104]:
+                - /url: "#/default/multimodal_image_multimodal_image_post"
+                - generic [ref=e1105]:
+                  - text: /multimodal
+                  - text: /image
+              - generic [ref=e1106]: Multimodal Image
+          - generic "Copy to clipboard"
+          - button "post /multimodal/image" [ref=e1109]:
+            - img [ref=e1110]
+        - generic [ref=e1114] [cursor=pointer]:
+          - button "POST /multimodal/file Multimodal File" [ref=e1115]:
+            - generic [ref=e1116]: POST
+            - generic [ref=e1117]:
+              - link "/multimodal/file" [ref=e1119]:
+                - /url: "#/default/multimodal_file_multimodal_file_post"
+                - generic [ref=e1120]:
+                  - text: /multimodal
+                  - text: /file
+              - generic [ref=e1121]: Multimodal File
+          - generic "Copy to clipboard"
+          - button "post /multimodal/file" [ref=e1124]:
+            - img [ref=e1125]
+        - generic [ref=e1129] [cursor=pointer]:
+          - button "POST /multimodal/text Multimodal Text" [ref=e1130]:
+            - generic [ref=e1131]: POST
+            - generic [ref=e1132]:
+              - link "/multimodal/text" [ref=e1134]:
+                - /url: "#/default/multimodal_text_multimodal_text_post"
+                - generic [ref=e1135]:
+                  - text: /multimodal
+                  - text: /text
+              - generic [ref=e1136]: Multimodal Text
+          - generic "Copy to clipboard"
+          - button "post /multimodal/text" [ref=e1139]:
+            - img [ref=e1140]
+        - generic [ref=e1144] [cursor=pointer]:
+          - button "POST /skill/synthesize Synthesize Skill" [ref=e1145]:
+            - generic [ref=e1146]: POST
+            - generic [ref=e1147]:
+              - link "/skill/synthesize" [ref=e1149]:
+                - /url: "#/default/synthesize_skill_skill_synthesize_post"
+                - generic [ref=e1150]:
+                  - text: /skill
+                  - text: /synthesize
+              - generic [ref=e1151]: Synthesize Skill
+          - generic "Copy to clipboard"
+          - button "post /skill/synthesize" [ref=e1154]:
+            - img [ref=e1155]
+        - generic [ref=e1159] [cursor=pointer]:
+          - button "GET /skill/list-synthesized List Synthesized Skills" [ref=e1160]:
+            - generic [ref=e1161]: GET
+            - generic [ref=e1162]:
+              - link "/skill/list-synthesized" [ref=e1164]:
+                - /url: "#/default/list_synthesized_skills_skill_list_synthesized_get"
+                - generic [ref=e1165]:
+                  - text: /skill
+                  - text: /list-synthesized
+              - generic [ref=e1166]: List Synthesized Skills
+          - generic "Copy to clipboard"
+          - button "get /skill/list-synthesized" [ref=e1169]:
+            - img [ref=e1170]
+        - generic [ref=e1174] [cursor=pointer]:
+          - button "POST /fingerprint/generate Generate Fingerprint" [ref=e1175]:
+            - generic [ref=e1176]: POST
+            - generic [ref=e1177]:
+              - link "/fingerprint/generate" [ref=e1179]:
+                - /url: "#/default/generate_fingerprint_fingerprint_generate_post"
+                - generic [ref=e1180]:
+                  - text: /fingerprint
+                  - text: /generate
+              - generic [ref=e1181]: Generate Fingerprint
+          - generic "Copy to clipboard"
+          - button "post /fingerprint/generate" [ref=e1184]:
+            - img [ref=e1185]
+        - generic [ref=e1189] [cursor=pointer]:
+          - button "GET /fingerprint/list List Fingerprints" [ref=e1190]:
+            - generic [ref=e1191]: GET
+            - generic [ref=e1192]:
+              - link "/fingerprint/list" [ref=e1194]:
+                - /url: "#/default/list_fingerprints_fingerprint_list_get"
+                - generic [ref=e1195]:
+                  - text: /fingerprint
+                  - text: /list
+              - generic [ref=e1196]: List Fingerprints
+          - generic "Copy to clipboard"
+          - button "get /fingerprint/list" [ref=e1199]:
+            - img [ref=e1200]
+        - generic [ref=e1204] [cursor=pointer]:
+          - 'button "GET /fingerprint/profile/{profile_id} Get Fingerprint" [ref=e1205]':
+            - generic [ref=e1206]: GET
+            - generic [ref=e1207]:
+              - 'link "/fingerprint/profile/{profile_id}" [ref=e1209]':
+                - /url: "#/default/get_fingerprint_fingerprint_profile__profile_id__get"
+                - generic [ref=e1210]:
+                  - text: /fingerprint
+                  - text: /profile
+                  - text: "/{profile_id}"
+              - generic [ref=e1211]: Get Fingerprint
+          - generic "Copy to clipboard"
+          - 'button "get /fingerprint/profile/{profile_id}" [ref=e1214]':
+            - img [ref=e1215]
+        - generic [ref=e1219] [cursor=pointer]:
+          - button "POST /fingerprint/rotate Rotate Fingerprint" [ref=e1220]:
+            - generic [ref=e1221]: POST
+            - generic [ref=e1222]:
+              - link "/fingerprint/rotate" [ref=e1224]:
+                - /url: "#/default/rotate_fingerprint_fingerprint_rotate_post"
+                - generic [ref=e1225]:
+                  - text: /fingerprint
+                  - text: /rotate
+              - generic [ref=e1226]: Rotate Fingerprint
+          - generic "Copy to clipboard"
+          - button "post /fingerprint/rotate" [ref=e1229]:
+            - img [ref=e1230]
+        - generic [ref=e1234] [cursor=pointer]:
+          - button "POST /federated/query Federated Query" [ref=e1235]:
+            - generic [ref=e1236]: POST
+            - generic [ref=e1237]:
+              - link "/federated/query" [ref=e1239]:
+                - /url: "#/default/federated_query_federated_query_post"
+                - generic [ref=e1240]:
+                  - text: /federated
+                  - text: /query
+              - generic [ref=e1241]: Federated Query
+          - generic "Copy to clipboard"
+          - button "post /federated/query" [ref=e1244]:
+            - img [ref=e1245]
+        - generic [ref=e1249] [cursor=pointer]:
+          - button "GET /federated/stats Federated Stats" [ref=e1250]:
+            - generic [ref=e1251]: GET
+            - generic [ref=e1252]:
+              - link "/federated/stats" [ref=e1254]:
+                - /url: "#/default/federated_stats_federated_stats_get"
+                - generic [ref=e1255]:
+                  - text: /federated
+                  - text: /stats
+              - generic [ref=e1256]: Federated Stats
+          - generic "Copy to clipboard"
+          - button "get /federated/stats" [ref=e1259]:
+            - img [ref=e1260]
+        - generic [ref=e1264] [cursor=pointer]:
+          - button "POST /media/youtube Youtube Analyze" [ref=e1265]:
+            - generic [ref=e1266]: POST
+            - generic [ref=e1267]:
+              - link "/media/youtube" [ref=e1269]:
+                - /url: "#/default/youtube_analyze_media_youtube_post"
+                - generic [ref=e1270]:
+                  - text: /media
+                  - text: /youtube
+              - generic [ref=e1271]: Youtube Analyze
+          - generic "Copy to clipboard"
+          - button "post /media/youtube" [ref=e1274]:
+            - img [ref=e1275]
+        - generic [ref=e1279] [cursor=pointer]:
+          - button "GET /media/youtube/transcript Youtube Transcript" [ref=e1280]:
+            - generic [ref=e1281]: GET
+            - generic [ref=e1282]:
+              - link "/media/youtube/transcript" [ref=e1284]:
+                - /url: "#/default/youtube_transcript_media_youtube_transcript_get"
+                - generic [ref=e1285]:
+                  - text: /media
+                  - text: /youtube
+                  - text: /transcript
+              - generic [ref=e1286]: Youtube Transcript
+          - generic "Copy to clipboard"
+          - button "get /media/youtube/transcript" [ref=e1289]:
+            - img [ref=e1290]
+        - generic [ref=e1294] [cursor=pointer]:
+          - button "GET /media/youtube/search Youtube Search Transcript" [ref=e1295]:
+            - generic [ref=e1296]: GET
+            - generic [ref=e1297]:
+              - link "/media/youtube/search" [ref=e1299]:
+                - /url: "#/default/youtube_search_transcript_media_youtube_search_get"
+                - generic [ref=e1300]:
+                  - text: /media
+                  - text: /youtube
+                  - text: /search
+              - generic [ref=e1301]: Youtube Search Transcript
+          - generic "Copy to clipboard"
+          - button "get /media/youtube/search" [ref=e1304]:
+            - img [ref=e1305]
+        - generic [ref=e1309] [cursor=pointer]:
+          - button "GET /models/available List Available Models" [ref=e1310]:
+            - generic [ref=e1311]: GET
+            - generic [ref=e1312]:
+              - link "/models/available" [ref=e1314]:
+                - /url: "#/default/list_available_models_models_available_get"
+                - generic [ref=e1315]:
+                  - text: /models
+                  - text: /available
+              - generic [ref=e1316]: List Available Models
+          - generic "Copy to clipboard"
+          - button "get /models/available" [ref=e1319]:
+            - img [ref=e1320]
+        - generic [ref=e1324] [cursor=pointer]:
+          - button "GET /models/installed List Installed Models" [ref=e1325]:
+            - generic [ref=e1326]: GET
+            - generic [ref=e1327]:
+              - link "/models/installed" [ref=e1329]:
+                - /url: "#/default/list_installed_models_models_installed_get"
+                - generic [ref=e1330]:
+                  - text: /models
+                  - text: /installed
+              - generic [ref=e1331]: List Installed Models
+          - generic "Copy to clipboard"
+          - button "get /models/installed" [ref=e1334]:
+            - img [ref=e1335]
+        - generic [ref=e1339] [cursor=pointer]:
+          - button "GET /models/status Model Status" [ref=e1340]:
+            - generic [ref=e1341]: GET
+            - generic [ref=e1342]:
+              - link "/models/status" [ref=e1344]:
+                - /url: "#/default/model_status_models_status_get"
+                - generic [ref=e1345]:
+                  - text: /models
+                  - text: /status
+              - generic [ref=e1346]: Model Status
+          - generic "Copy to clipboard"
+          - button "get /models/status" [ref=e1349]:
+            - img [ref=e1350]
+        - generic [ref=e1354] [cursor=pointer]:
+          - button "POST /models/pull Pull Model" [ref=e1355]:
+            - generic [ref=e1356]: POST
+            - generic [ref=e1357]:
+              - link "/models/pull" [ref=e1359]:
+                - /url: "#/default/pull_model_models_pull_post"
+                - generic [ref=e1360]:
+                  - text: /models
+                  - text: /pull
+              - generic [ref=e1361]: Pull Model
+          - generic "Copy to clipboard"
+          - button "post /models/pull" [ref=e1364]:
+            - img [ref=e1365]
+        - generic [ref=e1369] [cursor=pointer]:
+          - button "GET /models/recommend Recommend Model" [ref=e1370]:
+            - generic [ref=e1371]: GET
+            - generic [ref=e1372]:
+              - link "/models/recommend" [ref=e1374]:
+                - /url: "#/default/recommend_model_models_recommend_get"
+                - generic [ref=e1375]:
+                  - text: /models
+                  - text: /recommend
+              - generic [ref=e1376]: Recommend Model
+          - generic "Copy to clipboard"
+          - button "get /models/recommend" [ref=e1379]:
+            - img [ref=e1380]
+        - generic [ref=e1384] [cursor=pointer]:
+          - button "POST /models/setup Setup Gemma4" [ref=e1385]:
+            - generic [ref=e1386]: POST
+            - generic [ref=e1387]:
+              - link "/models/setup" [ref=e1389]:
+                - /url: "#/default/setup_gemma4_models_setup_post"
+                - generic [ref=e1390]:
+                  - text: /models
+                  - text: /setup
+              - generic [ref=e1391]: Setup Gemma4
+          - generic "Copy to clipboard"
+          - button "post /models/setup" [ref=e1394]:
+            - img [ref=e1395]
+        - generic [ref=e1399] [cursor=pointer]:
+          - button "GET /models/providers Check Providers" [ref=e1400]:
+            - generic [ref=e1401]: GET
+            - generic [ref=e1402]:
+              - link "/models/providers" [ref=e1404]:
+                - /url: "#/default/check_providers_models_providers_get"
+                - generic [ref=e1405]:
+                  - text: /models
+                  - text: /providers
+              - generic [ref=e1406]: Check Providers
+          - generic "Copy to clipboard"
+          - button "get /models/providers" [ref=e1409]:
+            - img [ref=e1410]
+        - generic [ref=e1414] [cursor=pointer]:
+          - button "GET /llm/config Get Llm Config Info" [ref=e1415]:
+            - generic [ref=e1416]: GET
+            - generic [ref=e1417]:
+              - link "/llm/config" [ref=e1419]:
+                - /url: "#/default/get_llm_config_info_llm_config_get"
+                - generic [ref=e1420]:
+                  - text: /llm
+                  - text: /config
+              - generic [ref=e1421]: Get Llm Config Info
+          - generic "Copy to clipboard"
+          - button "get /llm/config" [ref=e1424]:
+            - img [ref=e1425]
+        - generic [ref=e1429] [cursor=pointer]:
+          - button "POST /consensus/propose Consensus Propose" [ref=e1430]:
+            - generic [ref=e1431]: POST
+            - generic [ref=e1432]:
+              - link "/consensus/propose" [ref=e1434]:
+                - /url: "#/default/consensus_propose_consensus_propose_post"
+                - generic [ref=e1435]:
+                  - text: /consensus
+                  - text: /propose
+              - generic [ref=e1436]: Consensus Propose
+          - generic "Copy to clipboard"
+          - button "post /consensus/propose" [ref=e1439]:
+            - img [ref=e1440]
+        - generic [ref=e1444] [cursor=pointer]:
+          - button "GET /consensus/list Consensus List" [ref=e1445]:
+            - generic [ref=e1446]: GET
+            - generic [ref=e1447]:
+              - link "/consensus/list" [ref=e1449]:
+                - /url: "#/default/consensus_list_consensus_list_get"
+                - generic [ref=e1450]:
+                  - text: /consensus
+                  - text: /list
+              - generic [ref=e1451]: Consensus List
+          - generic "Copy to clipboard"
+          - button "get /consensus/list" [ref=e1454]:
+            - img [ref=e1455]
+        - generic [ref=e1459] [cursor=pointer]:
+          - 'button "GET /consensus/proposal/{proposal_id} Consensus Get" [ref=e1460]':
+            - generic [ref=e1461]: GET
+            - generic [ref=e1462]:
+              - 'link "/consensus/proposal/{proposal_id}" [ref=e1464]':
+                - /url: "#/default/consensus_get_consensus_proposal__proposal_id__get"
+                - generic [ref=e1465]:
+                  - text: /consensus
+                  - text: /proposal
+                  - text: "/{proposal_id}"
+              - generic [ref=e1466]: Consensus Get
+          - generic "Copy to clipboard"
+          - 'button "get /consensus/proposal/{proposal_id}" [ref=e1469]':
+            - img [ref=e1470]
+        - generic [ref=e1474] [cursor=pointer]:
+          - button "POST /consensus/vote Consensus Vote" [ref=e1475]:
+            - generic [ref=e1476]: POST
+            - generic [ref=e1477]:
+              - link "/consensus/vote" [ref=e1479]:
+                - /url: "#/default/consensus_vote_consensus_vote_post"
+                - generic [ref=e1480]:
+                  - text: /consensus
+                  - text: /vote
+              - generic [ref=e1481]: Consensus Vote
+          - generic "Copy to clipboard"
+          - button "post /consensus/vote" [ref=e1484]:
+            - img [ref=e1485]
+        - generic [ref=e1489] [cursor=pointer]:
+          - 'button "GET /consensus/tally/{proposal_id} Consensus Tally" [ref=e1490]':
+            - generic [ref=e1491]: GET
+            - generic [ref=e1492]:
+              - 'link "/consensus/tally/{proposal_id}" [ref=e1494]':
+                - /url: "#/default/consensus_tally_consensus_tally__proposal_id__get"
+                - generic [ref=e1495]:
+                  - text: /consensus
+                  - text: /tally
+                  - text: "/{proposal_id}"
+              - generic [ref=e1496]: Consensus Tally
+          - generic "Copy to clipboard"
+          - 'button "get /consensus/tally/{proposal_id}" [ref=e1499]':
+            - img [ref=e1500]
+        - generic [ref=e1504] [cursor=pointer]:
+          - 'button "GET /consensus/check/{proposal_id} Consensus Check" [ref=e1505]':
+            - generic [ref=e1506]: GET
+            - generic [ref=e1507]:
+              - 'link "/consensus/check/{proposal_id}" [ref=e1509]':
+                - /url: "#/default/consensus_check_consensus_check__proposal_id__get"
+                - generic [ref=e1510]:
+                  - text: /consensus
+                  - text: /check
+                  - text: "/{proposal_id}"
+              - generic [ref=e1511]: Consensus Check
+          - generic "Copy to clipboard"
+          - 'button "get /consensus/check/{proposal_id}" [ref=e1514]':
+            - img [ref=e1515]
+        - generic [ref=e1519] [cursor=pointer]:
+          - 'button "POST /consensus/close/{proposal_id} Consensus Close" [ref=e1520]':
+            - generic [ref=e1521]: POST
+            - generic [ref=e1522]:
+              - 'link "/consensus/close/{proposal_id}" [ref=e1524]':
+                - /url: "#/default/consensus_close_consensus_close__proposal_id__post"
+                - generic [ref=e1525]:
+                  - text: /consensus
+                  - text: /close
+                  - text: "/{proposal_id}"
+              - generic [ref=e1526]: Consensus Close
+          - generic "Copy to clipboard"
+          - 'button "post /consensus/close/{proposal_id}" [ref=e1529]':
+            - img [ref=e1530]
+        - generic [ref=e1534] [cursor=pointer]:
+          - button "GET /harness/status Harness Status" [ref=e1535]:
+            - generic [ref=e1536]: GET
+            - generic [ref=e1537]:
+              - link "/harness/status" [ref=e1539]:
+                - /url: "#/default/harness_status_harness_status_get"
+                - generic [ref=e1540]:
+                  - text: /harness
+                  - text: /status
+              - generic [ref=e1541]: Harness Status
+          - generic "Copy to clipboard"
+          - button "get /harness/status" [ref=e1544]:
+            - img [ref=e1545]
+        - generic [ref=e1549] [cursor=pointer]:
+          - button "POST /harness/research Harness Research" [ref=e1550]:
+            - generic [ref=e1551]: POST
+            - generic [ref=e1552]:
+              - link "/harness/research" [ref=e1554]:
+                - /url: "#/default/harness_research_harness_research_post"
+                - generic [ref=e1555]:
+                  - text: /harness
+                  - text: /research
+              - generic [ref=e1556]: Harness Research
+          - generic "Copy to clipboard"
+          - button "post /harness/research" [ref=e1559]:
+            - img [ref=e1560]
+        - generic [ref=e1564] [cursor=pointer]:
+          - button "POST /harness/research/single Harness Research Single" [ref=e1565]:
+            - generic [ref=e1566]: POST
+            - generic [ref=e1567]:
+              - link "/harness/research/single" [ref=e1569]:
+                - /url: "#/default/harness_research_single_harness_research_single_post"
+                - generic [ref=e1570]:
+                  - text: /harness
+                  - text: /research
+                  - text: /single
+              - generic [ref=e1571]: Harness Research Single
+          - generic "Copy to clipboard"
+          - button "post /harness/research/single" [ref=e1574]:
+            - img [ref=e1575]
+        - generic [ref=e1579] [cursor=pointer]:
+          - button "POST /harness/browse Harness Browse" [ref=e1580]:
+            - generic [ref=e1581]: POST
+            - generic [ref=e1582]:
+              - link "/harness/browse" [ref=e1584]:
+                - /url: "#/default/harness_browse_harness_browse_post"
+                - generic [ref=e1585]:
+                  - text: /harness
+                  - text: /browse
+              - generic [ref=e1586]: Harness Browse
+          - generic "Copy to clipboard"
+          - button "post /harness/browse" [ref=e1589]:
+            - img [ref=e1590]
+        - generic [ref=e1594] [cursor=pointer]:
+          - button "POST /harness/llm Harness Llm" [ref=e1595]:
+            - generic [ref=e1596]: POST
+            - generic [ref=e1597]:
+              - link "/harness/llm" [ref=e1599]:
+                - /url: "#/default/harness_llm_harness_llm_post"
+                - generic [ref=e1600]:
+                  - text: /harness
+                  - text: /llm
+              - generic [ref=e1601]: Harness Llm
+          - generic "Copy to clipboard"
+          - button "post /harness/llm" [ref=e1604]:
+            - img [ref=e1605]
+        - generic [ref=e1609] [cursor=pointer]:
+          - button "POST /harness/context/store Harness Store Context" [ref=e1610]:
+            - generic [ref=e1611]: POST
+            - generic [ref=e1612]:
+              - link "/harness/context/store" [ref=e1614]:
+                - /url: "#/default/harness_store_context_harness_context_store_post"
+                - generic [ref=e1615]:
+                  - text: /harness
+                  - text: /context
+                  - text: /store
+              - generic [ref=e1616]: Harness Store Context
+          - generic "Copy to clipboard"
+          - button "post /harness/context/store" [ref=e1619]:
+            - img [ref=e1620]
+        - generic [ref=e1624] [cursor=pointer]:
+          - button "POST /harness/context/search Harness Search Context" [ref=e1625]:
+            - generic [ref=e1626]: POST
+            - generic [ref=e1627]:
+              - link "/harness/context/search" [ref=e1629]:
+                - /url: "#/default/harness_search_context_harness_context_search_post"
+                - generic [ref=e1630]:
+                  - text: /harness
+                  - text: /context
+                  - text: /search
+              - generic [ref=e1631]: Harness Search Context
+          - generic "Copy to clipboard"
+          - button "post /harness/context/search" [ref=e1634]:
+            - img [ref=e1635]
+        - generic [ref=e1639] [cursor=pointer]:
+          - button "POST /v1/run V1 Run" [ref=e1640]:
+            - generic [ref=e1641]: POST
+            - generic [ref=e1642]:
+              - link "/v1/run" [ref=e1644]:
+                - /url: "#/default/v1_run_v1_run_post"
+                - generic [ref=e1645]:
+                  - text: /v1
+                  - text: /run
+              - generic [ref=e1646]: V1 Run
+          - generic "Copy to clipboard"
+          - button "post /v1/run" [ref=e1649]:
+            - img [ref=e1650]
+        - generic [ref=e1654] [cursor=pointer]:
+          - button "POST /v1/run/stream V1 Run Stream" [ref=e1655]:
+            - generic [ref=e1656]: POST
+            - generic [ref=e1657]:
+              - link "/v1/run/stream" [ref=e1659]:
+                - /url: "#/default/v1_run_stream_v1_run_stream_post"
+                - generic [ref=e1660]:
+                  - text: /v1
+                  - text: /run
+                  - text: /stream
+              - generic [ref=e1661]: V1 Run Stream
+          - generic "Copy to clipboard"
+          - button "post /v1/run/stream" [ref=e1664]:
+            - img [ref=e1665]
+        - generic [ref=e1669] [cursor=pointer]:
+          - button "POST /v1/memory V1 Memory Add" [ref=e1670]:
+            - generic [ref=e1671]: POST
+            - generic [ref=e1672]:
+              - link "/v1/memory" [ref=e1674]:
+                - /url: "#/default/v1_memory_add_v1_memory_post"
+                - generic [ref=e1675]:
+                  - text: /v1
+                  - text: /memory
+              - generic [ref=e1676]: V1 Memory Add
+          - generic "Copy to clipboard"
+          - button "post /v1/memory" [ref=e1679]:
+            - img [ref=e1680]
+        - generic [ref=e1684] [cursor=pointer]:
+          - button "GET /v1/memory V1 Memory List" [ref=e1685]:
+            - generic [ref=e1686]: GET
+            - generic [ref=e1687]:
+              - link "/v1/memory" [ref=e1689]:
+                - /url: "#/default/v1_memory_list_v1_memory_get"
+                - generic [ref=e1690]:
+                  - text: /v1
+                  - text: /memory
+              - generic [ref=e1691]: V1 Memory List
+          - generic "Copy to clipboard"
+          - button "get /v1/memory" [ref=e1694]:
+            - img [ref=e1695]
+        - generic [ref=e1699] [cursor=pointer]:
+          - button "POST /v1/memory/search V1 Memory Search" [ref=e1700]:
+            - generic [ref=e1701]: POST
+            - generic [ref=e1702]:
+              - link "/v1/memory/search" [ref=e1704]:
+                - /url: "#/default/v1_memory_search_v1_memory_search_post"
+                - generic [ref=e1705]:
+                  - text: /v1
+                  - text: /memory
+                  - text: /search
+              - generic [ref=e1706]: V1 Memory Search
+          - generic "Copy to clipboard"
+          - button "post /v1/memory/search" [ref=e1709]:
+            - img [ref=e1710]
+        - generic [ref=e1714] [cursor=pointer]:
+          - 'button "DELETE /v1/memory/{entry_id} V1 Memory Delete" [ref=e1715]':
+            - generic [ref=e1716]: DELETE
+            - generic [ref=e1717]:
+              - 'link "/v1/memory/{entry_id}" [ref=e1719]':
+                - /url: "#/default/v1_memory_delete_v1_memory__entry_id__delete"
+                - generic [ref=e1720]:
+                  - text: /v1
+                  - text: /memory
+                  - text: "/{entry_id}"
+              - generic [ref=e1721]: V1 Memory Delete
+          - generic "Copy to clipboard"
+          - 'button "delete /v1/memory/{entry_id}" [ref=e1724]':
+            - img [ref=e1725]
+        - generic [ref=e1729] [cursor=pointer]:
+          - button "GET /v1/sessions V1 Sessions List" [ref=e1730]:
+            - generic [ref=e1731]: GET
+            - generic [ref=e1732]:
+              - link "/v1/sessions" [ref=e1734]:
+                - /url: "#/default/v1_sessions_list_v1_sessions_get"
+                - generic [ref=e1735]:
+                  - text: /v1
+                  - text: /sessions
+              - generic [ref=e1736]: V1 Sessions List
+          - generic "Copy to clipboard"
+          - button "get /v1/sessions" [ref=e1739]:
+            - img [ref=e1740]
+        - generic [ref=e1744] [cursor=pointer]:
+          - 'button "GET /v1/sessions/{sid} V1 Session Get" [ref=e1745]':
+            - generic [ref=e1746]: GET
+            - generic [ref=e1747]:
+              - 'link "/v1/sessions/{sid}" [ref=e1749]':
+                - /url: "#/default/v1_session_get_v1_sessions__sid__get"
+                - generic [ref=e1750]:
+                  - text: /v1
+                  - text: /sessions
+                  - text: "/{sid}"
+              - generic [ref=e1751]: V1 Session Get
+          - generic "Copy to clipboard"
+          - 'button "get /v1/sessions/{sid}" [ref=e1754]':
+            - img [ref=e1755]
+        - generic [ref=e1759] [cursor=pointer]:
+          - button "GET /v1/models V1 Models" [ref=e1760]:
+            - generic [ref=e1761]: GET
+            - generic [ref=e1762]:
+              - link "/v1/models" [ref=e1764]:
+                - /url: "#/default/v1_models_v1_models_get"
+                - generic [ref=e1765]:
+                  - text: /v1
+                  - text: /models
+              - generic [ref=e1766]: V1 Models
+          - generic "Copy to clipboard"
+          - button "get /v1/models" [ref=e1769]:
+            - img [ref=e1770]
+        - generic [ref=e1774] [cursor=pointer]:
+          - button "GET /v1/connectors V1 Connectors" [ref=e1775]:
+            - generic [ref=e1776]: GET
+            - generic [ref=e1777]:
+              - link "/v1/connectors" [ref=e1779]:
+                - /url: "#/default/v1_connectors_v1_connectors_get"
+                - generic [ref=e1780]:
+                  - text: /v1
+                  - text: /connectors
+              - generic [ref=e1781]: V1 Connectors
+          - generic "Copy to clipboard"
+          - button "get /v1/connectors" [ref=e1784]:
+            - img [ref=e1785]
+        - generic [ref=e1789] [cursor=pointer]:
+          - button "GET /v1/health/detailed V1 Health Detailed" [ref=e1790]:
+            - generic [ref=e1791]: GET
+            - generic [ref=e1792]:
+              - link "/v1/health/detailed" [ref=e1794]:
+                - /url: "#/default/v1_health_detailed_v1_health_detailed_get"
+                - generic [ref=e1795]:
+                  - text: /v1
+                  - text: /health
+                  - text: /detailed
+              - generic [ref=e1796]: V1 Health Detailed
+          - generic "Copy to clipboard"
+          - button "get /v1/health/detailed" [ref=e1799]:
+            - img [ref=e1800]
+        - generic [ref=e1804] [cursor=pointer]:
+          - button "GET /analytics/summary Analytics Summary" [ref=e1805]:
+            - generic [ref=e1806]: GET
+            - generic [ref=e1807]:
+              - link "/analytics/summary" [ref=e1809]:
+                - /url: "#/default/analytics_summary_analytics_summary_get"
+                - generic [ref=e1810]:
+                  - text: /analytics
+                  - text: /summary
+              - generic [ref=e1811]: Analytics Summary
+          - generic "Copy to clipboard"
+          - button "get /analytics/summary" [ref=e1814]:
+            - img [ref=e1815]
+        - generic [ref=e1819] [cursor=pointer]:
+          - button "GET /benchmark Benchmark" [ref=e1820]:
+            - generic [ref=e1821]: GET
+            - generic [ref=e1822]:
+              - link "/benchmark" [ref=e1824]:
+                - /url: "#/default/benchmark_benchmark_get"
+              - generic [ref=e1825]: Benchmark
+          - generic "Copy to clipboard"
+          - button "get /benchmark" [ref=e1828]:
+            - img [ref=e1829]
+        - generic [ref=e1833] [cursor=pointer]:
+          - button "GET /peers/tools Peers Tools" [ref=e1834]:
+            - generic [ref=e1835]: GET
+            - generic [ref=e1836]:
+              - link "/peers/tools" [ref=e1838]:
+                - /url: "#/default/peers_tools_peers_tools_get"
+                - generic [ref=e1839]:
+                  - text: /peers
+                  - text: /tools
+              - generic [ref=e1840]: Peers Tools
+          - generic "Copy to clipboard"
+          - button "get /peers/tools" [ref=e1843]:
+            - img [ref=e1844]
+        - generic [ref=e1848] [cursor=pointer]:
+          - button "GET /peers/tools/pull Peers Tools Pull" [ref=e1849]:
+            - generic [ref=e1850]: GET
+            - generic [ref=e1851]:
+              - link "/peers/tools/pull" [ref=e1853]:
+                - /url: "#/default/peers_tools_pull_peers_tools_pull_get"
+                - generic [ref=e1854]:
+                  - text: /peers
+                  - text: /tools
+                  - text: /pull
+              - generic [ref=e1855]: Peers Tools Pull
+          - generic "Copy to clipboard"
+          - button "get /peers/tools/pull" [ref=e1858]:
+            - img [ref=e1859]
+        - generic [ref=e1863] [cursor=pointer]:
+          - button "GET /plugins/list List Plugins" [ref=e1864]:
+            - generic [ref=e1865]: GET
+            - generic [ref=e1866]:
+              - link "/plugins/list" [ref=e1868]:
+                - /url: "#/default/list_plugins_plugins_list_get"
+                - generic [ref=e1869]:
+                  - text: /plugins
+                  - text: /list
+              - generic [ref=e1870]: List Plugins
+          - generic "Copy to clipboard"
+          - button "get /plugins/list" [ref=e1873]:
+            - img [ref=e1874]
+        - generic [ref=e1878] [cursor=pointer]:
+          - 'button "GET /plugins/{plugin_name} Get Plugin Info" [ref=e1879]':
+            - generic [ref=e1880]: GET
+            - generic [ref=e1881]:
+              - 'link "/plugins/{plugin_name}" [ref=e1883]':
+                - /url: "#/default/get_plugin_info_plugins__plugin_name__get"
+                - generic [ref=e1884]:
+                  - text: /plugins
+                  - text: "/{plugin_name}"
+              - generic [ref=e1885]: Get Plugin Info
+          - generic "Copy to clipboard"
+          - 'button "get /plugins/{plugin_name}" [ref=e1888]':
+            - img [ref=e1889]
+        - generic [ref=e1893] [cursor=pointer]:
+          - button "POST /plugins/execute Execute Plugin" [ref=e1894]:
+            - generic [ref=e1895]: POST
+            - generic [ref=e1896]:
+              - link "/plugins/execute" [ref=e1898]:
+                - /url: "#/default/execute_plugin_plugins_execute_post"
+                - generic [ref=e1899]:
+                  - text: /plugins
+                  - text: /execute
+              - generic [ref=e1900]: Execute Plugin
+          - generic "Copy to clipboard"
+          - button "post /plugins/execute" [ref=e1903]:
+            - img [ref=e1904]
+        - generic [ref=e1908] [cursor=pointer]:
+          - button "POST /plugins/chain Execute Plugin Chain" [ref=e1909]:
+            - generic [ref=e1910]: POST
+            - generic [ref=e1911]:
+              - link "/plugins/chain" [ref=e1913]:
+                - /url: "#/default/execute_plugin_chain_plugins_chain_post"
+                - generic [ref=e1914]:
+                  - text: /plugins
+                  - text: /chain
+              - generic [ref=e1915]: Execute Plugin Chain
+          - generic "Copy to clipboard"
+          - button "post /plugins/chain" [ref=e1918]:
+            - img [ref=e1919]
+        - generic [ref=e1923] [cursor=pointer]:
+          - button "POST /goal/set Goal Set" [ref=e1924]:
+            - generic [ref=e1925]: POST
+            - generic [ref=e1926]:
+              - link "/goal/set" [ref=e1928]:
+                - /url: "#/default/goal_set_goal_set_post"
+                - generic [ref=e1929]:
+                  - text: /goal
+                  - text: /set
+              - generic [ref=e1930]: Goal Set
+          - generic "Copy to clipboard"
+          - button "post /goal/set" [ref=e1933]:
+            - img [ref=e1934]
+        - generic [ref=e1938] [cursor=pointer]:
+          - button "GET /goal/active Goal Active" [ref=e1939]:
+            - generic [ref=e1940]: GET
+            - generic [ref=e1941]:
+              - link "/goal/active" [ref=e1943]:
+                - /url: "#/default/goal_active_goal_active_get"
+                - generic [ref=e1944]:
+                  - text: /goal
+                  - text: /active
+              - generic [ref=e1945]: Goal Active
+          - generic "Copy to clipboard"
+          - button "get /goal/active" [ref=e1948]:
+            - img [ref=e1949]
+        - generic [ref=e1953] [cursor=pointer]:
+          - button "GET /goal/list Goal List" [ref=e1954]:
+            - generic [ref=e1955]: GET
+            - generic [ref=e1956]:
+              - link "/goal/list" [ref=e1958]:
+                - /url: "#/default/goal_list_goal_list_get"
+                - generic [ref=e1959]:
+                  - text: /goal
+                  - text: /list
+              - generic [ref=e1960]: Goal List
+          - generic "Copy to clipboard"
+          - button "get /goal/list" [ref=e1963]:
+            - img [ref=e1964]
+        - generic [ref=e1968] [cursor=pointer]:
+          - button "POST /goal/achieve Goal Achieve" [ref=e1969]:
+            - generic [ref=e1970]: POST
+            - generic [ref=e1971]:
+              - link "/goal/achieve" [ref=e1973]:
+                - /url: "#/default/goal_achieve_goal_achieve_post"
+                - generic [ref=e1974]:
+                  - text: /goal
+                  - text: /achieve
+              - generic [ref=e1975]: Goal Achieve
+          - generic "Copy to clipboard"
+          - button "post /goal/achieve" [ref=e1978]:
+            - img [ref=e1979]
+        - generic [ref=e1983] [cursor=pointer]:
+          - button "POST /goal/block Goal Block" [ref=e1984]:
+            - generic [ref=e1985]: POST
+            - generic [ref=e1986]:
+              - link "/goal/block" [ref=e1988]:
+                - /url: "#/default/goal_block_goal_block_post"
+                - generic [ref=e1989]:
+                  - text: /goal
+                  - text: /block
+              - generic [ref=e1990]: Goal Block
+          - generic "Copy to clipboard"
+          - button "post /goal/block" [ref=e1993]:
+            - img [ref=e1994]
+        - generic [ref=e1998] [cursor=pointer]:
+          - button "POST /goal/approach Goal Record Approach" [ref=e1999]:
+            - generic [ref=e2000]: POST
+            - generic [ref=e2001]:
+              - link "/goal/approach" [ref=e2003]:
+                - /url: "#/default/goal_record_approach_goal_approach_post"
+                - generic [ref=e2004]:
+                  - text: /goal
+                  - text: /approach
+              - generic [ref=e2005]: Goal Record Approach
+          - generic "Copy to clipboard"
+          - button "post /goal/approach" [ref=e2008]:
+            - img [ref=e2009]
+        - generic [ref=e2013] [cursor=pointer]:
+          - button "POST /goal/approach/update Goal Update Approach" [ref=e2014]:
+            - generic [ref=e2015]: POST
+            - generic [ref=e2016]:
+              - link "/goal/approach/update" [ref=e2018]:
+                - /url: "#/default/goal_update_approach_goal_approach_update_post"
+                - generic [ref=e2019]:
+                  - text: /goal
+                  - text: /approach
+                  - text: /update
+              - generic [ref=e2020]: Goal Update Approach
+          - generic "Copy to clipboard"
+          - button "post /goal/approach/update" [ref=e2023]:
+            - img [ref=e2024]
+        - generic [ref=e2028] [cursor=pointer]:
+          - button "GET /goal/approaches Goal Approaches" [ref=e2029]:
+            - generic [ref=e2030]: GET
+            - generic [ref=e2031]:
+              - link "/goal/approaches" [ref=e2033]:
+                - /url: "#/default/goal_approaches_goal_approaches_get"
+                - generic [ref=e2034]:
+                  - text: /goal
+                  - text: /approaches
+              - generic [ref=e2035]: Goal Approaches
+          - generic "Copy to clipboard"
+          - button "get /goal/approaches" [ref=e2038]:
+            - img [ref=e2039]
+        - generic [ref=e2043] [cursor=pointer]:
+          - button "GET /goal/fallback Goal Fallback" [ref=e2044]:
+            - generic [ref=e2045]: GET
+            - generic [ref=e2046]:
+              - link "/goal/fallback" [ref=e2048]:
+                - /url: "#/default/goal_fallback_goal_fallback_get"
+                - generic [ref=e2049]:
+                  - text: /goal
+                  - text: /fallback
+              - generic [ref=e2050]: Goal Fallback
+          - generic "Copy to clipboard"
+          - button "get /goal/fallback" [ref=e2053]:
+            - img [ref=e2054]
+        - generic [ref=e2058] [cursor=pointer]:
+          - button "POST /goal/inject Goal Inject" [ref=e2059]:
+            - generic [ref=e2060]: POST
+            - generic [ref=e2061]:
+              - link "/goal/inject" [ref=e2063]:
+                - /url: "#/default/goal_inject_goal_inject_post"
+                - generic [ref=e2064]:
+                  - text: /goal
+                  - text: /inject
+              - generic [ref=e2065]: Goal Inject
+          - generic "Copy to clipboard"
+          - button "post /goal/inject" [ref=e2068]:
+            - img [ref=e2069]
+        - generic [ref=e2073] [cursor=pointer]:
+          - button "GET /goal/context Goal Context" [ref=e2074]:
+            - generic [ref=e2075]: GET
+            - generic [ref=e2076]:
+              - link "/goal/context" [ref=e2078]:
+                - /url: "#/default/goal_context_goal_context_get"
+                - generic [ref=e2079]:
+                  - text: /goal
+                  - text: /context
+              - generic [ref=e2080]: Goal Context
+          - generic "Copy to clipboard"
+          - button "get /goal/context" [ref=e2083]:
+            - img [ref=e2084]
+    - generic [ref=e2088]:
+      - heading "Schemas" [level=4] [ref=e2089] [cursor=pointer]:
+        - button "Schemas" [expanded] [ref=e2090]:
+          - generic [ref=e2091]: Schemas
+          - img [ref=e2092]
+      - generic [ref=e2094]:
+        - article [ref=e2095]:
+          - generic [ref=e2096]:
+            - button "ActionStep" [ref=e2097] [cursor=pointer]:
+              - generic [ref=e2099]: ActionStep
+              - img [ref=e2101]
+            - button "Expand all" [ref=e2103] [cursor=pointer]
+            - strong [ref=e2104]: object
+        - article [ref=e2105]:
+          - generic [ref=e2106]:
+            - button "ApproachRecordRequest" [ref=e2107] [cursor=pointer]:
+              - generic [ref=e2109]: ApproachRecordRequest
+              - img [ref=e2111]
+            - button "Expand all" [ref=e2113] [cursor=pointer]
+            - strong [ref=e2114]: object
+        - article [ref=e2115]:
+          - generic [ref=e2116]:
+            - button "ApproachUpdateRequest" [ref=e2117] [cursor=pointer]:
+              - generic [ref=e2119]: ApproachUpdateRequest
+              - img [ref=e2121]
+            - button "Expand all" [ref=e2123] [cursor=pointer]
+            - strong [ref=e2124]: object
+        - article [ref=e2125]:
+          - generic [ref=e2126]:
+            - button "Body_computer_keyboard_computer_keyboard_post" [ref=e2127] [cursor=pointer]:
+              - generic [ref=e2129]: Body_computer_keyboard_computer_keyboard_post
+              - img [ref=e2131]
+            - button "Expand all" [ref=e2133] [cursor=pointer]
+            - strong [ref=e2134]: object
+        - article [ref=e2135]:
+          - generic [ref=e2136]:
+            - button "ConsensusProposeRequest" [ref=e2137] [cursor=pointer]:
+              - generic [ref=e2139]: ConsensusProposeRequest
+              - img [ref=e2141]
+            - button "Expand all" [ref=e2143] [cursor=pointer]
+            - strong [ref=e2144]: object
+        - article [ref=e2145]:
+          - generic [ref=e2146]:
+            - button "ConsensusVoteRequest" [ref=e2147] [cursor=pointer]:
+              - generic [ref=e2149]: ConsensusVoteRequest
+              - img [ref=e2151]
+            - button "Expand all" [ref=e2153] [cursor=pointer]
+            - strong [ref=e2154]: object
+        - article [ref=e2155]:
+          - generic [ref=e2156]:
+            - button "DynamicApiRequest" [ref=e2157] [cursor=pointer]:
+              - generic [ref=e2159]: DynamicApiRequest
+              - img [ref=e2161]
+            - button "Expand all" [ref=e2163] [cursor=pointer]
+            - strong [ref=e2164]: object
+        - article [ref=e2165]:
+          - generic [ref=e2166]:
+            - button "ExecRequest" [ref=e2167] [cursor=pointer]:
+              - generic [ref=e2169]: ExecRequest
+              - img [ref=e2171]
+            - button "Expand all" [ref=e2173] [cursor=pointer]
+            - strong [ref=e2174]: object
+        - article [ref=e2175]:
+          - generic [ref=e2176]:
+            - button "FingerprintGenerateRequest" [ref=e2177] [cursor=pointer]:
+              - generic [ref=e2179]: FingerprintGenerateRequest
+              - img [ref=e2181]
+            - button "Expand all" [ref=e2183] [cursor=pointer]
+            - strong [ref=e2184]: object
+        - article [ref=e2185]:
+          - generic [ref=e2186]:
+            - button "FormDetectRequest" [ref=e2187] [cursor=pointer]:
+              - generic [ref=e2189]: FormDetectRequest
+              - img [ref=e2191]
+            - button "Expand all" [ref=e2193] [cursor=pointer]
+            - strong [ref=e2194]: object
+        - article [ref=e2195]:
+          - generic [ref=e2196]:
+            - button "GoalSetRequest" [ref=e2197] [cursor=pointer]:
+              - generic [ref=e2199]: GoalSetRequest
+              - img [ref=e2201]
+            - button "Expand all" [ref=e2203] [cursor=pointer]
+            - strong [ref=e2204]: object
+        - article [ref=e2205]:
+          - generic [ref=e2206]:
+            - button "HTTPValidationError" [ref=e2207] [cursor=pointer]:
+              - generic [ref=e2209]: HTTPValidationError
+              - img [ref=e2211]
+            - button "Expand all" [ref=e2213] [cursor=pointer]
+            - strong [ref=e2214]: object
+        - article [ref=e2215]:
+          - generic [ref=e2216]:
+            - button "KnowledgeGraphIngestRequest" [ref=e2217] [cursor=pointer]:
+              - generic [ref=e2219]: KnowledgeGraphIngestRequest
+              - img [ref=e2221]
+            - button "Expand all" [ref=e2223] [cursor=pointer]
+            - strong [ref=e2224]: object
+        - article [ref=e2225]:
+          - generic [ref=e2226]:
+            - button "LocalNoteRequest" [ref=e2227] [cursor=pointer]:
+              - generic [ref=e2229]: LocalNoteRequest
+              - img [ref=e2231]
+            - button "Expand all" [ref=e2233] [cursor=pointer]
+            - strong [ref=e2234]: object
+        - article [ref=e2235]:
+          - generic [ref=e2236]:
+            - button "LoginRequest" [ref=e2237] [cursor=pointer]:
+              - generic [ref=e2239]: LoginRequest
+              - img [ref=e2241]
+            - button "Expand all" [ref=e2243] [cursor=pointer]
+            - strong [ref=e2244]: object
+        - article [ref=e2245]:
+          - generic [ref=e2246]:
+            - button "MemoryEntry" [ref=e2247] [cursor=pointer]:
+              - generic [ref=e2249]: MemoryEntry
+              - img [ref=e2251]
+            - button "Expand all" [ref=e2253] [cursor=pointer]
+            - strong [ref=e2254]: object
+        - article [ref=e2255]:
+          - generic [ref=e2256]:
+            - button "MemorySearch" [ref=e2257] [cursor=pointer]:
+              - generic [ref=e2259]: MemorySearch
+              - img [ref=e2261]
+            - button "Expand all" [ref=e2263] [cursor=pointer]
+            - strong [ref=e2264]: object
+        - article [ref=e2265]:
+          - generic [ref=e2266]:
+            - button "MissionRequest" [ref=e2267] [cursor=pointer]:
+              - generic [ref=e2269]: MissionRequest
+              - img [ref=e2271]
+            - button "Expand all" [ref=e2273] [cursor=pointer]
+            - strong [ref=e2274]: object
+        - article [ref=e2275]:
+          - generic [ref=e2276]:
+            - button "MissionScheduleRequest" [ref=e2277] [cursor=pointer]:
+              - generic [ref=e2279]: MissionScheduleRequest
+              - img [ref=e2281]
+            - button "Expand all" [ref=e2283] [cursor=pointer]
+            - strong [ref=e2284]: object
+        - article [ref=e2285]:
+          - generic [ref=e2286]:
+            - button "MissionStopRequest" [ref=e2287] [cursor=pointer]:
+              - generic [ref=e2289]: MissionStopRequest
+              - img [ref=e2291]
+            - button "Expand all" [ref=e2293] [cursor=pointer]
+            - strong [ref=e2294]: object
+        - article [ref=e2295]:
+          - generic [ref=e2296]:
+            - button "MultiActionRequest" [ref=e2297] [cursor=pointer]:
+              - generic [ref=e2299]: MultiActionRequest
+              - img [ref=e2301]
+            - button "Expand all" [ref=e2303] [cursor=pointer]
+            - strong [ref=e2304]: object
+        - article [ref=e2305]:
+          - generic [ref=e2306]:
+            - button "MultimodalFileRequest" [ref=e2307] [cursor=pointer]:
+              - generic [ref=e2309]: MultimodalFileRequest
+              - img [ref=e2311]
+            - button "Expand all" [ref=e2313] [cursor=pointer]
+            - strong [ref=e2314]: object
+        - article [ref=e2315]:
+          - generic [ref=e2316]:
+            - button "MultimodalImageRequest" [ref=e2317] [cursor=pointer]:
+              - generic [ref=e2319]: MultimodalImageRequest
+              - img [ref=e2321]
+            - button "Expand all" [ref=e2323] [cursor=pointer]
+            - strong [ref=e2324]: object
+        - article [ref=e2325]:
+          - generic [ref=e2326]:
+            - button "MultimodalTextRequest" [ref=e2327] [cursor=pointer]:
+              - generic [ref=e2329]: MultimodalTextRequest
+              - img [ref=e2331]
+            - button "Expand all" [ref=e2333] [cursor=pointer]
+            - strong [ref=e2334]: object
+        - article [ref=e2335]:
+          - generic [ref=e2336]:
+            - button "ObsidianRequest" [ref=e2337] [cursor=pointer]:
+              - generic [ref=e2339]: ObsidianRequest
+              - img [ref=e2341]
+            - button "Expand all" [ref=e2343] [cursor=pointer]
+            - strong [ref=e2344]: object
+        - article [ref=e2345]:
+          - generic [ref=e2346]:
+            - button "P2PQueryRequest" [ref=e2347] [cursor=pointer]:
+              - generic [ref=e2349]: P2PQueryRequest
+              - img [ref=e2351]
+            - button "Expand all" [ref=e2353] [cursor=pointer]
+            - strong [ref=e2354]: object
+        - article [ref=e2355]:
+          - generic [ref=e2356]:
+            - button "PluginChainRequest" [ref=e2357] [cursor=pointer]:
+              - generic [ref=e2359]: PluginChainRequest
+              - img [ref=e2361]
+            - button "Expand all" [ref=e2363] [cursor=pointer]
+            - strong [ref=e2364]: object
+        - article [ref=e2365]:
+          - generic [ref=e2366]:
+            - button "PluginExecuteRequest" [ref=e2367] [cursor=pointer]:
+              - generic [ref=e2369]: PluginExecuteRequest
+              - img [ref=e2371]
+            - button "Expand all" [ref=e2373] [cursor=pointer]
+            - strong [ref=e2374]: object
+        - article [ref=e2375]:
+          - generic [ref=e2376]:
+            - button "ReminderRequest" [ref=e2377] [cursor=pointer]:
+              - generic [ref=e2379]: ReminderRequest
+              - img [ref=e2381]
+            - button "Expand all" [ref=e2383] [cursor=pointer]
+            - strong [ref=e2384]: object
+        - article [ref=e2385]:
+          - generic [ref=e2386]:
+            - button "ResearchRequest" [ref=e2387] [cursor=pointer]:
+              - generic [ref=e2389]: ResearchRequest
+              - img [ref=e2391]
+            - button "Expand all" [ref=e2393] [cursor=pointer]
+            - strong [ref=e2394]: object
+        - article [ref=e2395]:
+          - generic [ref=e2396]:
+            - button "RunRequest" [ref=e2397] [cursor=pointer]:
+              - generic [ref=e2399]: RunRequest
+              - img [ref=e2401]
+            - button "Expand all" [ref=e2403] [cursor=pointer]
+            - strong [ref=e2404]: object
+        - article [ref=e2405]:
+          - generic [ref=e2406]:
+            - button "RunStreamRequest" [ref=e2407] [cursor=pointer]:
+              - generic [ref=e2409]: RunStreamRequest
+              - img [ref=e2411]
+            - button "Expand all" [ref=e2413] [cursor=pointer]
+            - strong [ref=e2414]: object
+        - article [ref=e2415]:
+          - generic [ref=e2416]:
+            - button "ScrapeRequest" [ref=e2417] [cursor=pointer]:
+              - generic [ref=e2419]: ScrapeRequest
+              - img [ref=e2421]
+            - button "Expand all" [ref=e2423] [cursor=pointer]
+            - strong [ref=e2424]: object
+        - article [ref=e2425]:
+          - generic [ref=e2426]:
+            - button "ShadowInterestRequest" [ref=e2427] [cursor=pointer]:
+              - generic [ref=e2429]: ShadowInterestRequest
+              - img [ref=e2431]
+            - button "Expand all" [ref=e2433] [cursor=pointer]
+            - strong [ref=e2434]: object
+        - article [ref=e2435]:
+          - generic [ref=e2436]:
+            - button "ShieldBatchRequest" [ref=e2437] [cursor=pointer]:
+              - generic [ref=e2439]: ShieldBatchRequest
+              - img [ref=e2441]
+            - button "Expand all" [ref=e2443] [cursor=pointer]
+            - strong [ref=e2444]: object
+        - article [ref=e2445]:
+          - generic [ref=e2446]:
+            - button "ShieldRequest" [ref=e2447] [cursor=pointer]:
+              - generic [ref=e2449]: ShieldRequest
+              - img [ref=e2451]
+            - button "Expand all" [ref=e2453] [cursor=pointer]
+            - strong [ref=e2454]: object
+        - article [ref=e2455]:
+          - generic [ref=e2456]:
+            - button "SkillSynthesizeRequest" [ref=e2457] [cursor=pointer]:
+              - generic [ref=e2459]: SkillSynthesizeRequest
+              - img [ref=e2461]
+            - button "Expand all" [ref=e2463] [cursor=pointer]
+            - strong [ref=e2464]: object
+        - article [ref=e2465]:
+          - generic [ref=e2466]:
+            - button "ToolExecRequest" [ref=e2467] [cursor=pointer]:
+              - generic [ref=e2469]: ToolExecRequest
+              - img [ref=e2471]
+            - button "Expand all" [ref=e2473] [cursor=pointer]
+            - strong [ref=e2474]: object
+        - article [ref=e2475]:
+          - generic [ref=e2476]:
+            - button "ToolSaveRequest" [ref=e2477] [cursor=pointer]:
+              - generic [ref=e2479]: ToolSaveRequest
+              - img [ref=e2481]
+            - button "Expand all" [ref=e2483] [cursor=pointer]
+            - strong [ref=e2484]: object
+        - article [ref=e2485]:
+          - generic [ref=e2486]:
+            - button "ValidationError" [ref=e2487] [cursor=pointer]:
+              - generic [ref=e2489]: ValidationError
+              - img [ref=e2491]
+            - button "Expand all" [ref=e2493] [cursor=pointer]
+            - strong [ref=e2494]: object
+        - article [ref=e2495]:
+          - generic [ref=e2496]:
+            - button "VisionGroundRequest" [ref=e2497] [cursor=pointer]:
+              - generic [ref=e2499]: VisionGroundRequest
+              - img [ref=e2501]
+            - button "Expand all" [ref=e2503] [cursor=pointer]
+            - strong [ref=e2504]: object
+        - article [ref=e2505]:
+          - generic [ref=e2506]:
+            - button "VisionOCRRequest" [ref=e2507] [cursor=pointer]:
+              - generic [ref=e2509]: VisionOCRRequest
+              - img [ref=e2511]
+            - button "Expand all" [ref=e2513] [cursor=pointer]
+            - strong [ref=e2514]: object
+        - article [ref=e2515]:
+          - generic [ref=e2516]:
+            - button "VisionUIRequest" [ref=e2517] [cursor=pointer]:
+              - generic [ref=e2519]: VisionUIRequest
+              - img [ref=e2521]
+            - button "Expand all" [ref=e2523] [cursor=pointer]
+            - strong [ref=e2524]: object
+        - article [ref=e2525]:
+          - generic [ref=e2526]:
+            - button "VisionVerifyRequest" [ref=e2527] [cursor=pointer]:
+              - generic [ref=e2529]: VisionVerifyRequest
+              - img [ref=e2531]
+            - button "Expand all" [ref=e2533] [cursor=pointer]
+            - strong [ref=e2534]: object

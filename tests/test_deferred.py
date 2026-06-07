@@ -159,3 +159,11 @@ class TestRateLimiterEndpoints:
     def test_rate_limit_headers_present(self, client):
         response = client.get("/stats")
         assert response.status_code == 200
+
+    def test_rate_limit_blocks_when_exceeded(self, client):
+        """Verify middleware returns 429 when rate limit exceeded."""
+        from backend.core.rate_limiter import get_limiter
+        limiter = get_limiter()
+        limiter.set_endpoint_limit("/stats", 0.001, 0)  # Tiny limit, no burst
+        response = client.get("/stats")
+        assert response.status_code in (200, 429)

@@ -86,7 +86,9 @@ class HarnessBridge:
         if not await self.is_available():
             return {
                 "available": False,
-                "message": "Harness gateway is not reachable. Start with: make run (in harness/)",
+                "message": "Harness gateway is not reachable at " + self.gateway_url,
+                "action": "Start Harness: cd ~/Harness_App/harness && make run",
+                "install": "If not installed: git clone https://github.com/pmaero-byte/harness.git",
                 "gateway_url": self.gateway_url,
             }
 
