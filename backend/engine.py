@@ -25,7 +25,7 @@ Endpoints:
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 import uvicorn
 import asyncio
 import time
@@ -1434,6 +1434,272 @@ async def save_research_note(req: LocalNoteRequest):
 
 
 # ===================================================================
+# PHASE 2 — COMPUTER USE LAYER
+# OS-level control: screen capture, mouse, keyboard, app launch
+# ===================================================================
+
+import subprocess, base64, platform
+
+@app.get("/computer/capture")
+async def computer_capture(region: str = "full"):
+    """Capture screen region. region: 'full' | 'frontmost'.
+    Returns base64-encoded PNG. Requires macOS accessibility permissions."""
+    import tempfile, os
+    if platform.system() != "Darwin":
+        return {"error": "Screen capture only supported on macOS"}
+    tmp = tempfile.mktemp(suffix=".png")
+    try:
+        if region == "frontmost":
+            result = subprocess.run(["screencapture", "-x", "-l", 
+                          str(_get_frontmost_window_id()), tmp],
+                         capture_output=True, timeout=10)
+        else:
+            result = subprocess.run(["screencapture", "-x", tmp],
+                         capture_output=True, timeout=10)
+        
+        if result.returncode != 0:
+            return {"error": "Screen capture failed. Grant accessibility permissions in System Settings → Privacy & Security → Accessibility",
+                    "details": result.stderr.decode() if result.stderr else ""}
+        
+        if not os.path.exists(tmp) or os.path.getsize(tmp) == 0:
+            return {"error": "Screen capture produced no output. Check accessibility permissions."}
+        
+        with open(tmp, "rb") as f:
+            data = base64.b64encode(f.read()).decode()
+        return {"image_data": data, "format": "png", "region": region}
+    except PermissionError:
+        return {"error": "Permission denied. Grant accessibility permissions in System Settings → Privacy & Security → Accessibility"}
+    except subprocess.TimeoutExpired:
+        return {"error": "Screen capture timed out"}
+    except Exception as e:
+        return {"error": f"Screen capture failed: {str(e)}"}
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+
+def _get_frontmost_window_id() -> int:
+    """Get the window ID of the frontmost application."""
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", 'tell application "System Events" to get id of first window of first process whose frontmost is true'],
+            capture_output=True, text=True, timeout=5
+        )
+        return int(result.stdout.strip())
+    except Exception:
+        return 0
+
+
+@app.post("/computer/mouse")
+async def computer_mouse(action: str, x: int = 0, y: int = 0, button: str = "left"):
+    """Mouse control. action: 'move' | 'click' | 'doubleclick' | 'rightclick' | 'drag'.
+    Uses macOS osascript (no external deps)."""
+    if platform.system() != "Darwin":
+        return {"error": "Mouse control only supported on macOS"}
+    
+    if action == "move":
+        script = f'tell application "System Events" to set position of front window to {{{x}, {y}}}'
+    elif action == "click":
+        script = f'do shell script "cliclick c:{x},{y}"'
+    elif action == "doubleclick":
+        script = f'do shell script "cliclick dc:{x},{y}"'
+    elif action == "rightclick":
+        script = f'do shell script "cliclick rc:{x},{y}"'
+    elif action == "drag":
+        script = f'do shell script "cliclick dd:{x},{y} du:{x+100},{y+100}"'
+    else:
+        return {"error": f"Unknown action: {action}"}
+    
+    try:
+        result = subprocess.run(["osascript", "-e", script],
+                              capture_output=True, text=True, timeout=10)
+        return {"success": result.returncode == 0, "action": action, "x": x, "y": y}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/computer/keyboard")
+async def computer_keyboard(text: str = "", key: str = "", modifiers: list = []):
+    """Keyboard input. Use 'text' to type strings, 'key' for special keys.
+    modifiers: ['command', 'shift', 'option', 'control']"""
+    if platform.system() != "Darwin":
+        return {"error": "Keyboard control only supported on macOS"}
+    
+    if text:
+        # Type text character by character via clipboard (faster than keystroke)
+        script = f'''
+        set the clipboard to "{text}"
+        tell application "System Events" to keystroke "v" using command down
+        '''
+    elif key:
+        mod_str = " using {" + ", ".join(f"{m} down" for m in (modifiers or [])) + "}" if modifiers else ""
+        script = f'tell application "System Events" to key code {_key_to_code(key)}{mod_str}'
+    else:
+        return {"error": "Provide 'text' or 'key'"}
+    
+    try:
+        result = subprocess.run(["osascript", "-e", script],
+                              capture_output=True, text=True, timeout=10)
+        return {"success": result.returncode == 0, "text": text, "key": key}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def _key_to_code(key: str) -> int:
+    """Map key names to macOS key codes."""
+    codes = {
+        "return": 36, "enter": 76, "tab": 48, "space": 49,
+        "delete": 51, "escape": 53, "up": 126, "down": 125,
+        "left": 123, "right": 124, "home": 115, "end": 119,
+        "pageup": 116, "pagedown": 121, "f1": 122, "f2": 120,
+        "f3": 99, "f4": 118, "f5": 96, "f6": 97, "f7": 98,
+        "f8": 100, "f9": 101, "f10": 109, "f11": 103, "f12": 111,
+    }
+    return codes.get(key.lower(), 0)
+
+
+@app.post("/computer/launch")
+async def computer_launch(app_name: str):
+    """Launch a macOS application by name."""
+    if platform.system() != "Darwin":
+        return {"error": "App launch only supported on macOS"}
+    try:
+        subprocess.Popen(["open", "-a", app_name])
+        return {"success": True, "app": app_name}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/computer/apps")
+async def computer_list_apps():
+    """List installed macOS applications."""
+    if platform.system() != "Darwin":
+        return {"error": "App listing only supported on macOS"}
+    try:
+        result = subprocess.run(
+            ["mdfind", "kMDItemKind == 'Application'"],
+            capture_output=True, text=True, timeout=10
+        )
+        apps = [line.split("/")[-1].replace(".app", "") 
+                for line in result.stdout.strip().split("\n") if line]
+        return {"apps": sorted(apps)[:50], "total": len(apps)}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ===================================================================
+# PHASE 3 — VISION ENGINE
+# OCR, UI element detection, screen state verification
+# ===================================================================
+
+class VisionOCRRequest(BaseModel):
+    image_data: str  # base64-encoded image
+    language: str = "eng"
+
+class VisionUIRequest(BaseModel):
+    image_data: str  # base64-encoded image
+
+class VisionVerifyRequest(BaseModel):
+    image_data: str  # base64-encoded image
+    expected: str    # what we expect to see
+
+
+@app.post("/vision/ocr")
+async def vision_ocr(req: VisionOCRRequest):
+    """Extract all text from a screenshot using LLM vision.
+    Sends image to local Ollama LLM for text extraction."""
+    try:
+        response = httpx.post(
+            f"{LATEST_LLM_CONFIG['baseUrl']}/chat/completions",
+            json={
+                "model": LATEST_LLM_CONFIG["modelId"],
+                "messages": [
+                    {"role": "system", "content": "Extract ALL readable text from this image. Return only the text, preserving layout."},
+                    {"role": "user", "content": [
+                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{req.image_data}"}},
+                        {"type": "text", "text": "Extract all text from this image."}
+                    ]}
+                ],
+                "stream": False
+            },
+            timeout=60
+        )
+        result = response.json()
+        text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+        return {"text": text, "language": req.language}
+    except Exception as e:
+        return {"text": "", "error": str(e)}
+
+
+@app.post("/vision/ui-elements")
+async def vision_ui_elements(req: VisionUIRequest):
+    """Detect UI elements (buttons, fields, links) in a screenshot.
+    Returns structured JSON of interactive elements."""
+    try:
+        response = httpx.post(
+            f"{LATEST_LLM_CONFIG['baseUrl']}/chat/completions",
+            json={
+                "model": LATEST_LLM_CONFIG["modelId"],
+                "messages": [
+                    {"role": "system", "content": """Identify all interactive UI elements in this screenshot. 
+Return as JSON array: [{"type": "button|textfield|link|dropdown|checkbox", "label": "...", "bounds": [x,y,w,h], "action": "what it does"}]
+Only include elements you can clearly identify."""},
+                    {"role": "user", "content": [
+                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{req.image_data}"}},
+                        {"type": "text", "text": "Identify all interactive UI elements."}
+                    ]}
+                ],
+                "stream": False
+            },
+            timeout=60
+        )
+        result = response.json()
+        content = result.get("choices", [{}])[0].get("message", {}).get("content", "[]")
+        # Try to parse JSON from response
+        import json
+        try:
+            elements = json.loads(content)
+        except json.JSONDecodeError:
+            elements = [{"raw": content}]
+        return {"elements": elements, "count": len(elements)}
+    except Exception as e:
+        return {"elements": [], "error": str(e)}
+
+
+@app.post("/vision/verify")
+async def vision_verify(req: VisionVerifyRequest):
+    """Verify screen state matches expected description.
+    Returns match confidence and actual vs expected."""
+    try:
+        response = httpx.post(
+            f"{LATEST_LLM_CONFIG['baseUrl']}/chat/completions",
+            json={
+                "model": LATEST_LLM_CONFIG["modelId"],
+                "messages": [
+                    {"role": "system", "content": """Compare the expected screen state with what you actually see.
+Return JSON: {"match": true/false, "confidence": 0.0-1.0, "actual": "what you see", "differences": ["list of differences"]}"""},
+                    {"role": "user", "content": [
+                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{req.image_data}"}},
+                        {"type": "text", "text": f"Expected: {req.expected}\n\nDoes the screen match this description?"}
+                    ]}
+                ],
+                "stream": False
+            },
+            timeout=60
+        )
+        result = response.json()
+        content = result.get("choices", [{}])[0].get("message", {}).get("content", "{}")
+        import json
+        try:
+            verification = json.loads(content)
+        except json.JSONDecodeError:
+            verification = {"match": False, "raw": content}
+        return verification
+    except Exception as e:
+        return {"match": False, "error": str(e)}
+
+
+# ===================================================================
 # PHASE 4: KNOWLEDGE GRAPH
 # ===================================================================
 
@@ -2252,6 +2518,81 @@ async def peers_tools_pull(name: str):
     """Pull a tool from a peer node on the mesh."""
     return {"status": "not_found", "name": name,
             "message": "No peers connected. Enable P2P discovery first."}
+
+
+# ===================================================================
+# PHASE 5 — PLUGIN SYSTEM
+# Extensible task execution with sandboxed plugins
+# ===================================================================
+
+from backend.plugins.manager import get_plugin_manager, PluginResult
+
+class PluginExecuteRequest(BaseModel):
+    plugin_name: str
+    params: Dict[str, Any] = {}
+    timeout: int = 60
+
+class PluginChainRequest(BaseModel):
+    steps: List[Dict[str, Any]]
+
+
+@app.get("/plugins/list")
+async def list_plugins():
+    """List all available plugins."""
+    manager = get_plugin_manager()
+    return {"plugins": manager.list_plugins(), "count": len(manager.list_plugins())}
+
+
+@app.get("/plugins/{plugin_name}")
+async def get_plugin_info(plugin_name: str):
+    """Get detailed info about a specific plugin."""
+    manager = get_plugin_manager()
+    plugin = manager.get(plugin_name)
+    if not plugin:
+        raise HTTPException(status_code=404, detail=f"Plugin not found: {plugin_name}")
+    return {
+        "name": plugin.name,
+        "description": plugin.description,
+        "version": plugin.version,
+        "capabilities": plugin.capabilities,
+        "requires_network": plugin.requires_network,
+    }
+
+
+@app.post("/plugins/execute")
+async def execute_plugin(req: PluginExecuteRequest):
+    """Execute a plugin by name with given parameters."""
+    manager = get_plugin_manager()
+    result = await manager.execute(req.plugin_name, req.params)
+    return {
+        "success": result.success,
+        "data": result.data,
+        "error": result.error,
+        "duration_ms": result.duration_ms,
+        "plugin_name": result.plugin_name,
+        "metadata": result.metadata,
+    }
+
+
+@app.post("/plugins/chain")
+async def execute_plugin_chain(req: PluginChainRequest):
+    """Execute a chain of plugins, passing output between them."""
+    manager = get_plugin_manager()
+    results = await manager.execute_chain(req.steps)
+    return {
+        "results": [
+            {
+                "success": r.success,
+                "data": r.data,
+                "error": r.error,
+                "duration_ms": r.duration_ms,
+                "plugin_name": r.plugin_name,
+            }
+            for r in results
+        ],
+        "total_steps": len(results),
+        "all_success": all(r.success for r in results),
+    }
 
 
 # ===================================================================
