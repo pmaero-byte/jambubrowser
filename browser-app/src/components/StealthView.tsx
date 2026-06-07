@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Shield, Globe, Lock, Eye, Server, Plus, Zap } from "lucide-react";
 
@@ -21,19 +21,29 @@ export const StealthView = ({ privacyScore, localIp, onScanPeers, onSaveCredenti
   const [scanning, setScanning] = useState(false);
   const [displayIp, setDisplayIp] = useState(localIp);
   const [glitching, setGlitching] = useState(false);
+  const scanInterval = useRef<number | null>(null);
+  const glitchTimer = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (scanInterval.current) window.clearInterval(scanInterval.current);
+    if (glitchTimer.current) window.clearTimeout(glitchTimer.current);
+  }, []);
 
   const handleScan = () => {
+    if (scanInterval.current) window.clearInterval(scanInterval.current);
+    if (glitchTimer.current) window.clearTimeout(glitchTimer.current);
     setScanning(true);
     setGlitching(true);
     let i = 0;
-    const id = setInterval(() => {
+    scanInterval.current = window.setInterval(() => {
       setDisplayIp(FAKED_IPS[i % FAKED_IPS.length]);
       i++;
       if (i > 8) {
-        clearInterval(id);
+        if (scanInterval.current) window.clearInterval(scanInterval.current);
+        scanInterval.current = null;
         setDisplayIp(FAKED_IPS[Math.floor(Math.random() * FAKED_IPS.length)]);
         setScanning(false);
-        setTimeout(() => setGlitching(false), 400);
+        glitchTimer.current = window.setTimeout(() => setGlitching(false), 400);
       }
     }, 120);
     onScanPeers();

@@ -160,15 +160,16 @@ class ConnectionManager:
         if client_id in self.active_connections:
             try:
                 await self.active_connections[client_id].send_text(message)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[ws] broadcast to {client_id} failed: {e!r}")
+                self.disconnect(client_id)
 
     async def broadcast_all(self, message: str):
         for ws in list(self.active_connections.values()):
             try:
                 await ws.send_text(message)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[ws] broadcast_all failed: {e!r}")
 
 
 manager = ConnectionManager()
@@ -180,6 +181,20 @@ active_tasks: Dict[str, str] = {}
 cancel_flags: Dict[str, asyncio.Event] = {}
 _task_token_starts: Dict[str, float] = {}
 _task_token_counts: Dict[str, int] = {}
+
+
+def safe_task(coro, label: str = "background") -> asyncio.Task:
+    """Wrap a coroutine in a task that logs exceptions instead of swallowing them."""
+    task = asyncio.create_task(coro)
+    def _done(t: asyncio.Task) -> None:
+        try:
+            t.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            print(f"[safe_task:{label}] unhandled exception: {exc!r}")
+    task.add_done_callback(_done)
+    return task
 
 
 def _new_task_id() -> str:
@@ -508,8 +523,8 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
 
-    tasks.append(asyncio.create_task(memory_audit()))
-    tasks.append(asyncio.create_task(curiosity_loop()))
+    tasks.append(safe_task(memory_audit(), "memory_audit"))
+    tasks.append(safe_task(curiosity_loop(), "curiosity_loop"))
 
     yield  # Application runs here
 
@@ -617,7 +632,7 @@ async def interrupt_task(task_id: str, req: InterruptRequest):
         return {"ok": True, "interrupted": task_id, "new_task_id": None}
 
     await broadcast_task_start(req.client_id, new_query, new_id)
-    asyncio.create_task(_run_followup(req.client_id, new_query, new_id))
+    safe_task(_run_followup(req.client_id, new_query, new_id), "run_followup")
     return {"ok": True, "interrupted": task_id, "new_task_id": new_id}
 
 
@@ -625,7 +640,13 @@ async def _run_followup(client_id: str, query: str, task_id: str) -> None:
     try:
         await broadcast_agent_state(client_id, "thinking")
         await broadcast_agent_telemetry(client_id, action=f"New instruction: {query[:80]}")
+        if is_cancelled(task_id):
+            await broadcast_task_end(client_id, task_id, status="cancelled")
+            return
         await _brain_only_research(query)
+        if is_cancelled(task_id):
+            await broadcast_task_end(client_id, task_id, status="cancelled")
+            return
         await broadcast_task_end(client_id, task_id, status="completed", result_preview=query)
     except Exception as e:
         await broadcast_task_end(client_id, task_id, status="failed", result_preview=str(e))
@@ -705,7 +726,8 @@ async def research(req: ResearchRequest):
                     if r.status_code == 200:
                         try:
                             all_res.extend(r.json().get("results", []))
-                        except Exception:
+                        except Exception as e:
+                            print(f"[searxng] parse failed: {e!r}")
                             continue
 
         # Deduplicate and rank
@@ -799,7 +821,8 @@ async def research(req: ResearchRequest):
                     try:
                         resp = await client.get(url, timeout=15.0, follow_redirects=True)
                         results.append(resp)
-                    except Exception:
+                    except Exception as e:
+                        print(f"[fetch] {url} failed: {e!r}")
                         results.append(Exception(f"Failed to fetch {url}"))
 
         crawled = []
@@ -1374,7 +1397,7 @@ async def _brain_only_research(query: str) -> dict:
 
         if context_text and scored:
             try:
-                answer_text, _ = await _call_llm(
+                answer_text, usage = await _call_llm(
                     prompt=f"Based on this research context, provide a concise answer to: '{query}'\n\nContext:\n{context_text[:3000]}",
                     max_tokens=500,
                     temperature=0.3,
@@ -1382,8 +1405,12 @@ async def _brain_only_research(query: str) -> dict:
                 )
                 if answer_text:
                     answer = answer_text
-            except Exception:
-                pass
+                    for cid, tid in list(active_tasks.items()):
+                        if tid:
+                            completion = usage.get("completion_tokens", 0) or len(answer_text.split())
+                            _task_token_counts[tid] = _task_token_counts.get(tid, 0) + completion
+            except Exception as e:
+                print(f"[brain_only] LLM synthesis failed: {e!r}")
 
         return {
             "answer": answer,
@@ -1544,7 +1571,7 @@ async def start_mission_scheduler():
         on_complete=lambda m, r: notifier.send_mission_alert(m.query[:50], r[:200]),
         on_finding=lambda m, r: notifier.send_mission_alert(m.query[:50], r[:200]),
     )
-    asyncio.create_task(scheduler.run_loop())
+    safe_task(scheduler.run_loop(), "scheduler")
     return {"status": "started", "missions_loaded": len(scheduler.list_missions())}
 
 
@@ -1565,7 +1592,7 @@ async def start_shadow_browser():
     """Start the autonomous shadow browser background loop."""
     from backend.modules.shadow_browser import get_shadow_browser
     shadow = get_shadow_browser()
-    asyncio.create_task(shadow.run_loop())
+    safe_task(shadow.run_loop(), "shadow")
     return {"status": "started"}
 
 
@@ -1963,21 +1990,22 @@ async def vision_ocr(req: VisionOCRRequest):
     """Extract all text from a screenshot using LLM vision.
     Sends image to local Ollama LLM for text extraction."""
     try:
-        response = httpx.post(
-            f"{LATEST_LLM_CONFIG['baseUrl']}/chat/completions",
-            json={
-                "model": LATEST_LLM_CONFIG["modelId"],
-                "messages": [
-                    {"role": "system", "content": "Extract ALL readable text from this image. Return only the text, preserving layout."},
-                    {"role": "user", "content": [
-                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{req.image_data}"}},
-                        {"type": "text", "text": "Extract all text from this image."}
-                    ]}
-                ],
-                "stream": False
-            },
-            timeout=60
-        )
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{LATEST_LLM_CONFIG['baseUrl']}/chat/completions",
+                json={
+                    "model": LATEST_LLM_CONFIG["modelId"],
+                    "messages": [
+                        {"role": "system", "content": "Extract ALL readable text from this image. Return only the text, preserving layout."},
+                        {"role": "user", "content": [
+                            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{req.image_data}"}},
+                            {"type": "text", "text": "Extract all text from this image."}
+                        ]}
+                    ],
+                    "stream": False
+                },
+                timeout=60
+            )
         result = response.json()
         text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
         return {"text": text, "language": req.language}
@@ -2141,7 +2169,7 @@ async def p2p_start_discovery():
     """Start the background peer discovery loop."""
     from backend.modules.p2p_discovery import get_p2p
     p2p = get_p2p()
-    asyncio.create_task(p2p.run_discovery_loop())
+    safe_task(p2p.run_discovery_loop(), "p2p_discovery")
     return {"status": "started"}
 
 

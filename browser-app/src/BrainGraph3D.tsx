@@ -75,27 +75,32 @@ const BrainMesh = ({ nodes, edges }: { nodes: NodeData[], edges: EdgeData[] }) =
     );
 };
 
-export const BrainGraph3D = ({ data }: { data: any }) => {
+interface GraphData {
+    nodes: { id: number; label?: string }[];
+    edges: { source: number; target: number; strength?: number }[];
+}
+
+export const BrainGraph3D = ({ data }: { data: GraphData }) => {
     const { nodes, edges } = useMemo(() => {
         if (!data || !data.nodes) return { nodes: [], edges: [] };
 
         const nodeMap = new Map<number, NodeData>();
-        const processedNodes = data.nodes.map((n: any, i: number) => {
+        const processedNodes = data.nodes.map((n, i) => {
             const phi = Math.acos(-1 + (2 * i) / data.nodes.length);
             const theta = Math.sqrt(data.nodes.length * Math.PI) * phi;
             const pos = new THREE.Vector3().setFromSphericalCoords(5, phi, theta);
-            
-            const node = { id: n.id, label: n.label, pos };
+
+            const node = { id: n.id, label: n.label ?? "untitled", pos };
             nodeMap.set(n.id, node);
             return node;
         });
 
-        const processedEdges = data.edges.map((e: any) => ({
+        const processedEdges = data.edges.map((e) => ({
             start: nodeMap.get(e.source)?.pos || new THREE.Vector3(),
             end: nodeMap.get(e.target)?.pos || new THREE.Vector3(),
             source_id: e.source,
             target_id: e.target
-        })).filter((e: any) => e.start.length() > 0 && e.end.length() > 0);
+        })).filter((e) => e.start.length() > 0 && e.end.length() > 0);
 
         return { nodes: processedNodes, edges: processedEdges };
     }, [data]);

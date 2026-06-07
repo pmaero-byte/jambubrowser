@@ -21,7 +21,8 @@ import {
   ArrowLeft,
   ArrowRight,
   RotateCw,
-  Search
+  Search,
+  ExternalLink
 } from "lucide-react";
 import { localFetch, isTauri } from "./utils/api";
 import { BrainGraph3D } from "./BrainGraph3D";
@@ -160,6 +161,12 @@ function App() {
       ws.onclose = () => {
         if (!alive) return;
         setWsConnected(false);
+        if (taskActive) {
+          setTaskActive(false);
+          setCurrentTaskId(null);
+          setAgentState("idle");
+          setTargetZone("center");
+        }
         reconnectTimer = window.setTimeout(connect, 2000);
       };
       ws.onerror = () => { ws?.close(); };
@@ -201,7 +208,7 @@ function App() {
                 setTargetZone("center");
               }, 1500);
             }
-            if (currentTaskId === d.task_id) setCurrentTaskId(null);
+            if (d.task_id != null && currentTaskId === d.task_id) setCurrentTaskId(null);
           }
         } catch { /* non-JSON messages ignored */ }
       };
@@ -226,14 +233,36 @@ function App() {
   const [browserInput, setBrowserInput] = useState("");
 
   const navigateToUrl = (url: string) => {
-    const target = url.startsWith('http') ? url : `https://${url}`;
+    let target = url.trim();
+    if (!target) return;
+    if (!/^https?:\/\//i.test(target)) {
+      target = target.includes('.') ? `https://${target}` : `https://www.google.com/search?q=${encodeURIComponent(target)}`;
+    }
     setBrowserUrl(target);
     setBrowserInput(target);
     setActiveTab('browser');
+    setBrowserLoadError(null);
   };
   const handleBrowserSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     navigateToUrl(browserInput);
+  };
+  const [browserLoadError, setBrowserLoadError] = useState<string | null>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const reloadIframe = () => {
+    if (iframeRef.current) {
+      try { iframeRef.current.contentWindow?.location.reload(); } catch { setBrowserUrl(u => u + '#r'); }
+    }
+  };
+  const goBack = () => {
+    if (iframeRef.current) {
+      try { iframeRef.current.contentWindow?.history.back(); } catch { /* cross-origin */ }
+    }
+  };
+  const goForward = () => {
+    if (iframeRef.current) {
+      try { iframeRef.current.contentWindow?.history.forward(); } catch { /* cross-origin */ }
+    }
   };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -330,10 +359,15 @@ function App() {
     rec.onstart = () => setIsListening(true);
     rec.onresult = (e: any) => setInput(e.results[0][0].transcript);
     rec.onend = () => setIsListening(false);
-    rec.start();
+    rec.onerror = (e: any) => { setIsListening(false); addNotification(`Speech error: ${e.error || "unknown"}`); };
+    try { rec.start(); } catch (e) { setIsListening(false); addNotification("Could not start speech recognition."); }
   };
 
   const saveToVault = (domain: string, user: string, pass: string) => {
+    if (vault.some(v => v.domain === domain && v.user === user)) {
+      addNotification(`Credentials for ${domain} (${user}) already exist.`);
+      return;
+    }
     const newVault = [...vault, { domain, user, pass }];
     setVault(newVault);
     localStorage.setItem('agent_vault', JSON.stringify(newVault));
@@ -344,23 +378,25 @@ function App() {
     setStatus(`Pulling tool ${name} from peer...`);
     try {
       const resp = await fetch(`http://${peerIp}:8001/peers/tools/pull?name=${name}`);
+      if (!resp.ok) throw new Error(`Peer returned ${resp.status}`);
       const data = await resp.json();
       if (data.code) {
         await localFetch('http://localhost:8001/tool/save', 'POST', { name: data.name, description: "Pulled from Peer Mesh", code: data.code });
         addNotification(`Skill '${name}' installed from network.`);
         fetch('http://localhost:8001/tools').then(r => r.json()).then(d => setTools(d.tools));
       }
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error(e); addNotification(`Failed to pull tool: ${(e as Error).message}`); }
     setStatus("Local LLM & Search Active");
   };
 
   const discoverPeers = async () => {
     setStatus("Scanning local network for peers...");
+    setPeers([]);
     try {
       const resp = await fetch('http://localhost:8001/peers/discover');
       const data = await resp.json();
-      setPeers(data.peers);
-      addNotification(`Found ${data.peers.length} research peers.`);
+      setPeers(data.peers || []);
+      addNotification(`Found ${(data.peers || []).length} research peers.`);
     } catch (e) { console.error(e); }
     setStatus("Local LLM & Search Active");
   };
@@ -371,6 +407,10 @@ function App() {
       setDeepResearch(true); setTemperature(1.2);
       setStealthConfig({ ...stealthConfig, torRouting: true, incognito: true, intensity: "high" });
       addNotification("🔥 GOD MODE ACTIVE.");
+    } else {
+      setDeepResearch(false); setTemperature(0.7);
+      setStealthConfig({ ...stealthConfig, torRouting: false, incognito: false, intensity: "medium" });
+      addNotification("God mode off — back to safe defaults.");
     }
   };
 
@@ -402,7 +442,15 @@ function App() {
     const cid = Math.random().toString(36).substring(7);
     try {
       ws = new WebSocket(`ws://localhost:8001/ws/${cid}`);
-      ws.onmessage = (ev) => { setCurrentLogs(prev => [...prev, ev.data]); };
+      ws.onmessage = (ev) => {
+        try {
+          const parsed = JSON.parse(ev.data);
+          if (parsed && typeof parsed === "object" && typeof parsed.type === "string" && parsed.type.startsWith("agent.")) {
+            return;
+          }
+        } catch { /* not JSON, treat as plain log line */ }
+        setCurrentLogs(prev => [...prev, ev.data]);
+      };
     } catch (e) {}
 
     try {
@@ -574,12 +622,12 @@ function App() {
            {activeTab === 'browser' ? (
             <div className="browser-view">
               <form className="browser-urlbar glass" onSubmit={handleBrowserSubmit}>
-                <button type="button" className="browser-nav-btn" onClick={() => setBrowserUrl(browserUrl)}><ArrowLeft size={16}/></button>
-                <button type="button" className="browser-nav-btn" onClick={() => setBrowserUrl(browserUrl)}><ArrowRight size={16}/></button>
-                <button type="button" className="browser-nav-btn" onClick={() => setBrowserUrl(browserUrl + '')}><RotateCw size={16}/></button>
+                <button type="button" className="browser-nav-btn" onClick={goBack} title="Back"><ArrowLeft size={16}/></button>
+                <button type="button" className="browser-nav-btn" onClick={goForward} title="Forward"><ArrowRight size={16}/></button>
+                <button type="button" className="browser-nav-btn" onClick={reloadIframe} title="Reload"><RotateCw size={16}/></button>
                 <Globe size={14} style={{opacity:0.5}}/>
-                <input 
-                  value={browserInput || browserUrl} 
+                <input
+                  value={browserInput || browserUrl}
                   onChange={e => setBrowserInput(e.target.value)}
                   onFocus={() => setBrowserInput(browserUrl)}
                   placeholder="Enter URL or search..."
@@ -587,12 +635,25 @@ function App() {
                 <button type="submit"><Search size={16}/></button>
               </form>
               <div className="browser-frame">
-                <iframe 
-                  src={browserUrl}
-                  title="Jambu Browser"
-                  sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
-                  style={{ width: '100%', height: '100%', border: 'none', borderRadius: '12px' }}
-                />
+                {browserLoadError ? (
+                  <div className="browser-blocked">
+                    <Shield size={48} color="#ffcd75" />
+                    <h3>This site can't be embedded</h3>
+                    <p>{browserLoadError} blocks framing for security. Open it in a new tab instead.</p>
+                    <a href={browserUrl} target="_blank" rel="noopener noreferrer" className="browser-open-external">
+                      Open <ExternalLink size={12} /> in new tab
+                    </a>
+                  </div>
+                ) : (
+                  <iframe
+                    ref={iframeRef}
+                    src={browserUrl}
+                    title="Jambu Browser"
+                    sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
+                    onError={() => setBrowserLoadError("The site")}
+                    style={{ width: '100%', height: '100%', border: 'none', borderRadius: '12px' }}
+                  />
+                )}
               </div>
             </div>
           ) : activeTab === 'chat' ? (

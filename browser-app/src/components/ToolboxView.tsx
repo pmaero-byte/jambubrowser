@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Wrench, Plus, Download, Sparkles, Terminal, Globe, Bot } from "lucide-react";
 
@@ -32,11 +32,17 @@ const CATEGORY_COLOR: Record<string, string> = {
 
 export const ToolboxView = ({ tools, remoteTools, onPullRemote, onCreateSample }: ToolboxViewProps) => {
   const [creating, setCreating] = useState(false);
+  const createTimer = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (createTimer.current) window.clearTimeout(createTimer.current);
+  }, []);
 
   const handleCreate = async () => {
     setCreating(true);
     onCreateSample();
-    setTimeout(() => setCreating(false), 1200);
+    if (createTimer.current) window.clearTimeout(createTimer.current);
+    createTimer.current = window.setTimeout(() => setCreating(false), 1200);
   };
 
   return (
