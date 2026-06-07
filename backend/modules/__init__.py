@@ -72,3 +72,6 @@ from backend.modules.model_manager import (
 from backend.modules.harness_bridge import (
     HarnessBridge, HarnessResult, get_harness_bridge,
 )
+from backend.modules.goal_orchestrator import (
+    GoalOrchestrator, Goal, Approach, get_goal_orchestrator,
+)

@@ -2488,9 +2488,7 @@ async def v1_health_detailed():
 async def analytics_summary(days: int = 7):
     """Return analytics summary (matches Harness's analytics engine)."""
     return get_analytics_summary(days)
-=======
-# BROWSER-APP COMPATIBILITY ENDPOINTS
-# ===================================================================
+
 
 @app.get("/benchmark")
 async def benchmark():
@@ -2593,6 +2591,147 @@ async def execute_plugin_chain(req: PluginChainRequest):
         "total_steps": len(results),
         "all_success": all(r.success for r in results),
     }
+=======
+# GOAL ORCHESTRATOR — SOVEREIGN GOAL-DRIVEN AGENT
+# ===================================================================
+
+class GoalSetRequest(BaseModel):
+    title: str
+    description: str
+    success_criteria: List[str] = []
+    constraints: List[str] = []
+    priority: int = 3
+
+
+class ApproachRecordRequest(BaseModel):
+    goal_id: str = None
+    strategy: str
+    hypothesis: str = ""
+    iteration: int = None
+
+
+class ApproachUpdateRequest(BaseModel):
+    approach_id: str
+    result: str  # success, falsified, partial
+    evidence: str = ""
+    learning: str = ""
+    next_target: str = ""
+
+
+@app.post("/goal/set")
+async def goal_set(req: GoalSetRequest):
+    """Set the browser's sovereign goal. Injected into all subsequent prompts."""
+    from backend.modules.goal_orchestrator import get_goal_orchestrator
+    orch = get_goal_orchestrator()
+    goal = orch.set_goal(req.title, req.description,
+                          req.success_criteria, req.constraints, req.priority)
+    return {"status": "goal_set", "goal": {
+        "id": goal.id, "title": goal.title, "status": goal.status,
+        "priority": goal.priority, "approaches_tried": goal.approaches_tried,
+    }}
+
+
+@app.get("/goal/active")
+async def goal_active():
+    """Get the currently active sovereign goal."""
+    from backend.modules.goal_orchestrator import get_goal_orchestrator
+    orch = get_goal_orchestrator()
+    goal = orch.get_active_goal()
+    if not goal:
+        return {"active": False, "message": "No active goal. Set one with POST /goal/set"}
+    return {"active": True, "goal": {
+        "id": goal.id, "title": goal.title, "description": goal.description,
+        "status": goal.status, "priority": goal.priority,
+        "approaches_tried": goal.approaches_tried,
+        "approaches_succeeded": goal.approaches_succeeded,
+        "success_criteria": goal.success_criteria,
+        "constraints": goal.constraints,
+    }}
+
+
+@app.get("/goal/list")
+async def goal_list(status: str = None):
+    """List all goals, optionally filtered by status."""
+    from backend.modules.goal_orchestrator import get_goal_orchestrator
+    goals = get_goal_orchestrator().list_goals(status)
+    return {"goals": [
+        {"id": g.id, "title": g.title, "status": g.status,
+         "priority": g.priority, "approaches_tried": g.approaches_tried}
+        for g in goals
+    ]}
+
+
+@app.post("/goal/achieve")
+async def goal_achieve(goal_id: str = None):
+    """Mark the active goal as achieved."""
+    from backend.modules.goal_orchestrator import get_goal_orchestrator
+    success = get_goal_orchestrator().achieve_goal(goal_id)
+    return {"status": "achieved" if success else "not_found"}
+
+
+@app.post("/goal/block")
+async def goal_block(goal_id: str = None, reason: str = ""):
+    """Mark a goal as blocked."""
+    from backend.modules.goal_orchestrator import get_goal_orchestrator
+    get_goal_orchestrator().block_goal(goal_id, reason)
+    return {"status": "blocked"}
+
+
+@app.post("/goal/approach")
+async def goal_record_approach(req: ApproachRecordRequest):
+    """Record a new approach attempt toward the active goal."""
+    from backend.modules.goal_orchestrator import get_goal_orchestrator
+    orch = get_goal_orchestrator()
+    approach = orch.record_approach(req.goal_id, req.strategy,
+                                     req.hypothesis, req.iteration)
+    return {"status": "recorded", "approach": {
+        "id": approach.id, "iteration": approach.iteration,
+        "strategy": approach.strategy[:100],
+    }}
+
+
+@app.post("/goal/approach/update")
+async def goal_update_approach(req: ApproachUpdateRequest):
+    """Update an approach with results, learning, and next target."""
+    from backend.modules.goal_orchestrator import get_goal_orchestrator
+    success = get_goal_orchestrator().update_approach(
+        req.approach_id, req.result, req.evidence, req.learning, req.next_target)
+    return {"status": "updated" if success else "not_found"}
+
+
+@app.get("/goal/approaches")
+async def goal_approaches(goal_id: str = None, limit: int = 10):
+    """Get approaches for a goal."""
+    from backend.modules.goal_orchestrator import get_goal_orchestrator
+    approaches = get_goal_orchestrator().get_approaches(goal_id, limit)
+    return {"approaches": [
+        {"id": a.id, "iteration": a.iteration, "strategy": a.strategy[:100],
+         "result": a.result, "learning": a.learning[:200],
+         "next_target": a.next_target[:200]}
+        for a in approaches
+    ]}
+
+
+@app.get("/goal/fallback")
+async def goal_fallback(goal_id: str = None):
+    """Generate fallback strategies when current approach is blocked."""
+    from backend.modules.goal_orchestrator import get_goal_orchestrator
+    return {"fallback": get_goal_orchestrator().generate_fallback(goal_id)}
+
+
+@app.post("/goal/inject")
+async def goal_inject(user_query: str):
+    """Preview the goal-injected prompt that would be sent to the LLM."""
+    from backend.modules.goal_orchestrator import get_goal_orchestrator
+    injected = get_goal_orchestrator().inject_goal_context(user_query)
+    return {"original": user_query, "injected": injected}
+
+
+@app.get("/goal/context")
+async def goal_context():
+    """Get condensed goal context for LLM system prompts."""
+    from backend.modules.goal_orchestrator import get_goal_orchestrator
+    return {"context": get_goal_orchestrator().get_goal_context_for_llm()}
 
 
 # ===================================================================
