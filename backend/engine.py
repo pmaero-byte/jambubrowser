@@ -1352,9 +1352,12 @@ async def detect_forms(req: FormDetectRequest):
     from backend.modules.form_filler import get_form_filler
     try:
         if not req.html:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(req.url, timeout=15.0, follow_redirects=True)
-                html = resp.text
+            try:
+                async with httpx.AsyncClient() as client:
+                    resp = await client.get(req.url, timeout=10.0, follow_redirects=True)
+                    html = resp.text
+            except Exception:
+                return {"url": req.url, "forms_found": 0, "forms": [], "error": "Could not fetch URL"}
         else:
             html = req.html
         if not html or not html.strip():
