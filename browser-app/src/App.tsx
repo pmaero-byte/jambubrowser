@@ -22,12 +22,15 @@ import {
   ArrowLeft,
   ArrowRight,
   RotateCw,
-  Search,
-  ExternalLink
+  Search
 } from "lucide-react";
 import { localFetch, isTauri } from "./utils/api";
 import { BrainGraph3D } from "./BrainGraph3D";
 import { AgentAvatar3D } from "./AgentAvatar3D";
+import { AgentRoom, type Zone } from "./components/AgentRoom";
+import type { RobotState } from "./components/robot-svg";
+import { TelemetryPanel } from "./components/TelemetryPanel";
+import { InterruptionInput } from "./components/InterruptionInput";
 import "./App.css";
 
 interface Message {
@@ -77,7 +80,7 @@ const MarkdownText = ({ content, sources, onNavigate }: { content: string, sourc
 };
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'browser' | 'chat' | 'stealth' | 'graph' | 'workspace' | 'toolbox'>('browser');
+  const [activeTab, setActiveTab] = useState<'browser' | 'chat' | 'stealth' | 'graph' | 'workspace' | 'toolbox' | 'agent'>('browser');
   const [theme, setTheme] = useState<'dark' | 'deep-blue'>('dark');
   const [showHistory, setShowHistory] = useState(false);
   const [historySearch, setHistorySearch] = useState("");
@@ -122,6 +125,93 @@ function App() {
     incognito: false
   });
 
+  const [agentState, setAgentState] = useState<RobotState>("idle");
+  const [targetZone, setTargetZone] = useState<Zone>("center");
+  const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
+  const [telemetry, setTelemetry] = useState({
+    model: "gemma4:12b-it-qat",
+    action: "",
+    tokensPerSec: null as number | null,
+    tokensTotal: 0,
+    contextSize: null as number | null,
+    filePath: null as string | null,
+  });
+  const [reasoningTrace, setReasoningTrace] = useState("");
+  const [taskActive, setTaskActive] = useState(false);
+  const [wsConnected, setWsConnected] = useState(false);
+  const [agentClientId] = useState(() => `agent-${Math.random().toString(36).slice(2, 10)}`);
+
+  useEffect(() => {
+    let alive = true;
+    let ws: WebSocket | null = null;
+    let reconnectTimer: number | null = null;
+
+    const connect = () => {
+      try {
+        ws = new WebSocket(`ws://localhost:8001/ws/${agentClientId}`);
+      } catch {
+        setWsConnected(false);
+        return;
+      }
+      ws.onopen = () => { if (alive) setWsConnected(true); };
+      ws.onclose = () => {
+        if (!alive) return;
+        setWsConnected(false);
+        reconnectTimer = window.setTimeout(connect, 2000);
+      };
+      ws.onerror = () => { ws?.close(); };
+      ws.onmessage = (ev) => {
+        try {
+          const d = JSON.parse(ev.data);
+          if (typeof d !== "object" || d === null) return;
+          const t = d.type;
+          if (t === "agent.state") {
+            setAgentState(d.state as RobotState);
+            if (d.zone) setTargetZone(d.zone as Zone);
+            if (d.state === "idle") setTargetZone("center");
+          } else if (t === "agent.telemetry") {
+            setTelemetry((prev) => ({
+              model: d.model ?? prev.model,
+              action: d.action ?? prev.action,
+              tokensPerSec: d.tokens_per_sec ?? prev.tokensPerSec,
+              tokensTotal: d.tokens_generated ?? prev.tokensTotal,
+              contextSize: d.context_size ?? prev.contextSize,
+              filePath: d.file_path ?? prev.filePath,
+            }));
+          } else if (t === "agent.reasoning") {
+            setReasoningTrace((prev) => (prev + d.delta).slice(-2000));
+          } else if (t === "agent.task_start") {
+            setCurrentTaskId(d.task_id);
+            setTaskActive(true);
+            setReasoningTrace("");
+            setAgentState("thinking");
+          } else if (t === "agent.task_end") {
+            setTaskActive(false);
+            if (d.status === "interrupted" || d.status === "cancelled") {
+              setAgentState("idle");
+              setTargetZone("center");
+            } else if (d.status === "failed") {
+              setAgentState("error");
+            } else {
+              setTimeout(() => {
+                setAgentState("idle");
+                setTargetZone("center");
+              }, 1500);
+            }
+            if (currentTaskId === d.task_id) setCurrentTaskId(null);
+          }
+        } catch { /* non-JSON messages ignored */ }
+      };
+    };
+
+    connect();
+    return () => {
+      alive = false;
+      if (reconnectTimer) window.clearTimeout(reconnectTimer);
+      ws?.close();
+    };
+  }, [agentClientId, currentTaskId]);
+
   const [llmConfig] = useState({
     provider: "local",
     baseUrl: "http://localhost:11434/v1",
@@ -131,7 +221,6 @@ function App() {
 
   const [browserUrl, setBrowserUrl] = useState("https://en.wikipedia.org/wiki/Main_Page");
   const [browserInput, setBrowserInput] = useState("");
-  const [browserTitle, setBrowserTitle] = useState("");
 
   const navigateToUrl = (url: string) => {
     const target = url.startsWith('http') ? url : `https://${url}`;
@@ -411,6 +500,7 @@ function App() {
         <div className="tabs">
           <button className={activeTab === 'browser' ? 'active' : ''} onClick={() => setActiveTab('browser')}><Compass size={14}/> Browser</button>
           <button className={activeTab === 'chat' ? 'active' : ''} onClick={() => setActiveTab('chat')}><Zap size={14}/> Research</button>
+          <button className={activeTab === 'agent' ? 'active' : ''} onClick={() => setActiveTab('agent')}><Cpu size={14}/> Agent</button>
           <button className={activeTab === 'graph' ? 'active' : ''} onClick={() => setActiveTab('graph')}><BrainCircuit size={14}/> Intelligence</button>
           <button className={activeTab === 'workspace' ? 'active' : ''} onClick={() => setActiveTab('workspace')}><Box size={14}/> Workspace</button>
           <button className={activeTab === 'toolbox' ? 'active' : ''} onClick={() => setActiveTab('toolbox')}>🧰 Toolbox</button>
@@ -581,6 +671,24 @@ function App() {
                 </form>
               </motion.div>
             </>
+          ) : activeTab === 'agent' ? (
+            <div className="agent-view">
+              <AgentRoom
+                agentState={agentState}
+                targetZone={targetZone}
+                taskActive={taskActive}
+              />
+              <TelemetryPanel
+                model={telemetry.model}
+                tokensPerSec={telemetry.tokensPerSec}
+                currentAction={telemetry.action}
+                reasoningTrace={reasoningTrace}
+                filePath={telemetry.filePath}
+                contextSize={telemetry.contextSize}
+                totalTokens={telemetry.tokensTotal}
+                connected={wsConnected}
+              />
+            </div>
           ) : activeTab === 'workspace' ? (
             <div className="workspace-view">
               <div className="workspace-grid">
@@ -626,6 +734,13 @@ function App() {
           )}
         </div>
       </div>
+
+      <InterruptionInput
+        visible={taskActive && currentTaskId !== null}
+        currentTaskId={currentTaskId}
+        clientId={agentClientId}
+        onSubmit={() => { /* hook for chat log */ }}
+      />
     </main>
   );
 }

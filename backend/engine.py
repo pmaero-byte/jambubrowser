@@ -32,6 +32,7 @@ import time
 import hashlib
 import json
 import os
+import uuid
 import psutil
 import re
 import httpx
@@ -86,8 +87,117 @@ class ConnectionManager:
             except Exception:
                 pass
 
+    async def broadcast_all(self, message: str):
+        for ws in list(self.active_connections.values()):
+            try:
+                await ws.send_text(message)
+            except Exception:
+                pass
+
 
 manager = ConnectionManager()
+
+
+# ---- Agent State Tracking ----
+
+active_tasks: Dict[str, str] = {}
+cancel_flags: Dict[str, asyncio.Event] = {}
+_task_token_starts: Dict[str, float] = {}
+_task_token_counts: Dict[str, int] = {}
+
+
+def _new_task_id() -> str:
+    return uuid.uuid4().hex[:8]
+
+
+async def broadcast_agent_state(client_id: str, state: str, zone: str | None = None) -> None:
+    payload = {
+        "type": "agent.state",
+        "state": state,
+        "zone": zone,
+        "task_id": active_tasks.get(client_id),
+        "timestamp": time.time(),
+    }
+    await manager.broadcast_all(json.dumps(payload))
+
+
+async def broadcast_agent_telemetry(
+    client_id: str,
+    action: str,
+    file_path: str | None = None,
+    tokens_generated: int | None = None,
+    tokens_per_sec: float | None = None,
+    context_size: int | None = None,
+) -> None:
+    payload = {
+        "type": "agent.telemetry",
+        "model": LATEST_LLM_CONFIG.get("modelId", "gemma4:12b-it-qat"),
+        "action": action,
+        "file_path": file_path,
+        "tokens_generated": tokens_generated,
+        "tokens_per_sec": tokens_per_sec,
+        "context_size": context_size,
+        "timestamp": time.time(),
+    }
+    await manager.broadcast_all(json.dumps(payload))
+
+
+async def broadcast_agent_reasoning(client_id: str, delta: str) -> None:
+    payload = {
+        "type": "agent.reasoning",
+        "delta": delta,
+        "task_id": active_tasks.get(client_id),
+        "timestamp": time.time(),
+    }
+    await manager.broadcast_all(json.dumps(payload))
+
+
+async def broadcast_task_start(client_id: str, query: str, task_id: str) -> None:
+    active_tasks[client_id] = task_id
+    cancel_flags[task_id] = asyncio.Event()
+    _task_token_starts[task_id] = time.time()
+    _task_token_counts[task_id] = 0
+    payload = {
+        "type": "agent.task_start",
+        "task_id": task_id,
+        "query": query,
+        "timestamp": time.time(),
+    }
+    await manager.broadcast_all(json.dumps(payload))
+
+
+async def broadcast_task_end(
+    client_id: str,
+    task_id: str,
+    status: str,
+    result_preview: str | None = None,
+) -> None:
+    elapsed = time.time() - _task_token_starts.get(task_id, time.time())
+    final_tokens = _task_token_counts.get(task_id, 0)
+    tps = (final_tokens / elapsed) if elapsed > 0 and final_tokens > 0 else None
+    payload = {
+        "type": "agent.task_end",
+        "task_id": task_id,
+        "status": status,
+        "result_preview": (result_preview[:200] if result_preview else None),
+        "tokens_generated": final_tokens,
+        "tokens_per_sec": round(tps, 2) if tps else None,
+        "elapsed_sec": round(elapsed, 2),
+        "timestamp": time.time(),
+    }
+    await manager.broadcast_all(json.dumps(payload))
+    if active_tasks.get(client_id) == task_id:
+        active_tasks.pop(client_id, None)
+    cancel_flags.pop(task_id, None)
+    _task_token_starts.pop(task_id, None)
+    _task_token_counts.pop(task_id, None)
+
+
+def is_cancelled(task_id: str | None) -> bool:
+    if not task_id:
+        return False
+    flag = cancel_flags.get(task_id)
+    return bool(flag and flag.is_set())
 
 
 # ---- Request Models ----
@@ -411,6 +521,41 @@ async def get_stats():
     }
 
 
+class InterruptRequest(BaseModel):
+    new_instruction: str = ""
+    client_id: str = "default"
+
+
+@app.post("/interrupt/{task_id}")
+async def interrupt_task(task_id: str, req: InterruptRequest):
+    """Cancel the active task and optionally inject a new instruction."""
+    flag = cancel_flags.get(task_id)
+    if flag:
+        flag.set()
+    await broadcast_task_end(req.client_id, task_id, status="interrupted")
+
+    new_id = _new_task_id()
+    new_query = req.new_instruction.strip() if req.new_instruction else ""
+    if not new_query:
+        return {"ok": True, "interrupted": task_id, "new_task_id": None}
+
+    await broadcast_task_start(req.client_id, new_query, new_id)
+    asyncio.create_task(_run_followup(req.client_id, new_query, new_id))
+    return {"ok": True, "interrupted": task_id, "new_task_id": new_id}
+
+
+async def _run_followup(client_id: str, query: str, task_id: str) -> None:
+    try:
+        await broadcast_agent_state(client_id, "thinking")
+        await broadcast_agent_telemetry(client_id, action=f"New instruction: {query[:80]}")
+        await _brain_only_research(query)
+        await broadcast_task_end(client_id, task_id, status="completed", result_preview=query)
+    except Exception as e:
+        await broadcast_task_end(client_id, task_id, status="failed", result_preview=str(e))
+    finally:
+        await broadcast_agent_state(client_id, "idle")
+
+
 # ===================================================================
 # RESEARCH ENDPOINTS
 # ===================================================================
@@ -422,12 +567,30 @@ async def research(req: ResearchRequest):
     global last_activity, LATEST_LLM_CONFIG
     last_activity = time.time()
 
+    task_id = _new_task_id()
+    await broadcast_task_start(cid, req.query, task_id)
+
     try:
         LATEST_LLM_CONFIG = req.llm_config
 
-        # Brain-only mode
+        if is_cancelled(task_id):
+            await broadcast_task_end(cid, task_id, status="cancelled")
+            return {"answer": "[INTERRUPTED]", "context": "", "sources": [], "doc_count": 0}
+
+        await broadcast_agent_state(cid, "thinking")
+        await broadcast_agent_telemetry(cid, action="Planning research approach")
+
         if req.brain_only:
-            return await _brain_only_research(req.query)
+            await broadcast_agent_state(cid, "reading", zone="cabinet")
+            await broadcast_agent_telemetry(cid, action="Searching local knowledge vault")
+            result = await _brain_only_research(req.query)
+            if is_cancelled(task_id):
+                await broadcast_task_end(cid, task_id, status="cancelled")
+                return {"answer": "[INTERRUPTED]", "context": "", "sources": [], "doc_count": 0}
+            await broadcast_task_end(cid, task_id, status="completed", result_preview=result.get("answer"))
+            return result
+
+        await broadcast_agent_state(cid, "searching", zone="pile")
 
         # Step 1: Expand search queries
         expanded = await _expand_query(req.query, cid, req.llm_config)
@@ -481,15 +644,34 @@ async def research(req: ResearchRequest):
         )
         search_results = unique[:req.top_n]
 
+        if is_cancelled(task_id):
+            await broadcast_task_end(cid, task_id, status="cancelled")
+            return {"answer": "[INTERRUPTED]", "context": "", "sources": [], "doc_count": 0}
+
         if not search_results:
-            # Fall back to brain_only search when external search fails
+            await broadcast_agent_state(cid, "reading", zone="cabinet")
+            await broadcast_agent_telemetry(cid, action="No web results — falling back to local knowledge vault")
             brain_result = await _brain_only_research(req.query)
+            await broadcast_task_end(cid, task_id, status="completed", result_preview=brain_result.get("answer"))
             return {
                 "answer": brain_result.get("answer", "No results found. Try brain_only mode or start SearXNG."),
                 "context": brain_result.get("context", ""),
                 "sources": brain_result.get("sources", []),
                 "doc_count": brain_result.get("doc_count", 0),
             }
+
+        await broadcast_agent_state(cid, "reading", zone="cabinet")
+        await broadcast_agent_telemetry(
+            cid,
+            action=f"Reading {len(search_results)} web sources",
+            file_path=search_results[0].get("url") if search_results else None,
+        )
+
+        for r in search_results:
+            if is_cancelled(task_id):
+                await broadcast_task_end(cid, task_id, status="cancelled")
+                return {"answer": "[INTERRUPTED]", "context": "", "sources": [], "doc_count": 0}
+            await broadcast_agent_telemetry(cid, action="Reading source", file_path=r.get("url"))
 
         # Security screening
         safe_urls = []
@@ -598,7 +780,17 @@ async def research(req: ResearchRequest):
         sources_list = list(set([r[1] for r in rows]))
         answer = context_text[:500] if context_text else "No results found."
 
+        if is_cancelled(task_id):
+            await broadcast_task_end(cid, task_id, status="cancelled")
+            return {"answer": "[INTERRUPTED]", "context": "", "sources": [], "doc_count": 0}
+
         if context_text and rows:
+            await broadcast_agent_state(cid, "writing", zone="desk")
+            await broadcast_agent_telemetry(
+                cid,
+                action="Synthesizing answer with local LLM",
+                context_size=len(context_text) // 4,
+            )
             try:
                 base_url = LATEST_LLM_CONFIG.get("baseUrl", "http://localhost:11434/v1")
                 model_id = LATEST_LLM_CONFIG.get("modelId", "gemma4:12b-it-qat")
@@ -616,9 +808,22 @@ async def research(req: ResearchRequest):
                     if synth_resp.status_code == 200:
                         data = synth_resp.json()
                         answer = data.get("response", context_text[:500])
+                        _task_token_counts[task_id] = _task_token_counts.get(task_id, 0) + len(answer.split())
+                        elapsed = time.time() - _task_token_starts.get(task_id, time.time())
+                        tps = _task_token_counts[task_id] / elapsed if elapsed > 0 else 0
+                        await broadcast_agent_telemetry(
+                            cid,
+                            action="LLM synthesis complete",
+                            tokens_generated=_task_token_counts[task_id],
+                            tokens_per_sec=round(tps, 2),
+                            context_size=len(context_text) // 4,
+                        )
+                        await broadcast_agent_reasoning(cid, answer[:160])
                         await manager.broadcast(req.client_id, "🧠 LLM synthesis complete.")
             except Exception:
                 pass  # Fall back to raw context
+
+        await broadcast_task_end(cid, task_id, status="completed", result_preview=answer)
 
         return {
             "answer": answer,
@@ -628,6 +833,8 @@ async def research(req: ResearchRequest):
         }
 
     except Exception as e:
+        await broadcast_task_end(cid, task_id, status="failed", result_preview=str(e))
+        await broadcast_agent_state(cid, "error")
         raise HTTPException(status_code=500, detail=str(e))
 
 

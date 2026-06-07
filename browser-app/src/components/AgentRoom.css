@@ -1,0 +1,205 @@
+.agent-room {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  background: #0a0a14;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+}
+
+.room-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
+  background: rgba(0, 0, 0, 0.5);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  z-index: 2;
+}
+
+.room-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #a7f070;
+}
+
+.room-status-dot.live {
+  background: #ffcd75;
+  box-shadow: 0 0 10px #ffcd75;
+  animation: pulse 1s infinite;
+}
+
+.room-status-dot.idle {
+  background: #566c86;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.8); }
+}
+
+.room-status-text { color: #e8e8e8; }
+.room-status-zone { color: #94b0c2; }
+.room-status-state { color: #ffcd75; margin-left: auto; }
+
+.room-svg {
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  background: #0a0a14;
+}
+
+.star {
+  animation: twinkle 3s infinite;
+}
+.star-2 { animation-delay: 1.2s; }
+.star-3 { animation-delay: 2.4s; }
+
+@keyframes twinkle {
+  0%, 100% { opacity: 0.8; }
+  50% { opacity: 0.2; }
+}
+
+.screen-glow {
+  animation: screenFlicker 0.3s infinite;
+}
+
+@keyframes screenFlicker {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.1); }
+}
+
+.steam rect {
+  animation: steam 2s infinite;
+}
+.steam rect:nth-child(2) { animation-delay: 0.6s; }
+.steam rect:nth-child(3) { animation-delay: 1.2s; }
+
+@keyframes steam {
+  0% { transform: translateY(0); opacity: 0.5; }
+  100% { transform: translateY(-8px); opacity: 0; }
+}
+
+.robot-positioner {
+  transform-origin: center;
+}
+
+.robot-svg {
+  display: block;
+  image-rendering: pixelated;
+}
+
+.robot-idle .robot-body { animation: bob 2s infinite ease-in-out; }
+.robot-thinking .robot-body { animation: bobFast 0.5s infinite ease-in-out; }
+.robot-searching .robot-body { animation: bobSlow 0.8s infinite ease-in-out; }
+.robot-reading .robot-body { animation: bobSlow 1.5s infinite ease-in-out; }
+.robot-writing .robot-body { animation: bobFast 0.6s infinite ease-in-out; }
+.robot-walking .robot-body { animation: walk 0.4s infinite linear; }
+.robot-error .robot-body { animation: shake 0.3s infinite; }
+
+@keyframes bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+@keyframes bobFast {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
+}
+@keyframes bobSlow {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-1.5px); }
+}
+@keyframes walk {
+  0%, 100% { transform: translateY(0) translateX(-1px); }
+  50% { transform: translateY(-2px) translateX(1px); }
+}
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-2px); }
+  75% { transform: translateX(2px); }
+}
+
+.robot-think-spark {
+  animation: spark 0.5s infinite;
+}
+.robot-think-spark-2 { animation-delay: 0.15s; }
+.robot-think-spark-3 { animation-delay: 0.3s; }
+
+@keyframes spark {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 1; }
+}
+
+.robot-spark {
+  animation: sparkle 0.6s infinite;
+}
+.robot-spark-2 { animation-delay: 0.2s; }
+.robot-spark-3 { animation-delay: 0.4s; }
+
+@keyframes sparkle {
+  0% { opacity: 0; }
+  50% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+.robot-scan {
+  animation: scanline 0.8s infinite linear;
+}
+
+@keyframes scanline {
+  0% { transform: translateY(0); }
+  50% { transform: translateY(80px); }
+  100% { transform: translateY(0); }
+}
+
+.robot-flash {
+  animation: flash 0.3s infinite;
+}
+
+@keyframes flash {
+  0%, 100% { opacity: 0.1; }
+  50% { opacity: 0.3; }
+}
+
+.robot-paper {
+  animation: paperShake 1.5s infinite;
+  transform-origin: top center;
+}
+
+@keyframes paperShake {
+  0%, 100% { transform: translateY(0) rotate(0); }
+  25% { transform: translateY(-1px) rotate(-1deg); }
+  75% { transform: translateY(1px) rotate(1deg); }
+}
+
+.room-legend {
+  display: flex;
+  gap: 16px;
+  padding: 8px 16px;
+  background: rgba(0, 0, 0, 0.5);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 10px;
+  color: #94a3b8;
+  letter-spacing: 0.03em;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-swatch {
+  width: 8px;
+  height: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
