@@ -54,7 +54,7 @@ GLOBAL_VPN_PROXY = os.environ.get("AGENT_VPN_PROXY", None)
 
 LATEST_LLM_CONFIG = {
     "baseUrl": "http://localhost:11434/v1",
-    "modelId": "gemma4:12b",
+    "modelId": "gemma4:12b-it-qat",
     "apiKey": "",
 }
 
@@ -586,9 +586,37 @@ async def research(req: ResearchRequest):
             for item in crawled:
                 rows.append((item["markdown"][:500], item["url"]))
 
+        # Step 6: LLM Synthesis — generate proper response from context
+        context_text = "\n\n".join([f"Source: {r[1]}\n{r[0]}" for r in rows])
+        sources_list = list(set([r[1] for r in rows]))
+        answer = context_text[:500] if context_text else "No results found."
+
+        if context_text and rows:
+            try:
+                base_url = LATEST_LLM_CONFIG.get("baseUrl", "http://localhost:11434/v1")
+                model_id = LATEST_LLM_CONFIG.get("modelId", "gemma4:12b-it-qat")
+                async with httpx.AsyncClient() as llm_client:
+                    synth_resp = await llm_client.post(
+                        f"{base_url.rstrip('/v1')}/api/generate",
+                        json={
+                            "model": model_id,
+                            "prompt": f"Based on this research context, provide a concise, well-structured answer to: '{req.query}'\n\nContext:\n{context_text[:3000]}",
+                            "stream": False,
+                            "options": {"temperature": 0.3, "num_predict": 500},
+                        },
+                        timeout=30.0,
+                    )
+                    if synth_resp.status_code == 200:
+                        data = synth_resp.json()
+                        answer = data.get("response", context_text[:500])
+                        await manager.broadcast(req.client_id, "🧠 LLM synthesis complete.")
+            except Exception:
+                pass  # Fall back to raw context
+
         return {
-            "context": "\n\n".join([f"Source: {r[1]}\n{r[0]}" for r in rows]),
-            "sources": list(set([r[1] for r in rows])),
+            "answer": answer,
+            "context": context_text,
+            "sources": sources_list,
             "doc_count": len(crawled),
         }
 
@@ -1047,20 +1075,43 @@ async def _brain_only_research(query: str) -> dict:
             rows = cursor.fetchall()
 
         scored = sorted(
-            [
-                (sum(1 for w in set(query.lower().split()) if w in r[0].lower()), r[0], r[1])
-                for r in rows
-            ],
-            reverse=True,
+            [(sum(1 for w in set(query.lower().split()) if w in r[0].lower()), r[0], r[1])
+             for r in rows], reverse=True,
         )[:8]
 
+        context_text = "\n\n".join([f"Source: {r[2]}\n{r[1]}" for r in scored])
+        sources_list = list(set([r[2] for r in scored]))
+        answer = context_text[:500] if context_text else "No results found in knowledge vault."
+
+        if context_text and scored:
+            try:
+                base_url = LATEST_LLM_CONFIG.get("baseUrl", "http://localhost:11434/v1")
+                model_id = LATEST_LLM_CONFIG.get("modelId", "gemma4:12b-it-qat")
+                async with httpx.AsyncClient() as llm_client:
+                    synth_resp = await llm_client.post(
+                        f"{base_url.rstrip('/v1')}/api/generate",
+                        json={
+                            "model": model_id,
+                            "prompt": f"Based on this research context, provide a concise answer to: '{query}'\n\nContext:\n{context_text[:3000]}",
+                            "stream": False,
+                            "options": {"temperature": 0.3, "num_predict": 500},
+                        },
+                        timeout=30.0,
+                    )
+                    if synth_resp.status_code == 200:
+                        data = synth_resp.json()
+                        answer = data.get("response", context_text[:500])
+            except Exception:
+                pass
+
         return {
-            "context": "\n\n".join([f"Source: {r[2]}\n{r[1]}" for r in scored]),
-            "sources": list(set([r[2] for r in scored])),
+            "answer": answer,
+            "context": context_text,
+            "sources": sources_list,
             "doc_count": 0,
         }
     except ImportError:
-        return {"context": "", "sources": [], "doc_count": 0}
+        return {"answer": "", "context": "", "sources": [], "doc_count": 0}
 
 
 async def _expand_query(query: str, client_id: str, llm_config: dict) -> list:

@@ -331,7 +331,8 @@ function App() {
           }),
         });
         const data = await response.json();
-        res = { answer: data.context || 'Research complete.', sources: data.sources || [], brain_doc_count: data.doc_count || 0 };
+        if (!response.ok) throw new Error(data.detail || 'Research failed');
+        res = { answer: data.answer || data.context || 'Research complete.', sources: data.sources || [], brain_doc_count: data.doc_count || 0 };
       }
       if (res.brain_doc_count) setBrainDocCount(res.brain_doc_count);
       if (res.total_tokens) setTotalTokens(res.total_tokens);
