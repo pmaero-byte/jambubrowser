@@ -16,7 +16,6 @@ import {
   Trash2,
   Cpu,
   Activity,
-  Plus,
   Trees,
   Compass,
   ArrowLeft,
@@ -31,6 +30,9 @@ import { AgentRoom, type Zone } from "./components/AgentRoom";
 import type { RobotState } from "./components/robot-svg";
 import { TelemetryPanel } from "./components/TelemetryPanel";
 import { InterruptionInput } from "./components/InterruptionInput";
+import { ToolboxView } from "./components/ToolboxView";
+import { StealthView } from "./components/StealthView";
+import { ActivityStepper } from "./components/ActivityStepper";
 import "./App.css";
 
 interface Message {
@@ -560,7 +562,16 @@ function App() {
              {benchmark.duration > 0 && <span><Activity size={12}/> {benchmark.duration.toFixed(1)}s</span>}
           </div>
 
-          {activeTab === 'browser' ? (
+           <AnimatePresence mode="wait">
+             <motion.div
+               key={activeTab}
+               className="page-transition"
+               initial={{ opacity: 0, y: 8 }}
+               animate={{ opacity: 1, y: 0 }}
+               exit={{ opacity: 0, y: -8 }}
+               transition={{ duration: 0.25, ease: "easeOut" }}
+             >
+           {activeTab === 'browser' ? (
             <div className="browser-view">
               <form className="browser-urlbar glass" onSubmit={handleBrowserSubmit}>
                 <button type="button" className="browser-nav-btn" onClick={() => setBrowserUrl(browserUrl)}><ArrowLeft size={16}/></button>
@@ -662,6 +673,7 @@ function App() {
                   </div>
                 )}
               </div>
+              <ActivityStepper state={agentState} visible={taskActive} />
               <motion.div layout className="input-container">
                 <div className="domain-bar">
                    <button className={domain === 'general' ? 'active' : ''} onClick={() => setDomain('general')}>General</button>
@@ -710,38 +722,31 @@ function App() {
               </div>
             </div>
           ) : activeTab === 'toolbox' ? (
-            <div className="toolbox-view">
-              <div className="tools-grid">
-                {tools.map((t, i) => <motion.div layout key={i} className="tool-card glass"><div className="tool-name">⚙️ {t.name}</div><div className="tool-desc">{t.description}</div></motion.div>)}
-              </div>
-              {remoteTools.length > 0 && (
-                <div className="remote-tools">
-                   <h3>📡 Shared network skills</h3>
-                   <div className="tools-grid">
-                      {remoteTools.map((rt, i) => <div key={i} className="tool-card glass"><div className="tool-name">{rt.name}</div><button onClick={() => pullRemoteTool(rt.name, rt.peer)}>Pull</button></div>)}
-                   </div>
-                </div>
-              )}
-            </div>
+            <ToolboxView
+              tools={tools}
+              remoteTools={remoteTools}
+              onPullRemote={pullRemoteTool}
+              onCreateSample={async () => {
+                await localFetch('http://localhost:8001/tool/save', 'POST', {
+                  name: `skill_${Date.now().toString(36)}`,
+                  description: "Custom Python skill ready to run on the agent runtime.",
+                  code: "def run(args):\n    return {'ok': True, 'echo': args}"
+                });
+                fetch('http://localhost:8001/tools').then(r => r.json()).then(d => setTools(d.tools));
+                addNotification("New skill installed.");
+              }}
+            />
           ) : (
-            <div className="stealth-settings">
-              <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="privacy-header glass">
-                <h2>Stealth & Sovereignty</h2>
-                <div className="privacy-meter">Anonymity Score: {privacyScore}% | IP: {localIp}</div>
-              </motion.div>
-              <div className="settings-grid">
-                 <button onClick={discoverPeers} className="glass-btn"><Globe size={14}/> Scan for Network Peers</button>
-                 <div className="vault-add glass">
-                    <input id="v-dom" placeholder="domain.com" />
-                    <button onClick={() => {
-                        const d = (document.getElementById('v-dom') as HTMLInputElement).value;
-                        if(d) saveToVault(d, "u", "p");
-                    }}><Plus size={14}/></button>
-                 </div>
-              </div>
-            </div>
+            <StealthView
+              privacyScore={privacyScore}
+              localIp={localIp}
+              onScanPeers={discoverPeers}
+              onSaveCredential={saveToVault}
+            />
           )}
-        </div>
+             </motion.div>
+           </AnimatePresence>
+         </div>
       </div>
 
       <InterruptionInput
