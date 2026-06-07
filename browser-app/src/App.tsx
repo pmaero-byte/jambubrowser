@@ -589,9 +589,14 @@ function App() {
               <div className="chat-window" ref={scrollRef}>
                 {messages.length === 0 && (
                   <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="welcome">
-                    <Trees size={48} color="#00ff64" style={{marginBottom: '16px'}}/>
+                    <Trees size={48} color="#00ff64" style={{marginBottom: '16px', filter: 'drop-shadow(0 0 16px rgba(0,255,100,0.4))'}}/>
                     <h2>Sovereign Intelligence Active.</h2>
                     <p>Start a secure research mission with JambuAI.</p>
+                    <div className="welcome-suggestions">
+                      {["Explain quantum entanglement", "Compare LLM architectures", "Latest Mamba research", "How does SearXNG work?", "Debug Python traceback"].map(s => (
+                        <span key={s} className="welcome-chip" onClick={() => setInput(s)}>{s}</span>
+                      ))}
+                    </div>
                   </motion.div>
                 )}
                 {messages.map((msg, i) => (
