@@ -1,0 +1,66 @@
+- main [ref=e3]:
+  - generic [ref=e4]:
+    - heading "JambuAI Browser RC1" [level=1] [ref=e6]:
+      - img [ref=e7]
+      - text: JambuAI Browser RC1
+    - generic [ref=e10]:
+      - button "Browser" [ref=e11] [cursor=pointer]:
+        - img [ref=e12]
+        - text: Browser
+      - button "Research" [ref=e15] [cursor=pointer]:
+        - img [ref=e16]
+        - text: Research
+      - button "Intelligence" [ref=e18] [cursor=pointer]:
+        - img [ref=e19]
+        - text: Intelligence
+      - button "Workspace" [ref=e31] [cursor=pointer]:
+        - img [ref=e32]
+        - text: Workspace
+      - button "🧰 Toolbox" [ref=e35] [cursor=pointer]
+      - button "Stealth" [ref=e36] [cursor=pointer]:
+        - img [ref=e37]
+        - text: Stealth
+    - generic [ref=e39]:
+      - button "History" [ref=e40] [cursor=pointer]:
+        - img [ref=e41]
+        - text: History
+      - generic [ref=e45]:
+        - checkbox "🔥 FULL POWER" [ref=e46]
+        - text: 🔥 FULL POWER
+  - generic [ref=e48]:
+    - generic [ref=e49]:
+      - generic [ref=e50]:
+        - img [ref=e51]
+        - text: 0 nodes
+      - generic [ref=e63]:
+        - img [ref=e64]
+        - text: 0 tokens
+      - generic [ref=e66]:
+        - img [ref=e67]
+        - text: 24.3GB RAM
+    - generic [ref=e92]:
+      - generic [ref=e117]:
+        - generic [ref=e118]: U
+        - generic [ref=e120]: Hello
+      - generic [ref=e127]:
+        - generic [ref=e128]: Research complete.
+        - generic [ref=e129]:
+          - button "Copy" [ref=e130]:
+            - img [ref=e131]
+            - text: Copy
+          - button "Export" [ref=e134]:
+            - img [ref=e135]
+            - text: Export
+    - generic [ref=e99]:
+      - generic [ref=e100]:
+        - button "General" [ref=e101] [cursor=pointer]
+        - button "Academic" [ref=e102] [cursor=pointer]
+        - button "Coding" [ref=e103] [cursor=pointer]
+      - generic [ref=e104]:
+        - button [ref=e105] [cursor=pointer]:
+          - img [ref=e106]
+        - button [ref=e109] [cursor=pointer]:
+          - img [ref=e110]
+        - textbox "Send a command or search query..." [ref=e112]
+        - button [ref=e113] [cursor=pointer]:
+          - img [ref=e114]

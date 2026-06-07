@@ -1,0 +1,57 @@
+- main [ref=e3]:
+  - generic [ref=e4]:
+    - heading "JambuAI Browser RC1" [level=1] [ref=e6]:
+      - img [ref=e7]
+      - text: JambuAI Browser RC1
+    - generic [ref=e10]:
+      - button "Browser" [ref=e11] [cursor=pointer]:
+        - img [ref=e12]
+        - text: Browser
+      - button "Research" [active] [ref=e15] [cursor=pointer]:
+        - img [ref=e16]
+        - text: Research
+      - button "Intelligence" [ref=e18] [cursor=pointer]:
+        - img [ref=e19]
+        - text: Intelligence
+      - button "Workspace" [ref=e31] [cursor=pointer]:
+        - img [ref=e32]
+        - text: Workspace
+      - button "🧰 Toolbox" [ref=e35] [cursor=pointer]
+      - button "Stealth" [ref=e36] [cursor=pointer]:
+        - img [ref=e37]
+        - text: Stealth
+    - generic [ref=e39]:
+      - button "History" [ref=e40] [cursor=pointer]:
+        - img [ref=e41]
+        - text: History
+      - generic [ref=e45]:
+        - checkbox "🔥 FULL POWER" [ref=e46]
+        - text: 🔥 FULL POWER
+  - generic [ref=e48]:
+    - generic [ref=e49]:
+      - generic [ref=e50]:
+        - img [ref=e51]
+        - text: 0 nodes
+      - generic [ref=e63]:
+        - img [ref=e64]
+        - text: 0 tokens
+      - generic [ref=e66]:
+        - img [ref=e67]
+        - text: 0.0GB RAM
+    - generic [ref=e93]:
+      - img [ref=e94]
+      - heading "Sovereign Intelligence Active." [level=2] [ref=e97]
+      - paragraph [ref=e98]: Start a secure research mission with JambuAI.
+    - generic [ref=e99]:
+      - generic [ref=e100]:
+        - button "General" [ref=e101] [cursor=pointer]
+        - button "Academic" [ref=e102] [cursor=pointer]
+        - button "Coding" [ref=e103] [cursor=pointer]
+      - generic [ref=e104]:
+        - button [ref=e105] [cursor=pointer]:
+          - img [ref=e106]
+        - button [ref=e109] [cursor=pointer]:
+          - img [ref=e110]
+        - textbox "Send a command or search query..." [ref=e112]
+        - button [ref=e113] [cursor=pointer]:
+          - img [ref=e114]

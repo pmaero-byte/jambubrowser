@@ -25,7 +25,7 @@ import {
   Search,
   ExternalLink
 } from "lucide-react";
-import { localFetch } from "./utils/api";
+import { localFetch, isTauri } from "./utils/api";
 import { BrainGraph3D } from "./BrainGraph3D";
 import { AgentAvatar3D } from "./AgentAvatar3D";
 import "./App.css";
@@ -158,10 +158,12 @@ function App() {
     if (savedV) setVault(JSON.parse(savedV));
     
     const fetchMeta = async () => {
-      try {
-        const ip: string = await invoke("get_local_ip");
-        setLocalIp(ip);
-      } catch (e) {}
+      if (isTauri()) {
+        try {
+          const ip: string = await invoke("get_local_ip");
+          setLocalIp(ip);
+        } catch (e) {}
+      }
     };
     fetchMeta();
 
@@ -304,18 +306,33 @@ function App() {
     setStatus(deepResearch ? "Swarm Executing..." : "Researching...");
     setCurrentLogs([]);
 
+    let ws: WebSocket | null = null;
     const cid = Math.random().toString(36).substring(7);
-    const ws = new WebSocket(`ws://localhost:8001/ws/${cid}`);
-    ws.onmessage = (ev) => {
-      setCurrentLogs(prev => [...prev, ev.data]);
-    };
+    try {
+      ws = new WebSocket(`ws://localhost:8001/ws/${cid}`);
+      ws.onmessage = (ev) => { setCurrentLogs(prev => [...prev, ev.data]); };
+    } catch (e) {}
 
     try {
-      const res: any = await invoke("execute_query", { 
-        query, persist: false, clientId: cid, imageData: selectedImage,
-        stealthConfig, deepResearch, domain, reportMode: false, personality: "researcher", temperature, vault,
-        torRouting: stealthConfig.torRouting, incognito: stealthConfig.incognito, llmConfig
-      });
+      let res: any;
+      if (isTauri()) {
+        res = await invoke("execute_query", { 
+          query, persist: false, clientId: cid, imageData: selectedImage,
+          stealthConfig, deepResearch, domain, reportMode: false, personality: "researcher", temperature, vault,
+          torRouting: stealthConfig.torRouting, incognito: stealthConfig.incognito, llmConfig
+        });
+      } else {
+        const response = await fetch('http://localhost:8001/research', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            query, client_id: cid, domain, tor_routing: stealthConfig.torRouting,
+            incognito: stealthConfig.incognito, llm_config: llmConfig, top_n: 5 
+          }),
+        });
+        const data = await response.json();
+        res = { answer: data.context || 'Research complete.', sources: data.sources || [], brain_doc_count: data.doc_count || 0 };
+      }
       if (res.brain_doc_count) setBrainDocCount(res.brain_doc_count);
       if (res.total_tokens) setTotalTokens(res.total_tokens);
       
@@ -339,7 +356,7 @@ function App() {
     } catch (err: any) {
       addNotification(`Error: ${err}`);
     } finally {
-      setIsLoading(false); setStatus("Local LLM & Search Active"); ws.close();
+      setIsLoading(false); setStatus("Local LLM & Search Active"); ws?.close();
     }
   };
 
