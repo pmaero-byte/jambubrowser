@@ -353,6 +353,15 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Jambubrowser Engine v2.0", lifespan=lifespan)
 
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:1420", "http://localhost:3000", "tauri://localhost"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 from backend.core.rate_limiter import RateLimitMiddleware, get_limiter
 limiter = get_limiter()
 limiter.set_endpoint_limit("/research", 2.0, 5)
@@ -641,6 +650,9 @@ async def execute_code(req: ExecRequest):
     Execute Python code in a sandboxed environment.
     Uses Docker when available, falls back to subprocess isolation.
     """
+    if not req.code or not req.code.strip():
+        return {"success": False, "output": "", "error": "Empty code - nothing to execute",
+                "execution_time": 0, "exit_code": -1, "sandbox_type": "subprocess"}
     try:
         result = await execute_sandboxed(req.code, req.timeout)
         await manager.broadcast(req.client_id, f"⚡ Sandbox ({result['sandbox_type']}): Execution completed in {result['execution_time']}s")
@@ -1124,6 +1136,11 @@ async def _fetch_github(query: str) -> list:
 @app.post("/shield/check")
 async def shield_check(req: ShieldRequest):
     """Assess the risk of a URL using all available sources."""
+    if not req.url or not req.url.startswith(("http://", "https://")):
+        return {"url": req.url, "risk_level": "invalid", "blocked": True,
+                "consensus_score": 1.0, "reason": "Invalid or empty URL",
+                "checks": [{"source": "heuristic", "risk_level": "invalid", "score": 1.0,
+                           "details": "URL is empty or has invalid scheme"}]}
     try:
         from backend.modules.risk_shield import get_shield
         result = await get_shield().assess_url(req.url, real_time=req.real_time)
@@ -1340,6 +1357,8 @@ async def detect_forms(req: FormDetectRequest):
                 html = resp.text
         else:
             html = req.html
+        if not html or not html.strip():
+            return {"url": req.url, "forms_found": 0, "forms": []}
         return get_form_filler().detect_and_match(html, req.url)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -2131,7 +2150,10 @@ async def consensus_list(status: Optional[str] = None):
 @app.get("/consensus/proposal/{proposal_id}")
 async def consensus_get(proposal_id: str):
     """Get details of a specific proposal."""
-    return _consensus.get_proposal(proposal_id)
+    result = _consensus.get_proposal(proposal_id)
+    if not result.get("success"):
+        raise HTTPException(status_code=404, detail=result.get("error", "Proposal not found"))
+    return result
 
 
 class ConsensusVoteRequest(BaseModel):
