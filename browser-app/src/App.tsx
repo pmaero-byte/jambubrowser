@@ -105,6 +105,7 @@ function App() {
   const [deepResearch, setDeepResearch] = useState(false);
   const [temperature, setTemperature] = useState(0.7);
   const [domain, setDomain] = useState("general");
+  const [llmProvider, setLlmProvider] = useState<"ollama" | "minimax">("minimax");
   
   const [brainDocCount, setBrainDocCount] = useState(0);
   const [totalTokens, setTotalTokens] = useState(0);
@@ -416,7 +417,7 @@ function App() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ 
             query, client_id: cid, domain, tor_routing: stealthConfig.torRouting,
-            incognito: stealthConfig.incognito, llm_config: llmConfig, top_n: 5 
+            incognito: stealthConfig.incognito, llm_config: llmConfig, llm_provider: llmProvider, top_n: 5
           }),
         });
         const data = await response.json();
@@ -661,6 +662,9 @@ function App() {
                    <button className={domain === 'general' ? 'active' : ''} onClick={() => setDomain('general')}>General</button>
                    <button className={domain === 'academic' ? 'active' : ''} onClick={() => setDomain('academic')}>Academic</button>
                    <button className={domain === 'coding' ? 'active' : ''} onClick={() => setDomain('coding')}>Coding</button>
+                   <span className="domain-divider" />
+                   <button className={llmProvider === 'ollama' ? 'active' : ''} onClick={() => setLlmProvider('ollama')}>🦙 Local</button>
+                   <button className={llmProvider === 'minimax' ? 'active' : ''} onClick={() => setLlmProvider('minimax')}>☁️ MiniMax</button>
                 </div>
                 <form className="input-area glass" onSubmit={handleSubmit}>
                   <button type="button" onClick={startListening}>{isListening ? "🛑" : <Mic size={18}/>}</button>

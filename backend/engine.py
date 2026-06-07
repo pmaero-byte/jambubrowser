@@ -54,10 +54,81 @@ SEARXNG_URL = os.environ.get("SEARXNG_URL", "http://localhost:8888/search")
 GLOBAL_VPN_PROXY = os.environ.get("AGENT_VPN_PROXY", None)
 
 LATEST_LLM_CONFIG = {
+    "provider": "ollama",
     "baseUrl": "http://localhost:11434/v1",
     "modelId": "gemma4:12b-it-qat",
     "apiKey": "",
 }
+
+CLOUD_PROVIDERS = {
+    "minimax": {
+        "baseUrl": "https://api.minimax.io/v1",
+        "modelId": "MiniMax-M2.7",
+        "apiKey": os.environ.get("MINIMAX_API_KEY", ""),
+    },
+}
+
+
+def _resolve_llm_config(cfg: dict) -> dict:
+    """Merge caller config with the matching cloud preset if provider is set."""
+    merged = dict(LATEST_LLM_CONFIG)
+    if cfg:
+        merged.update({k: v for k, v in cfg.items() if v})
+    provider = merged.get("provider", "ollama")
+    if provider in CLOUD_PROVIDERS and not merged.get("apiKey"):
+        merged.update(CLOUD_PROVIDERS[provider])
+    return merged
+
+
+_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
+
+
+def _strip_think(text: str) -> str:
+    return _THINK_RE.sub("", text).strip()
+
+
+async def _call_llm(prompt: str, system: str | None = None, *, max_tokens: int = 500, temperature: float = 0.3, timeout: float = 30.0) -> tuple[str, dict]:
+    """Unified LLM call. Returns (answer_text, usage_dict). Provider-aware."""
+    cfg = _resolve_llm_config({})
+    provider = cfg.get("provider", "ollama")
+    base_url = cfg.get("baseUrl", "http://localhost:11434/v1").rstrip("/")
+    model_id = cfg.get("modelId", "gemma4:12b-it-qat")
+    api_key = cfg.get("apiKey", "")
+
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    async with httpx.AsyncClient() as client:
+        if provider == "ollama":
+            url = f"{base_url.removesuffix('/v1')}/api/generate"
+            payload = {
+                "model": model_id,
+                "prompt": (f"{system}\n\n{prompt}" if system else prompt),
+                "stream": False,
+                "options": {"temperature": temperature, "num_predict": max_tokens},
+            }
+        else:
+            url = f"{base_url}/chat/completions"
+            messages = []
+            if system:
+                messages.append({"role": "system", "content": system})
+            messages.append({"role": "user", "content": prompt})
+            payload = {"model": model_id, "messages": messages, "temperature": temperature, "max_tokens": max_tokens}
+
+        resp = await client.post(url, json=payload, headers=headers, timeout=timeout)
+        if resp.status_code != 200:
+            raise RuntimeError(f"LLM {provider} {resp.status_code}: {resp.text[:200]}")
+
+        data = resp.json()
+        if provider == "ollama":
+            text = data.get("response", "")
+            usage = {"prompt_tokens": data.get("prompt_eval_count", 0), "completion_tokens": data.get("eval_count", 0)}
+        else:
+            text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            usage = data.get("usage", {})
+
+        return _strip_think(text), usage
 
 START_TIME = time.time()
 
@@ -213,6 +284,7 @@ class ResearchRequest(BaseModel):
     tor_routing: bool = False
     incognito: bool = False
     llm_config: Dict = {}
+    llm_provider: str = "ollama"
 
 
 class SearchRequest(BaseModel):
@@ -571,7 +643,11 @@ async def research(req: ResearchRequest):
     await broadcast_task_start(cid, req.query, task_id)
 
     try:
-        LATEST_LLM_CONFIG = req.llm_config
+        if req.llm_provider and req.llm_provider != "ollama":
+            preset = CLOUD_PROVIDERS.get(req.llm_provider, {})
+            LATEST_LLM_CONFIG = {**LATEST_LLM_CONFIG, "provider": req.llm_provider, **preset, **(req.llm_config or {})}
+        else:
+            LATEST_LLM_CONFIG = {**LATEST_LLM_CONFIG, **(req.llm_config or {})}
 
         if is_cancelled(task_id):
             await broadcast_task_end(cid, task_id, status="cancelled")
@@ -786,42 +862,36 @@ async def research(req: ResearchRequest):
 
         if context_text and rows:
             await broadcast_agent_state(cid, "writing", zone="desk")
+            provider_label = _resolve_llm_config({}).get("provider", "ollama")
             await broadcast_agent_telemetry(
                 cid,
-                action="Synthesizing answer with local LLM",
+                action=f"Synthesizing answer via {provider_label}",
                 context_size=len(context_text) // 4,
             )
             try:
-                base_url = LATEST_LLM_CONFIG.get("baseUrl", "http://localhost:11434/v1")
-                model_id = LATEST_LLM_CONFIG.get("modelId", "gemma4:12b-it-qat")
-                async with httpx.AsyncClient() as llm_client:
-                    synth_resp = await llm_client.post(
-                        f"{base_url.rstrip('/v1')}/api/generate",
-                        json={
-                            "model": model_id,
-                            "prompt": f"Based on this research context, provide a concise, well-structured answer to: '{req.query}'\n\nContext:\n{context_text[:3000]}",
-                            "stream": False,
-                            "options": {"temperature": 0.3, "num_predict": 500},
-                        },
-                        timeout=30.0,
-                    )
-                    if synth_resp.status_code == 200:
-                        data = synth_resp.json()
-                        answer = data.get("response", context_text[:500])
-                        _task_token_counts[task_id] = _task_token_counts.get(task_id, 0) + len(answer.split())
-                        elapsed = time.time() - _task_token_starts.get(task_id, time.time())
-                        tps = _task_token_counts[task_id] / elapsed if elapsed > 0 else 0
-                        await broadcast_agent_telemetry(
-                            cid,
-                            action="LLM synthesis complete",
-                            tokens_generated=_task_token_counts[task_id],
-                            tokens_per_sec=round(tps, 2),
-                            context_size=len(context_text) // 4,
-                        )
-                        await broadcast_agent_reasoning(cid, answer[:160])
-                        await manager.broadcast(req.client_id, "🧠 LLM synthesis complete.")
-            except Exception:
-                pass  # Fall back to raw context
+                answer_text, usage = await _call_llm(
+                    prompt=f"Based on this research context, provide a concise, well-structured answer to: '{req.query}'\n\nContext:\n{context_text[:3000]}",
+                    max_tokens=500,
+                    temperature=0.3,
+                    timeout=30.0,
+                )
+                if answer_text:
+                    answer = answer_text
+                completion_tokens = usage.get("completion_tokens", 0) or len(answer.split())
+                _task_token_counts[task_id] = _task_token_counts.get(task_id, 0) + completion_tokens
+                elapsed = time.time() - _task_token_starts.get(task_id, time.time())
+                tps = _task_token_counts[task_id] / elapsed if elapsed > 0 else 0
+                await broadcast_agent_telemetry(
+                    cid,
+                    action="LLM synthesis complete",
+                    tokens_generated=_task_token_counts[task_id],
+                    tokens_per_sec=round(tps, 2),
+                    context_size=len(context_text) // 4,
+                )
+                await broadcast_agent_reasoning(cid, answer[:160])
+                await manager.broadcast(req.client_id, f"🧠 LLM synthesis complete ({provider_label}).")
+            except Exception as e:
+                await manager.broadcast(req.client_id, f"⚠️ LLM call failed: {str(e)[:120]}")
 
         await broadcast_task_end(cid, task_id, status="completed", result_preview=answer)
 
@@ -1299,22 +1369,14 @@ async def _brain_only_research(query: str) -> dict:
 
         if context_text and scored:
             try:
-                base_url = LATEST_LLM_CONFIG.get("baseUrl", "http://localhost:11434/v1")
-                model_id = LATEST_LLM_CONFIG.get("modelId", "gemma4:12b-it-qat")
-                async with httpx.AsyncClient() as llm_client:
-                    synth_resp = await llm_client.post(
-                        f"{base_url.rstrip('/v1')}/api/generate",
-                        json={
-                            "model": model_id,
-                            "prompt": f"Based on this research context, provide a concise answer to: '{query}'\n\nContext:\n{context_text[:3000]}",
-                            "stream": False,
-                            "options": {"temperature": 0.3, "num_predict": 500},
-                        },
-                        timeout=30.0,
-                    )
-                    if synth_resp.status_code == 200:
-                        data = synth_resp.json()
-                        answer = data.get("response", context_text[:500])
+                answer_text, _ = await _call_llm(
+                    prompt=f"Based on this research context, provide a concise answer to: '{query}'\n\nContext:\n{context_text[:3000]}",
+                    max_tokens=500,
+                    temperature=0.3,
+                    timeout=30.0,
+                )
+                if answer_text:
+                    answer = answer_text
             except Exception:
                 pass
 
