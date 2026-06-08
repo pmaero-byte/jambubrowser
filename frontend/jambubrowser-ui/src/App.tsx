@@ -24,7 +24,7 @@ interface Tab { id: string; url: string; title: string; }
 
 function App() {
   // 1. Browser & Tab State
-  const [tabs, setTabs] = useState<Tab[]>([{ id: '1', url: 'https://www.google.com', title: 'Google' }]);
+  const [tabs, setTabs] = useState<Tab[]>([{ id: '1', url: 'about:blank', title: 'New Tab' }]);
   const [activeTabId, setActiveTabId] = useState('1');
 
   // 2. Navigation & Theme State
@@ -48,7 +48,7 @@ function App() {
   // --- Handlers ---
 
   const addTab = () => {
-    const newTab = { id: Date.now().toString(), url: 'https://www.google.com', title: 'New Tab' };
+    const newTab = { id: Date.now().toString(), url: 'https://example.com', title: 'New Tab' };
     setTabs([...tabs, newTab]);
     setActiveTabId(newTab.id);
   };

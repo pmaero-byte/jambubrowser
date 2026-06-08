@@ -572,7 +572,7 @@ app = FastAPI(title="Jambubrowser Engine v2.0", lifespan=lifespan)
 from fastapi.middleware.cors import CORSMiddleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:1420", "http://localhost:3000", "tauri://localhost"],
+    allow_origins=["http://localhost:1420", "http://localhost:3000", "http://localhost:5173", "tauri://localhost"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

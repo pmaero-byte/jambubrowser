@@ -40,7 +40,7 @@ export interface TaskEnd {
 }
 
 const WS_URL = import.meta.env.DEV
-  ? "ws://localhost:5173/ws/default"
+  ? "ws://localhost:8001/ws/default"
   : "ws://localhost:8001/ws/default";
 
 export function useAgentWebSocket() {

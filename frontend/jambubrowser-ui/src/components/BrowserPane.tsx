@@ -14,6 +14,12 @@ interface BrowserPaneProps {
 }
 
 export const BrowserPane = ({ url, onUrlChange }: BrowserPaneProps) => {
+  const resolvedUrl = url === 'about:blank'
+    ? 'about:blank'
+    : url.startsWith('http')
+      ? url
+      : `https://duckduckgo.com/?q=${encodeURIComponent(url)}`;
+
   return (
     <motion.div 
       initial={{ opacity: 0, x: 20 }} 
@@ -37,13 +43,18 @@ export const BrowserPane = ({ url, onUrlChange }: BrowserPaneProps) => {
       </div>
       
       <div className="webview-container">
-        {/* In production, this would be a Tauri Webview. 
-            For the prototype, we use a styled iframe. */}
-        <iframe 
-          src={url.startsWith('http') ? url : `https://www.google.com/search?q=${url}`} 
-          title="Web View"
-          className="browser-iframe"
-        />
+        {resolvedUrl === 'about:blank' ? (
+          <div className="blank-page">
+            <Globe size={48} color="#333" />
+            <p style={{ color: 'var(--text-dim)', marginTop: 16 }}>Enter a URL to start browsing</p>
+          </div>
+        ) : (
+          <iframe 
+            src={resolvedUrl} 
+            title="Web View"
+            className="browser-iframe"
+          />
+        )}
       </div>
     </motion.div>
   );

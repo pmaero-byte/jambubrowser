@@ -1,4 +1,4 @@
-import { Trees, Zap, BrainCircuit, Box, Shield, History, KeyRound } from "lucide-react";
+import { Trees, Zap, BrainCircuit, Box, Shield, History, KeyRound, FileText } from "lucide-react";
 
 /**
  * Premium Navigation Sidebar
@@ -30,7 +30,8 @@ export const Header = ({ activeTab, setActiveTab, fullPower, setFullPower, showH
         <button className={activeTab === 'chat' ? 'active' : ''} onClick={() => setActiveTab('chat')}><Zap size={14}/> Research</button>
         <button className={activeTab === 'graph' ? 'active' : ''} onClick={() => setActiveTab('graph')}><BrainCircuit size={14}/> Intelligence</button>
         <button className={activeTab === 'workspace' ? 'active' : ''} onClick={() => setActiveTab('workspace')}><Box size={14}/> Workspace</button>
-        <button className={activeTab === 'stealth' ? 'active' : ''} onClick={() => setActiveTab('stealth')}><Shield size={14}/> Stealth</button>
+        <button className={activeTab === 'privacy' ? 'active' : ''} onClick={() => setActiveTab('privacy')}><Shield size={14}/> Privacy</button>
+        <button className={activeTab === 'audit' ? 'active' : ''} onClick={() => setActiveTab('audit')}><FileText size={14}/> Audit</button>
         <button className={activeTab === 'vault' ? 'active' : ''} onClick={() => setActiveTab('vault')}><KeyRound size={14}/> Vault</button>
       </div>
 

@@ -42,7 +42,7 @@ export default defineConfig({
       '/harness': { target: 'http://localhost:8001', changeOrigin: true },
       '/llm': { target: 'http://localhost:8001', changeOrigin: true },
       '/v1': { target: 'http://localhost:8001', changeOrigin: true },
-      '/ws': { target: 'ws://localhost:8001', ws: true },
+      '/ws': { target: 'http://localhost:8001', changeOrigin: true, ws: true },
     },
   },
 })
