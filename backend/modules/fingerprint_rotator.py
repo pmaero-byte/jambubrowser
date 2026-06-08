@@ -156,6 +156,24 @@ Object.defineProperty(navigator, 'hardwareConcurrency', {{ get: () => {self.hard
 Object.defineProperty(navigator, 'deviceMemory', {{ get: () => {self.device_memory} }});
 """
 
+    def to_playwright_config(self) -> dict:
+        """Generate Playwright context configuration from this fingerprint."""
+        return {
+            'user_agent': self.user_agent,
+            'viewport': {
+                'width': self.viewport_width,
+                'height': self.viewport_height,
+            },
+            'locale': self.language,
+            'timezone_id': self.timezone,
+            'device_scale_factor': self.pixel_ratio,
+            'color_scheme': 'dark',
+            'extra_http_headers': {
+                'Accept-Language': f"{self.language},en;q=0.9",
+                'DNT': '1' if self.do_not_track else '0',
+            },
+        }
+
 
 class FingerprintRotator:
     """

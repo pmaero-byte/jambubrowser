@@ -5,6 +5,13 @@ Sovereign Autonomous Research Engine.
 Connects the UI to the internet, memory, sandboxed execution,
 credential vault, and AI reasoning.
 
+Security Features:
+- Privacy-first browser automation
+- Request/response sanitization
+- Audit logging for all actions
+- Local-only mode enforcement
+- Supply chain verification
+
 Endpoints:
 - /health, /stats              : System status
 - /research                    : Autonomous swarm research
@@ -20,6 +27,9 @@ Endpoints:
 - /discover_api, /api/call     : API discovery
 - /graph_data                  : 3D brain visualization data
 - /peers/discover, /peer/sync  : P2P mesh (stubs)
+- /privacy/report              : Privacy status report
+- /audit/log                   : Audit trail access
+- /security/verify             : Supply chain verification
 """
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -43,8 +53,12 @@ import importlib.util
 from backend.core.database import init_db, get_db, get_db_cursor, get_stats as db_stats, clear_memory
 from backend.core.sandbox import execute_sandboxed
 from backend.core.vault import get_vault
+from backend.core.privacy import PrivacyMode, get_privacy_manager, sanitize_content_for_storage
+from backend.core.audit import get_audit_logger, ActionCategory
+from backend.core.supply_chain import get_verifier
 from backend.modules.search import multi_engine_search, filter_trusted_results
 from backend.modules.scraper import get_sovereign_crawler, get_scrape_config, is_special_media, get_special_content, scrape_url
+from backend.modules.browser import SessionMode, PrivacyLevel, get_browser_manager
 
 # ---- App Init ----
 
@@ -610,6 +624,143 @@ async def get_stats():
         "custom_tools": db_info["custom_tools"],
         "credentials": db_info["credentials"],
         "browser_sessions": db_info["browser_sessions"],
+    }
+
+
+# ===================================================================
+# PRIVACY & SECURITY ENDPOINTS
+# ===================================================================
+
+@app.get("/privacy/report")
+async def privacy_report():
+    """
+    Get comprehensive privacy report.
+    Shows all privacy protections and their status.
+    """
+    privacy_mgr = get_privacy_manager()
+    audit_logger = get_audit_logger()
+
+    return {
+        "privacy": privacy_mgr.get_privacy_report(),
+        "audit": audit_logger.get_statistics(),
+        "vault_status": "locked" if get_vault().is_locked else "unlocked",
+    }
+
+
+@app.get("/privacy/check")
+async def check_url_privacy(url: str):
+    """Check if a URL is allowed under current privacy mode."""
+    privacy_mgr = get_privacy_manager()
+    allowed = privacy_mgr.check_url_allowed(url)
+
+    return {
+        "url": url,
+        "allowed": allowed,
+        "mode": privacy_mgr.mode.value,
+    }
+
+
+@app.get("/audit/log")
+async def audit_log(category: str = None, limit: int = 100):
+    """Get audit log entries."""
+    audit_logger = get_audit_logger()
+    entries = audit_logger.get_entries(category=category, limit=limit)
+    return {"entries": entries, "total": len(entries)}
+
+
+@app.get("/audit/verify")
+async def verify_audit_chain():
+    """Verify the integrity of the audit log chain."""
+    audit_logger = get_audit_logger()
+    is_valid, message = audit_logger.verify_chain_integrity()
+    return {"valid": is_valid, "message": message}
+
+
+@app.get("/security/verify")
+async def verify_security():
+    """Verify supply chain integrity."""
+    verifier = get_verifier()
+    report = verifier.get_verification_report()
+    return report
+
+
+@app.get("/security/verify/package")
+async def verify_package(package_name: str):
+    """Verify a specific package's integrity."""
+    verifier = get_verifier()
+    info = verifier.verify_package(package_name)
+    return {
+        "name": info.name,
+        "version": info.version,
+        "verified": info.verified,
+        "hash": info.actual_hash[:16] + "..." if info.actual_hash else None,
+    }
+
+
+@app.get("/browser/privacy")
+async def browser_privacy_summary():
+    """Get privacy summary of all browser sessions."""
+    manager = get_browser_manager()
+    return manager.get_privacy_summary()
+
+
+class PrivacyModeRequest(BaseModel):
+    mode: str = "enhanced"
+
+
+@app.post("/privacy/mode")
+async def set_privacy_mode(req: PrivacyModeRequest):
+    """Set the privacy mode for new sessions."""
+    try:
+        mode = PrivacyMode(req.mode)
+        privacy_mgr = get_privacy_manager(mode)
+        return {
+            "success": True,
+            "mode": mode.value,
+            "message": f"Privacy mode set to {mode.value}",
+        }
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid privacy mode: {req.mode}. Use: standard, enhanced, maximum, local_only"
+        )
+
+
+@app.get("/fingerprint/generate")
+async def generate_fingerprint():
+    """Generate a new browser fingerprint."""
+    from backend.modules.fingerprint_rotator import get_rotator
+    rotator = get_rotator()
+    profile = rotator.generate_profile()
+    return {
+        "profile_id": profile.profile_id,
+        "user_agent": profile.user_agent,
+        "viewport": f"{profile.viewport_width}x{profile.viewport_height}",
+        "timezone": profile.timezone,
+        "language": profile.language,
+    }
+
+
+@app.get("/fingerprint/list")
+async def list_fingerprints():
+    """List all generated fingerprints."""
+    from backend.modules.fingerprint_rotator import get_rotator
+    rotator = get_rotator()
+    return {"profiles": rotator.list_profiles()}
+
+
+@app.post("/fingerprint/rotate")
+async def rotate_fingerprint(current_id: str = None):
+    """Generate a new fingerprint different from the current one."""
+    from backend.modules.fingerprint_rotator import get_rotator
+    rotator = get_rotator()
+    new_profile = rotator.rotate_profile(current_id)
+    return {
+        "profile_id": new_profile.profile_id,
+        "user_agent": new_profile.user_agent,
+        "viewport": f"{new_profile.viewport_width}x{new_profile.viewport_height}",
+        "timezone": new_profile.timezone,
+        "language": new_profile.language,
     }
 
 
