@@ -80,29 +80,54 @@ class SupplyChainVerifier:
             DependencyInfo with verification status
         """
         try:
-            # Get installed version
-            result = subprocess.run(
-                ["pip", "show", package_name],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
+            version = None
+            location = ""
+            
+            # Try importlib.metadata first (Python 3.8+)
+            try:
+                import importlib.metadata as metadata
+                version = metadata.version(package_name)
+                
+                # Get package location
+                try:
+                    dist = metadata.distribution(package_name)
+                    if hasattr(dist, '_path') and dist._path:
+                        location = str(dist._path.parent)
+                except Exception:
+                    pass
+                    
+            except (ImportError, metadata.PackageNotFoundError):
+                # Fallback to pip for older Python versions
+                result = subprocess.run(
+                    ["pip", "show", package_name],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
 
-            if result.returncode != 0:
+                if result.returncode != 0:
+                    return DependencyInfo(
+                        name=package_name,
+                        version="unknown",
+                        verified=False,
+                        source="pip",
+                    )
+
+                # Parse version
+                version_match = re.search(r"Version:\s+(.+)", result.stdout)
+                version = version_match.group(1).strip() if version_match else "unknown"
+
+                # Get package location
+                location_match = re.search(r"Location:\s+(.+)", result.stdout)
+                location = location_match.group(1).strip() if location_match else ""
+
+            if not version:
                 return DependencyInfo(
                     name=package_name,
                     version="unknown",
                     verified=False,
-                    source="pip",
+                    source="importlib",
                 )
-
-            # Parse version
-            version_match = re.search(r"Version:\s+(.+)", result.stdout)
-            version = version_match.group(1).strip() if version_match else "unknown"
-
-            # Get package location
-            location_match = re.search(r"Location:\s+(.+)", result.stdout)
-            location = location_match.group(1).strip() if location_match else ""
 
             # Compute hash of package files
             actual_hash = self._compute_package_hash(package_name, location)
@@ -118,7 +143,7 @@ class SupplyChainVerifier:
                 actual_hash=actual_hash,
                 verified=verified,
                 last_checked=time.time(),
-                source="pip",
+                source="importlib" if version else "pip",
             )
 
             self._verification_cache[package_name] = info

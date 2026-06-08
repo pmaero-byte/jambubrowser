@@ -90,13 +90,25 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
         )
     """)
     
-    # Virtual table for high-speed AI 'meaning' search (384 dimensions for all-MiniLM)
-    cursor.execute("""
-        CREATE VIRTUAL TABLE IF NOT EXISTS vec_documents USING vec0(
-            id INTEGER PRIMARY KEY,
-            embedding float[384]
-        )
-    """)
+    # Try to create vector table for high-speed AI 'meaning' search
+    # This will fail if sqlite-vec is not available
+    _sqlite_vec_available = False
+    try:
+        cursor.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS vec_documents USING vec0(
+                id INTEGER PRIMARY KEY,
+                embedding float[384]
+            )
+        """)
+        _sqlite_vec_available = True
+    except Exception:
+        # sqlite-vec not available, create a fallback table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS vec_documents (
+                id INTEGER PRIMARY KEY,
+                embedding BLOB
+            )
+        """)
     
     # Cache for embeddings to save computer power
     cursor.execute("""

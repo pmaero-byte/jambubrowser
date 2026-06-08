@@ -114,7 +114,7 @@ class ConsensusEngine:
     # ------------------------------------------------------------------ #
     # Proposal lifecycle
     # ------------------------------------------------------------------ #
-    def create_proposal(
+    async def create_proposal(
         self,
         title: str,
         description: str,
@@ -176,7 +176,7 @@ class ConsensusEngine:
         )
 
         # Attempt to broadcast; failures are non-fatal.
-        broadcast = self._broadcast_proposal(proposal_id)
+        broadcast = await self._broadcast_proposal(proposal_id)
         if broadcast.get("success"):
             proposal["status"] = "voting"
 
@@ -442,7 +442,7 @@ class ConsensusEngine:
     # ------------------------------------------------------------------ #
     # Internal helpers
     # ------------------------------------------------------------------ #
-    def _broadcast_proposal(self, proposal_id: str) -> Dict[str, Any]:
+    async def _broadcast_proposal(self, proposal_id: str) -> Dict[str, Any]:
         """Best-effort POST the new proposal to peer ``/consensus`` endpoints.
 
         Peers are read from a sidecar file (``federation.json``) when
@@ -458,35 +458,28 @@ class ConsensusEngine:
             # Nothing to broadcast to — still success.
             return {"success": True, "broadcast_to": 0, "note": "no peers discovered"}
 
-        async def fan_out() -> List[Dict[str, Any]]:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                results = []
-                for url in peer_urls:
-                    try:
-                        resp = await client.post(
-                            url,
-                            json={
-                                "sender": self.node_id,
-                                "proposal": proposal,
-                            },
-                        )
-                        results.append(
-                            {
-                                "url": url,
-                                "status": resp.status_code,
-                                "ok": resp.status_code < 400,
-                            }
-                        )
-                    except Exception as exc:
-                        results.append(
-                            {"url": url, "status": None, "ok": False, "error": str(exc)}
-                        )
-                return results
-
-        try:
-            results = asyncio.run(fan_out())
-        except Exception as exc:
-            return {"success": False, "error": str(exc)}
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            results = []
+            for url in peer_urls:
+                try:
+                    resp = await client.post(
+                        url,
+                        json={
+                            "sender": self.node_id,
+                            "proposal": proposal,
+                        },
+                    )
+                    results.append(
+                        {
+                            "url": url,
+                            "status": resp.status_code,
+                            "ok": resp.status_code < 400,
+                        }
+                    )
+                except Exception as exc:
+                    results.append(
+                        {"url": url, "status": None, "ok": False, "error": str(exc)}
+                    )
 
         return {
             "success": True,

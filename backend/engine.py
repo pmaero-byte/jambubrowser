@@ -1113,6 +1113,7 @@ async def scrape(req: ScrapeRequest):
         session_id=req.client_id if hasattr(req, 'client_id') else None,
     )
     
+    # Try crawl4ai first, fallback to Playwright
     try:
         from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
         from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
@@ -1131,7 +1132,7 @@ async def scrape(req: ScrapeRequest):
         )
 
         async with AsyncWebCrawler(config=browser_config) as crawler:
-            result = await crawler.arun(url=req.url, js_code=js_code, config=run_config)
+            result = await crawler.arun(url=req.url, config=run_config)
 
         if result.success:
             content = result.markdown[:50000]
@@ -1145,6 +1146,7 @@ async def scrape(req: ScrapeRequest):
                     "url": req.url,
                     "content_length": len(sanitized_content),
                     "pii_removed": len(sanitization_result.pii_removed),
+                    "engine": "crawl4ai",
                 },
                 session_id=req.client_id if hasattr(req, 'client_id') else None,
             )
@@ -1157,11 +1159,42 @@ async def scrape(req: ScrapeRequest):
             }
         return {"success": False, "url": req.url, "error": "Failed to scrape page"}
     except ImportError:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(req.url, timeout=15.0, follow_redirects=True)
-            content = resp.text[:50000]
-            sanitized_content, _ = sanitize_content_for_storage(content)
-            return {"success": True, "url": req.url, "markdown": sanitized_content, "title": ""}
+        # Fallback to Playwright
+        pass
+    except Exception as e:
+        # Log the error but continue to fallback
+        print(f"crawl4ai error: {e}")
+    
+    # Playwright fallback
+    try:
+        from backend.modules.playwright_scraper import scrape_with_playwright
+        
+        result = await scrape_with_playwright(req.url)
+        
+        if result["success"]:
+            content = result["content"]
+            sanitized_content, sanitization_result = sanitize_content_for_storage(content)
+            
+            # Log successful scrape
+            audit.log(
+                category=ActionCategory.BROWSER,
+                action="scrape_success",
+                details={
+                    "url": req.url,
+                    "content_length": len(sanitized_content),
+                    "pii_removed": len(sanitization_result.pii_removed),
+                    "engine": "playwright",
+                },
+                session_id=req.client_id if hasattr(req, 'client_id') else None,
+            )
+            
+            return {
+                "success": True,
+                "url": req.url,
+                "markdown": sanitized_content,
+                "title": result.get("title", ""),
+            }
+        return {"success": False, "url": req.url, "error": result.get("error", "Failed to scrape page")}
     except Exception as e:
         # Log the error
         audit.log(
@@ -1215,6 +1248,21 @@ async def perform_actions(req: MultiActionRequest):
         session_id=req.client_id,
     )
     
+    # Convert steps to action dicts
+    actions = []
+    for step in req.steps:
+        action_dict = {"action": step.action}
+        if hasattr(step, 'selector') and step.selector:
+            action_dict["selector"] = step.selector
+        if hasattr(step, 'value') and step.value:
+            action_dict["value"] = step.value
+        if hasattr(step, 'x') and step.x is not None:
+            action_dict["x"] = step.x
+        if hasattr(step, 'y') and step.y is not None:
+            action_dict["y"] = step.y
+        actions.append(action_dict)
+    
+    # Try crawl4ai first, fallback to Playwright
     try:
         from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
 
@@ -1255,13 +1303,44 @@ async def perform_actions(req: MultiActionRequest):
                     "url": req.url,
                     "content_length": len(sanitized_content),
                     "pii_removed": len(sanitization_result.pii_removed),
+                    "engine": "crawl4ai",
                 },
                 session_id=req.client_id,
             )
             
             return {"status": "success", "markdown": sanitized_content}
     except ImportError:
-        return {"status": "error", "message": "crawl4ai not installed"}
+        # Fallback to Playwright
+        pass
+    except Exception as e:
+        # Log the error but continue to fallback
+        print(f"crawl4ai error: {e}")
+    
+    # Playwright fallback
+    try:
+        from backend.modules.playwright_scraper import perform_actions_with_playwright
+        
+        result = await perform_actions_with_playwright(req.url, actions)
+        
+        if result["success"]:
+            content = result["content"]
+            sanitized_content, sanitization_result = sanitize_content_for_storage(content)
+            
+            # Log successful action
+            audit.log(
+                category=ActionCategory.BROWSER,
+                action="perform_actions_success",
+                details={
+                    "url": req.url,
+                    "content_length": len(sanitized_content),
+                    "pii_removed": len(sanitization_result.pii_removed),
+                    "engine": "playwright",
+                },
+                session_id=req.client_id,
+            )
+            
+            return {"status": "success", "markdown": sanitized_content}
+        return {"status": "error", "message": result.get("error", "Failed to perform actions")}
     except Exception as e:
         # Log the error
         audit.log(
@@ -2763,7 +2842,7 @@ class ConsensusProposeRequest(BaseModel):
 @app.post("/consensus/propose")
 async def consensus_propose(req: ConsensusProposeRequest):
     """Create a new consensus proposal for multi-node decision making."""
-    return _consensus.create_proposal(req.title, req.description, req.options, req.required_nodes)
+    return await _consensus.create_proposal(req.title, req.description, req.options, req.required_nodes)
 
 
 @app.get("/consensus/list")
