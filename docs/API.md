@@ -1,106 +1,186 @@
-# Jambubrowser API Documentation
-
-## Overview
-
-Jambubrowser is a sovereign autonomous research engine with privacy-first architecture. All data stays on your machine by default.
+# Jambubrowser API Reference
 
 **Base URL:** `http://localhost:8001`
 
+All endpoints accept and return JSON. WebSocket endpoints use `ws://localhost:8001`.
+
 ---
 
-## System Endpoints
+## Table of Contents
+
+- [System](#system)
+- [Research](#research)
+- [Browser](#browser)
+- [Privacy](#privacy)
+- [Audit](#audit)
+- [Vault](#vault)
+- [Security](#security)
+- [Fingerprint](#fingerprint)
+- [Knowledge Graph](#knowledge-graph)
+- [Missions](#missions)
+- [Consensus](#consensus)
+- [Vision](#vision)
+- [Computer Use](#computer-use)
+- [Multimodal](#multimodal)
+- [WebSocket](#websocket)
+
+---
+
+## System
 
 ### GET /health
-Check system health and component status.
+
+System health with real-time metrics.
 
 **Response:**
 ```json
 {
-  "status": "healthy",
-  "version": "2.0.0",
-  "uptime_seconds": 12345,
-  "components": {
-    "database": "ok",
-    "memory": "ok",
-    "browser": "ok"
-  }
+  "status": "online",
+  "message": "Jambubrowser v2.0 is ready.",
+  "ram_used_gb": 16.5,
+  "ram_total_gb": 48.0,
+  "cpu_percent": 27.4
 }
 ```
 
 ### GET /stats
-Get system statistics.
+
+Database and system statistics.
 
 **Response:**
 ```json
 {
-  "total_tasks": 100,
-  "active_sessions": 5,
-  "memory_nodes": 1234,
-  "vault_status": "locked"
+  "doc_count": 26,
+  "active_missions": 2,
+  "custom_tools": 1,
+  "credentials": 0,
+  "browser_sessions": 0
 }
 ```
 
+### GET /models/available
+
+List available Gemma 4 models.
+
+### GET /models/installed
+
+List all installed models across providers.
+
+### GET /models/status
+
+Get status of a specific model.
+
+**Parameters:**
+- `model` (string, optional): Model name
+
+### POST /models/pull
+
+Pull a model via Ollama.
+
+**Parameters:**
+- `model` (string, optional): Model name (default: gemma4:12b)
+
+### GET /models/recommend
+
+Get recommended model based on available RAM.
+
+### POST /models/setup
+
+One-click Gemma 4 setup.
+
+**Parameters:**
+- `model_size` (string, optional): "7b" or "12b" (default: "12b")
+
+### GET /models/providers
+
+Check which LLM providers are available.
+
+**Response:**
+```json
+{
+  "ollama": true,
+  "llamacpp": false,
+  "recommended": "ollama"
+}
+```
+
+### GET /llm/config
+
+Get current LLM configuration.
+
 ---
 
-## Research Endpoints
+## Research
 
 ### POST /research
-Autonomous swarm research with multi-engine search.
+
+Autonomous research with multi-engine search and LLM synthesis.
 
 **Request:**
 ```json
 {
   "query": "What is quantum computing?",
-  "client_id": "ui",
+  "top_n": 5,
+  "client_id": "default",
+  "persist": false,
+  "stealth": {},
+  "domain": "general",
   "brain_only": false,
-  "domain": "general"
+  "tor_routing": false,
+  "incognito": false,
+  "llm_config": {},
+  "llm_provider": "ollama"
 }
 ```
 
 **Response:**
 ```json
 {
-  "answer": "Quantum computing uses...",
-  "sources": ["https://example.com"],
-  "doc_count": 10,
-  "context": "Additional context..."
+  "answer": "Quantum computing uses qubits that can exist in multiple states...",
+  "sources": ["https://example.com", "https://arxiv.org/abs/1234.5678"],
+  "doc_count": 5,
+  "context": "Full context text used for synthesis..."
 }
 ```
 
+**Domain options:**
+- `general` - Standard web search
+- `academic` - ArXiv papers
+- `coding` - GitHub repositories
+
 ### GET /search
-Raw metasearch with multiple engines.
+
+Raw metasearch without scraping.
 
 **Parameters:**
 - `q` (string, required): Search query
-- `max_results` (int, optional): Maximum results (default: 10)
+- `engines` (string, optional): Comma-separated engines (default: "google,bing,duckduckgo")
 
 **Response:**
 ```json
 {
   "results": [
     {
-      "title": "Example",
       "url": "https://example.com",
-      "snippet": "Description..."
+      "title": "Example Page",
+      "content": "Page content...",
+      "engine": "duckduckgo"
     }
-  ]
+  ],
+  "query": "quantum computing"
 }
 ```
 
----
-
-## Browser Endpoints
-
 ### POST /scrape
-Scrape a single page with privacy protection.
+
+Single-page scraping with privacy protection.
 
 **Request:**
 ```json
 {
   "url": "https://example.com",
-  "wait_until": "networkidle",
-  "mode": "ephemeral",
-  "privacy_level": "enhanced"
+  "query": "specific topic",
+  "client_id": "default"
 }
 ```
 
@@ -109,185 +189,161 @@ Scrape a single page with privacy protection.
 {
   "success": true,
   "url": "https://example.com",
-  "title": "Example Domain",
-  "text_content": "Page content...",
-  "screenshot_base64": "...",
-  "privacy_report": {...}
+  "markdown": "Scraped content in markdown...",
+  "title": "Page Title"
 }
 ```
 
 ### POST /act
+
 Execute browser actions (click, type, scroll).
 
 **Request:**
 ```json
 {
-  "action": "click",
-  "selector": "#button",
-  "url": "https://example.com"
+  "url": "https://example.com",
+  "steps": [
+    {"action": "click", "selector": "button.submit"},
+    {"action": "type", "selector": "input[name=q]", "value": "search term"},
+    {"action": "scroll", "value": "500"}
+  ],
+  "client_id": "default"
 }
 ```
 
-**Actions:** `click`, `type`, `scroll`, `click_xy`
+**Supported actions:** `click`, `type`, `scroll`, `click_xy`
 
 ### POST /workflow/execute
-Execute a workflow with multiple steps.
 
-**Request:**
-```json
-{
-  "steps": [
-    {"action": "navigate", "url": "https://example.com"},
-    {"action": "click", "selector": "#link"},
-    {"action": "extract", "selector": ".content"}
-  ]
-}
-```
+Alias for `/act`.
 
 ---
 
-## Memory Endpoints
-
-### GET /memory/recall
-Recall information from memory.
-
-**Parameters:**
-- `query` (string, required): Search query
-- `limit` (int, optional): Maximum results (default: 5)
-
-**Response:**
-```json
-{
-  "memories": [
-    {
-      "id": 1,
-      "content": "Memory content...",
-      "relevance": 0.95
-    }
-  ]
-}
-```
-
-### POST /knowledge/ingest
-Ingest content into knowledge graph.
-
-**Request:**
-```json
-{
-  "text": "Content to ingest...",
-  "url": "https://example.com",
-  "metadata": {}
-}
-```
-
-**Response:**
-```json
-{
-  "entities_extracted": 5,
-  "relations_extracted": 3,
-  "total_entities": 100
-}
-```
-
-### GET /knowledge/graph
-Get knowledge graph data.
-
-**Response:**
-```json
-{
-  "nodes": [...],
-  "edges": [...]
-}
-```
-
----
-
-## Credential Vault Endpoints
+## Browser
 
 ### POST /login
-Store credentials securely.
+
+Autonomous login using the Credential Vault.
 
 **Request:**
 ```json
 {
-  "url": "https://github.com/login",
+  "url": "https://example.com/login",
   "username": "user@example.com",
-  "password": "secure_password"
+  "password": "secret",
+  "client_id": "default"
 }
 ```
 
-### GET /vault/credential
-Retrieve credentials.
-
-**Parameters:**
-- `url` (string, required): URL to retrieve credentials for
-
-### GET /vault/domains
-List all stored domains.
+**Response:**
+```json
+{
+  "status": "success",
+  "domain": "example.com",
+  "message": "Login attempted for example.com"
+}
+```
 
 ---
 
-## Privacy Endpoints
+## Privacy
 
 ### GET /privacy/report
-Get privacy status report.
+
+Comprehensive privacy report.
 
 **Response:**
 ```json
 {
-  "mode": "enhanced",
-  "network": {
+  "privacy": {
+    "mode": "enhanced",
+    "audit_statistics": {
+      "total_entries": 0,
+      "pii_detections": 0,
+      "content_sanitizations": 0,
+      "blocked_requests": 0,
+      "credential_accesses": 0
+    },
+    "blocked_requests": [],
     "local_only": false,
-    "external_requests_allowed": true,
-    "blocked_domains_count": 1000
-  },
-  "content": {
-    "pii_detection_enabled": true,
-    "tracking_protection": true
+    "pii_removal": true,
+    "tracking_blocked": true
   },
   "audit": {
-    "enabled": true,
-    "chain_valid": true,
-    "total_entries": 500
+    "total_entries": 8,
+    "by_category": {"browser": 6, "credential": 1, "error": 1},
+    "oldest_entry": 1780924565.98,
+    "newest_entry": 1780924569.14,
+    "retention_days": 90
   },
-  "vault": {
-    "locked": true,
-    "credentials_count": 10
-  }
+  "vault_status": "locked"
 }
 ```
 
-### POST /privacy/check
-Check content for PII.
+### POST /privacy/mode
+
+Set privacy mode for new sessions.
 
 **Request:**
 ```json
 {
-  "content": "John Doe's email is john@example.com"
+  "mode": "maximum"
 }
 ```
+
+**Valid modes:** `standard`, `enhanced`, `maximum`, `local_only`
 
 **Response:**
 ```json
 {
-  "has_pii": true,
-  "detected_types": ["email", "name"],
-  "sanitized_content": "[REDACTED]"
+  "success": true,
+  "mode": "maximum",
+  "message": "Privacy mode set to maximum"
+}
+```
+
+### GET /privacy/check
+
+Check if a URL is allowed under current privacy mode.
+
+**Parameters:**
+- `url` (string, required): URL to check
+
+**Response:**
+```json
+{
+  "url": "https://example.com",
+  "allowed": true,
+  "mode": "enhanced"
 }
 ```
 
 ---
 
-## Audit Endpoints
+## Audit
+
+### GET /audit/stats
+
+Get audit statistics.
+
+**Response:**
+```json
+{
+  "total_entries": 8,
+  "by_category": {"browser": 6, "credential": 1, "error": 1},
+  "oldest_entry": 1780924565.98,
+  "newest_entry": 1780924569.14,
+  "retention_days": 90
+}
+```
 
 ### GET /audit/log
+
 Get audit log entries.
 
 **Parameters:**
 - `category` (string, optional): Filter by category
-- `limit` (int, optional): Maximum entries (default: 100)
-
-**Categories:** `research`, `browser`, `credential`, `network`, `privacy`, `system`, `error`
+- `limit` (int, optional): Max entries (default: 100)
 
 **Response:**
 ```json
@@ -295,32 +351,22 @@ Get audit log entries.
   "entries": [
     {
       "id": 1,
-      "timestamp": 1234567890,
+      "timestamp": 1780924565.98,
       "category": "browser",
       "action": "scrape",
       "details": {"url": "https://example.com"},
-      "hash": "abc123..."
+      "actor": "agent",
+      "session_id": null,
+      "hash": "abc123def456..."
     }
-  ]
-}
-```
-
-### GET /audit/stats
-Get audit statistics.
-
-**Response:**
-```json
-{
-  "total_entries": 500,
-  "categories": {"browser": 100, "research": 200},
-  "chain_valid": true,
-  "oldest_entry": 1234567890,
-  "newest_entry": 1234567899
+  ],
+  "total": 8
 }
 ```
 
 ### GET /audit/verify
-Verify audit log chain integrity.
+
+Verify the integrity of the audit log chain.
 
 **Response:**
 ```json
@@ -332,194 +378,516 @@ Verify audit log chain integrity.
 
 ---
 
-## Security Endpoints
+## Vault
+
+### GET /vault/status
+
+Get vault lock status.
+
+**Response:**
+```json
+{
+  "locked": true,
+  "access_log": []
+}
+```
+
+### POST /vault/unlock
+
+Unlock the credential vault.
+
+**Request:**
+```json
+{
+  "master_password": "your_password"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Vault unlocked"
+}
+```
+
+### POST /vault/lock
+
+Lock the credential vault.
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Vault locked"
+}
+```
+
+### GET /vault/domains
+
+List all domains with stored credentials.
+
+**Response:**
+```json
+{
+  "domains": ["example.com", "github.com"]
+}
+```
+
+### GET /vault/credential
+
+Find the best matching credential for a URL.
+
+**Parameters:**
+- `url` (string, required): URL to match
+
+**Response:**
+```json
+{
+  "found": true,
+  "domain": "example.com",
+  "username": "user@example.com"
+}
+```
+
+---
+
+## Security
 
 ### GET /security/verify
+
 Verify supply chain integrity.
 
 **Response:**
 ```json
 {
+  "timestamp": 1780924565.98,
+  "packages": {
+    "fastapi": {"version": "0.115.0", "verified": true, "hash": "abc123..."},
+    "uvicorn": {"version": "0.30.0", "verified": true, "hash": "def456..."}
+  },
+  "system_components": {
+    "python": true,
+    "pip": true,
+    "playwright": true,
+    "sqlite_vec": true
+  },
+  "known_hashes_count": 10
+}
+```
+
+### GET /security/verify/package
+
+Verify a specific package's integrity.
+
+**Parameters:**
+- `package_name` (string, required): Package name
+
+**Response:**
+```json
+{
+  "name": "fastapi",
+  "version": "0.115.0",
   "verified": true,
-  "dependencies": {
-    "fastapi": {"status": "ok", "version": "0.104.0"},
-    "playwright": {"status": "ok", "version": "1.40.0"}
+  "hash": "abc123def456..."
+}
+```
+
+---
+
+## Fingerprint
+
+### POST /fingerprint/generate
+
+Generate a new unique browser fingerprint.
+
+**Request:**
+```json
+{
+  "os_family": "macos"
+}
+```
+
+**Response:**
+```json
+{
+  "profile": {
+    "profile_id": "fp_abc123",
+    "user_agent": "Mozilla/5.0...",
+    "viewport_width": 1920,
+    "viewport_height": 1080,
+    "timezone": "America/New_York",
+    "language": "en-US"
+  },
+  "playwright_config": {
+    "user_agent": "Mozilla/5.0...",
+    "viewport": {"width": 1920, "height": 1080},
+    "locale": "en-US",
+    "timezone_id": "America/New_York"
   }
 }
 ```
 
----
+### GET /fingerprint/list
 
-## Browser Session Endpoints
-
-### POST /fingerprint/generate
-Generate a new browser fingerprint.
+List all generated fingerprints.
 
 **Response:**
 ```json
 {
-  "profile_id": "fp_abc123",
-  "user_agent": "Mozilla/5.0...",
-  "viewport": {"width": 1920, "height": 1080}
+  "profiles": [
+    {"profile_id": "fp_abc123", "user_agent": "Mozilla/5.0...", "created_at": 1780924565.98}
+  ]
+}
+```
+
+### GET /fingerprint/profile/{profile_id}
+
+Get a specific fingerprint profile.
+
+**Response:**
+```json
+{
+  "profile": {...},
+  "playwright_config": {...},
+  "proxy_routing": {"proxy": null, "direct": true}
 }
 ```
 
 ### POST /fingerprint/rotate
-Rotate to a new fingerprint.
+
+Generate a new fingerprint different from the current one.
+
+**Parameters:**
+- `current_profile_id` (string, optional): Current profile to differentiate from
+
+---
+
+## Knowledge Graph
+
+### POST /knowledge/ingest
+
+Ingest text into the knowledge graph.
+
+**Request:**
+```json
+{
+  "text": "OpenAI released GPT-4 in March 2023...",
+  "url": "https://example.com/article"
+}
+```
 
 **Response:**
 ```json
 {
-  "new_profile_id": "fp_def456",
-  "rotated": true
+  "entities_found": 5,
+  "relations_found": 3,
+  "entities": [
+    {"name": "OpenAI", "type": "org", "confidence": 0.95},
+    {"name": "GPT-4", "type": "technology", "confidence": 0.98}
+  ]
 }
 ```
 
-### GET /fingerprint/list
-List all generated fingerprints.
+### GET /knowledge/graph
 
-### POST /browser/privacy
-Set privacy level for browser sessions.
+Get knowledge graph data for visualization.
+
+**Parameters:**
+- `max_nodes` (int, optional): Maximum nodes (default: 100)
+
+### GET /knowledge/search
+
+Search for entities in the knowledge graph.
+
+**Parameters:**
+- `query` (string, required): Search query
+- `limit` (int, optional): Max results (default: 20)
+
+### GET /knowledge/entity/{entity_id}
+
+Get an entity and its relationships.
+
+### GET /knowledge/clusters
+
+Get topic clusters.
+
+**Parameters:**
+- `max_clusters` (int, optional): Max clusters (default: 10)
+
+### GET /knowledge/stats
+
+Get knowledge graph statistics.
+
+---
+
+## Missions
+
+### POST /mission/schedule
+
+Schedule a research mission.
 
 **Request:**
 ```json
 {
-  "level": "maximum",
-  "session_id": "optional_session_id"
-}
-```
-
----
-
-## WebSocket Endpoints
-
-### WS /ws/{client_id}
-Real-time agent logging.
-
-**Messages:**
-```json
-{"type": "log", "message": "Task started"}
-{"type": "progress", "value": 0.5}
-{"type": "complete", "result": {...}}
-```
-
-### WS /ws/audit
-Live audit log updates.
-
-**Messages:**
-```json
-{"type": "stats", "data": {...}}
-{"type": "entry", "entry": {...}}
-```
-
----
-
-## Mission Endpoints
-
-### POST /mission
-Create a new mission.
-
-**Request:**
-```json
-{
-  "name": "Daily Research",
-  "task": "Research AI news",
-  "schedule": "0 9 * * *"
+  "query": "Monitor AI safety news",
+  "schedule": "0 */6 * * *",
+  "priority": 1,
+  "trigger_conditions": null,
+  "client_id": "default"
 }
 ```
 
 ### GET /mission/list
-List all missions.
 
-### POST /mission/schedule
-Schedule a mission.
+List all scheduled missions.
+
+**Parameters:**
+- `status` (string, optional): Filter by status
 
 ### POST /mission/start-scheduler
-Start the mission scheduler.
+
+Start the background mission scheduler.
 
 ### POST /mission/stop-scheduler
-Stop the mission scheduler.
+
+Stop the background mission scheduler.
 
 ---
 
-## Tool Endpoints
-
-### POST /tool/save
-Save a custom tool.
-
-**Request:**
-```json
-{
-  "name": "web_scraper",
-  "code": "def scrape(url): ...",
-  "description": "Custom web scraper"
-}
-```
-
-### GET /tools
-List all saved tools.
-
-### POST /tool/exec
-Execute a saved tool.
-
-**Request:**
-```json
-{
-  "tool_name": "web_scraper",
-  "args": {"url": "https://example.com"}
-}
-```
-
----
-
-## Consensus Endpoints
+## Consensus
 
 ### POST /consensus/propose
-Create a consensus proposal.
+
+Create a new consensus proposal.
 
 **Request:**
 ```json
 {
-  "proposal": "Should we enable maximum privacy?",
-  "options": ["yes", "no", "abstain"]
+  "title": "Should we use Tor for research?",
+  "description": "Proposal to enable Tor routing by default",
+  "options": ["Yes", "No", "Abstain"],
+  "required_nodes": 3
 }
 ```
+
+### GET /consensus/list
+
+List all proposals.
+
+**Parameters:**
+- `status` (string, optional): Filter by status
+
+### GET /consensus/proposal/{proposal_id}
+
+Get proposal details.
+
+### POST /consensus/vote
+
+Cast a vote on a proposal.
+
+**Request:**
+```json
+{
+  "proposal_id": "prop_abc123",
+  "node_id": "node_xyz",
+  "choice": "Yes",
+  "confidence": 0.9,
+  "reasoning": "Tor provides better privacy"
+}
+```
+
+### GET /consensus/tally/{proposal_id}
+
+Tally votes for a proposal.
+
+### GET /consensus/check/{proposal_id}
+
+Check if consensus has been reached.
+
+### POST /consensus/close/{proposal_id}
+
+Close a proposal and record the result.
+
+---
+
+## Vision
+
+### POST /vision/ocr
+
+Extract text from a screenshot using LLM vision.
+
+**Request:**
+```json
+{
+  "image_data": "base64_encoded_png...",
+  "language": "eng"
+}
+```
+
+### POST /vision/ui-elements
+
+Detect UI elements in a screenshot.
+
+**Request:**
+```json
+{
+  "image_data": "base64_encoded_png..."
+}
+```
+
+### POST /vision/verify
+
+Verify screen state matches expected description.
+
+**Request:**
+```json
+{
+  "image_data": "base64_encoded_png...",
+  "expected": "Login form with username and password fields"
+}
+```
+
+---
+
+## Computer Use
+
+macOS-only endpoints for screen capture and input control.
+
+### GET /computer/capture
+
+Capture screen region.
+
+**Parameters:**
+- `region` (string, optional): "full" or "frontmost" (default: "full")
+
+**Response:**
+```json
+{
+  "image_data": "base64_encoded_png...",
+  "format": "png",
+  "region": "full"
+}
+```
+
+### POST /computer/mouse
+
+Mouse control.
+
+**Parameters:**
+- `action` (string, required): "move", "click", "doubleclick", "rightclick", "drag"
+- `x` (int, required): X coordinate
+- `y` (int, required): Y coordinate
+- `button` (string, optional): "left", "right", "middle"
+
+### POST /computer/keyboard
+
+Keyboard input.
+
+**Parameters:**
+- `text` (string, optional): Text to type
+- `key` (string, optional): Special key name
+- `modifiers` (list, optional): ["command", "shift", "option", "control"]
+
+### POST /computer/launch
+
+Launch a macOS application.
+
+**Parameters:**
+- `app_name` (string, required): Application name
+
+### GET /computer/apps
+
+List installed macOS applications.
+
+---
+
+## Multimodal
+
+### POST /multimodal/image
+
+Process an image (OCR, analysis, data extraction).
+
+**Request:**
+```json
+{
+  "image_data": "base64_encoded_image...",
+  "filename": "screenshot.png",
+  "task": "analyze"
+}
+```
+
+### POST /multimodal/file
+
+Process a file (CSV, JSON, markdown, code).
+
+**Request:**
+```json
+{
+  "file_data": "base64_encoded_file...",
+  "filename": "data.csv"
+}
+```
+
+### POST /multimodal/text
+
+Process pasted text (URL detection, code recognition).
+
+**Request:**
+```json
+{
+  "text": "https://example.com/article about AI"
+}
+```
+
+---
+
+## WebSocket
+
+### ws://localhost:8001/ws/{client_id}
+
+Real-time agent state updates.
+
+**Messages received:**
+```json
+{"type": "agent.state", "state": "thinking", "zone": "pile", "task_id": "abc123", "timestamp": 1780924565.98}
+{"type": "agent.telemetry", "model": "gemma4:12b-it-qat", "action": "Planning research", "tokens_per_sec": 42.5, "timestamp": 1780924565.98}
+{"type": "agent.reasoning", "delta": "Based on the research...", "task_id": "abc123", "timestamp": 1780924565.98}
+{"type": "agent.task_start", "task_id": "abc123", "query": "What is...", "timestamp": 1780924565.98}
+{"type": "agent.task_end", "task_id": "abc123", "status": "completed", "tokens_generated": 150, "elapsed_sec": 5.2, "timestamp": 1780924565.98}
+```
+
+**Agent states:** `idle`, `thinking`, `searching`, `reading`, `writing`, `error`
+
+**Agent zones:** `pile` (search), `cabinet` (knowledge vault), `desk` (synthesis)
+
+### ws://localhost:8001/ws/audit
+
+Live audit log updates.
+
+**Messages received:**
+```json
+{"type": "stats", "data": {"total_entries": 8, "by_category": {"browser": 6}}}
+```
+
+**Client can send:** `ping` → receives `pong`
 
 ---
 
 ## Error Responses
 
-All endpoints return standard error responses:
+All errors follow this format:
 
 ```json
 {
-  "detail": "Error message"
+  "detail": "Error message",
+  "path": "/endpoint/path"
 }
 ```
 
-**Status Codes:**
-- `200`: Success
-- `400`: Bad request
-- `404`: Not found
-- `500`: Internal server error
-
----
-
-## Privacy Levels
-
-| Level | Features |
-|-------|----------|
-| `standard` | Basic fingerprinting protection |
-| `enhanced` | Fingerprint rotation + cookie blocking |
-| `maximum` | Tor + no JS + no persistence + sanitization |
-
----
-
-## Session Modes
-
-| Mode | Description |
-|------|-------------|
-| `persistent` | Full state persistence (cookies, localStorage) |
-| `ephemeral` | In-memory only, destroyed on close |
-| `tor_isolated` | Tor-routed with stream isolation |
-| `local_only` | No external network calls allowed |
+**HTTP Status Codes:**
+- `200` - Success
+- `400` - Bad request (invalid parameters)
+- `404` - Not found
+- `422` - Validation error
+- `500` - Internal server error
