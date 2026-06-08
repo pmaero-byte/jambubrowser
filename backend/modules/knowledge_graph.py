@@ -246,11 +246,25 @@ class KnowledgeGraph:
         # Also store in documents table for /research endpoint
         try:
             from backend.core.database import get_db_cursor
+            from backend.core.vector_search import store_embedding
+            
             with get_db_cursor() as cursor:
                 cursor.execute(
                     "INSERT INTO documents (url, text) VALUES (?, ?)",
                     (url, text[:5000])
                 )
+                doc_id = cursor.lastrowid
+                
+                # Generate and store embedding
+                try:
+                    from sentence_transformers import SentenceTransformer
+                    import numpy as np
+                    
+                    model = SentenceTransformer("all-MiniLM-L6-v2")
+                    embedding = model.encode(text).astype(np.float32).tobytes()
+                    store_embedding(doc_id, embedding)
+                except Exception as e:
+                    print(f"Warning: Could not generate embedding: {e}")
         except Exception as e:
             print(f"Warning: Could not insert into documents table: {e}")
 
