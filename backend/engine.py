@@ -848,7 +848,7 @@ async def research(req: ResearchRequest):
         # Step 1: Expand search queries
         expanded = await _expand_query(req.query, cid, req.llm_config)
 
-        # Step 2: Multi-engine search
+        # Step 2: Multi-engine search with fallback
         all_res = []
         if req.domain == "academic":
             arxiv_data = await _fetch_arxiv(req.query)
@@ -859,27 +859,21 @@ async def research(req: ResearchRequest):
             for item in github_data:
                 all_res.append({"url": item["url"], "content": item["markdown"], "score": 100})
         else:
-            engines = "google,bing,duckduckgo,wikipedia"
-            if req.domain == "finance":
-                engines = "yahoo finance,google"
-            if req.tor_routing:
-                engines += ",ahmia,torch"
-
-            async with httpx.AsyncClient() as client:
-                tasks = [
-                    client.get(SEARXNG_URL, params={"q": q, "format": "json", "engines": engines}, timeout=15.0)
-                    for q in expanded
-                ]
-                resps = await asyncio.gather(*tasks, return_exceptions=True)
-                for r in resps:
-                    if isinstance(r, Exception):
-                        continue
-                    if r.status_code == 200:
-                        try:
-                            all_res.extend(r.json().get("results", []))
-                        except Exception as e:
-                            print(f"[searxng] parse failed: {e!r}")
-                            continue
+            # Use multi_engine_search with DuckDuckGo fallback
+            from backend.modules.search import multi_engine_search
+            
+            for q in expanded:
+                try:
+                    results = await multi_engine_search(q)
+                    for r in results:
+                        all_res.append({
+                            "url": r.get("url", ""),
+                            "content": r.get("content", ""),
+                            "score": r.get("score", 0),
+                        })
+                except Exception as e:
+                    print(f"[search] error for query '{q}': {e!r}")
+                    continue
 
         # Deduplicate and rank
         seen = set()
