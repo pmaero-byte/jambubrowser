@@ -101,7 +101,7 @@ def _strip_think(text: str) -> str:
     return _THINK_RE.sub("", text).strip()
 
 
-async def _call_llm(prompt: str, system: Optional[str] = None, *, max_tokens: int = 500, temperature: float = 0.3, timeout: float = 30.0) -> tuple[str, dict]:
+async def _call_llm(prompt: str, system: Optional[str] = None, *, max_tokens: int = 500, temperature: float = 0.3, timeout: float = 10.0) -> tuple[str, dict]:
     """Unified LLM call. Returns (answer_text, usage_dict). Provider-aware."""
     cfg = _resolve_llm_config({})
     provider = cfg.get("provider", "ollama")
@@ -111,12 +111,25 @@ async def _call_llm(prompt: str, system: Optional[str] = None, *, max_tokens: in
     model_id = cfg.get("modelId", "gemma4:12b-it-qat")
     api_key = cfg.get("apiKey", "")
 
+    if provider == "none":
+        raise RuntimeError("No LLM provider configured")
+
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
     async with httpx.AsyncClient() as client:
         if provider == "ollama":
+            health_url = f"{base_url.removesuffix('/v1')}/api/tags"
+            try:
+                health = await client.get(health_url, timeout=3.0)
+                if health.status_code != 200:
+                    raise RuntimeError(f"Ollama not responding at {health_url}")
+            except httpx.ConnectError:
+                raise RuntimeError(f"Ollama not available at {health_url}. Start Ollama and try again.")
+            except httpx.TimeoutException:
+                raise RuntimeError(f"Ollama timeout at {health_url}. Server may be starting.")
+
             url = f"{base_url.removesuffix('/v1')}/api/generate"
             payload = {
                 "model": model_id,

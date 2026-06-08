@@ -115,14 +115,17 @@ function App() {
         content: data.answer, 
         sources: data.sources 
       }]);
-    } catch (err) { 
+    } catch (err: any) { 
       console.error(err);
+      const msg = err?.name === 'AbortError'
+        ? "Research timed out. The server took too long to respond."
+        : "Sorry, I encountered an error processing your request.";
       setMessages(prev => [...prev, { 
         role: "assistant", 
-        content: "Sorry, I encountered an error processing your request." 
+        content: msg
       }]);
     } finally { 
-      setIsLoading(false); 
+      setIsLoading(false);
     }
   };
 
