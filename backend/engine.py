@@ -1099,7 +1099,20 @@ async def search(q: str, engines: str = "google,bing,duckduckgo", format: str = 
 
 @app.post("/scrape")
 async def scrape(req: ScrapeRequest):
-    """Single-page scraping endpoint."""
+    """Single-page scraping endpoint with audit logging."""
+    audit = get_audit_logger()
+    
+    # Log the scrape attempt
+    audit.log(
+        category=ActionCategory.BROWSER,
+        action="scrape",
+        details={
+            "url": req.url,
+            "query": req.query,
+        },
+        session_id=req.client_id if hasattr(req, 'client_id') else None,
+    )
+    
     try:
         from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
         from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
@@ -1121,13 +1134,42 @@ async def scrape(req: ScrapeRequest):
             result = await crawler.arun(url=req.url, config=run_config)
 
         if result.success:
-            return {"success": True, "url": req.url, "markdown": result.markdown[:50000], "title": result.metadata.get("title", "") if result.metadata else ""}
+            content = result.markdown[:50000]
+            sanitized = sanitize_content_for_storage(content)
+            
+            # Log successful scrape
+            audit.log(
+                category=ActionCategory.BROWSER,
+                action="scrape_success",
+                details={
+                    "url": req.url,
+                    "content_length": len(sanitized.sanitized_content),
+                    "pii_removed": len(sanitized.pii_removed),
+                },
+                session_id=req.client_id if hasattr(req, 'client_id') else None,
+            )
+            
+            return {
+                "success": True,
+                "url": req.url,
+                "markdown": sanitized.sanitized_content,
+                "title": result.metadata.get("title", "") if result.metadata else "",
+            }
         return {"success": False, "url": req.url, "error": "Failed to scrape page"}
     except ImportError:
         async with httpx.AsyncClient() as client:
             resp = await client.get(req.url, timeout=15.0, follow_redirects=True)
-            return {"success": True, "url": req.url, "markdown": resp.text[:50000], "title": ""}
+            content = resp.text[:50000]
+            sanitized = sanitize_content_for_storage(content)
+            return {"success": True, "url": req.url, "markdown": sanitized.sanitized_content, "title": ""}
     except Exception as e:
+        # Log the error
+        audit.log(
+            category=ActionCategory.ERROR,
+            action="scrape_error",
+            details={"url": req.url, "error": str(e)},
+            session_id=req.client_id if hasattr(req, 'client_id') else None,
+        )
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1158,7 +1200,21 @@ async def execute_code(req: ExecRequest):
 
 @app.post("/act")
 async def perform_actions(req: MultiActionRequest):
-    """Execute browser actions (click, type, scroll, click_xy)."""
+    """Execute browser actions (click, type, scroll, click_xy) with audit logging."""
+    audit = get_audit_logger()
+    
+    # Log the action attempt
+    audit.log(
+        category=ActionCategory.BROWSER,
+        action="perform_actions",
+        details={
+            "url": req.url,
+            "steps_count": len(req.steps),
+            "actions": [step.action for step in req.steps],
+        },
+        session_id=req.client_id,
+    )
+    
     try:
         from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
 
@@ -1186,10 +1242,34 @@ async def perform_actions(req: MultiActionRequest):
                 js_code=f"(async () => {{ {' '.join(js_lines)} }})()",
                 config=run_config,
             )
-            return {"status": "success", "markdown": result.markdown[:10000] if result.success else ""}
+            
+            # Sanitize content before returning
+            content = result.markdown[:10000] if result.success else ""
+            sanitized = sanitize_content_for_storage(content)
+            
+            # Log successful action
+            audit.log(
+                category=ActionCategory.BROWSER,
+                action="perform_actions_success",
+                details={
+                    "url": req.url,
+                    "content_length": len(sanitized.sanitized_content),
+                    "pii_removed": len(sanitized.pii_removed),
+                },
+                session_id=req.client_id,
+            )
+            
+            return {"status": "success", "markdown": sanitized.sanitized_content}
     except ImportError:
         return {"status": "error", "message": "crawl4ai not installed"}
     except Exception as e:
+        # Log the error
+        audit.log(
+            category=ActionCategory.ERROR,
+            action="perform_actions_error",
+            details={"url": req.url, "error": str(e)},
+            session_id=req.client_id,
+        )
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1209,6 +1289,19 @@ async def perform_login(req: LoginRequest):
     Autonomous login using the Credential Vault.
     Stores credentials encrypted and attempts login.
     """
+    audit = get_audit_logger()
+    
+    # Log the login attempt
+    audit.log(
+        category=ActionCategory.CREDENTIAL,
+        action="login_attempt",
+        details={
+            "url": req.url,
+            "username": req.username,
+        },
+        session_id=req.client_id,
+    )
+    
     try:
         vault = get_vault()
 
@@ -1247,6 +1340,17 @@ async def perform_login(req: LoginRequest):
                 )
                 result = await crawler.arun(url=req.url, js_code=js_code, config=run_config)
 
+            # Log successful login
+            audit.log(
+                category=ActionCategory.CREDENTIAL,
+                action="login_success",
+                details={
+                    "domain": domain,
+                    "url": req.url,
+                },
+                session_id=req.client_id,
+            )
+
             return {
                 "status": "success",
                 "domain": domain,
@@ -1256,6 +1360,13 @@ async def perform_login(req: LoginRequest):
         except ImportError:
             return {"status": "success", "domain": domain, "message": f"Credential stored for {domain}. Login automation requires crawl4ai."}
     except Exception as e:
+        # Log the error
+        audit.log(
+            category=ActionCategory.ERROR,
+            action="login_error",
+            details={"url": req.url, "error": str(e)},
+            session_id=req.client_id,
+        )
         raise HTTPException(status_code=500, detail=str(e))
 
 
