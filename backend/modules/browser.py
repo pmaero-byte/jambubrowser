@@ -416,6 +416,27 @@ class BrowserManager:
 
         return self._sessions[session_id]
 
+    def _create_session_object(
+        self,
+        name: str,
+        proxy: str = None,
+        mode: SessionMode = SessionMode.EPHEMERAL,
+        privacy_level: PrivacyLevel = PrivacyLevel.ENHANCED,
+    ) -> BrowserSession:
+        """Create a session object without starting it (for testing)."""
+        session_id = hashlib.md5(
+            f"{name}_{time.time()}_{secrets.token_hex(8)}".encode()
+        ).hexdigest()[:16]
+
+        session = BrowserSession(
+            session_id=session_id,
+            name=name,
+            proxy=proxy,
+            mode=mode,
+            privacy_level=privacy_level,
+        )
+        return session
+
     async def create_session(
         self,
         name: str,
