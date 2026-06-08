@@ -597,6 +597,31 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
         manager.disconnect(client_id)
 
 
+@app.websocket("/ws/audit")
+async def audit_websocket(websocket: WebSocket):
+    """WebSocket endpoint for live audit log updates."""
+    await websocket.accept()
+    try:
+        # Send current audit stats
+        audit_logger = get_audit_logger()
+        stats = audit_logger.get_statistics()
+        await websocket.send_json({"type": "stats", "data": stats})
+        
+        # Keep connection alive and send periodic updates
+        while True:
+            # Wait for client messages (ping/pong)
+            try:
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=30)
+                if data == "ping":
+                    await websocket.send_text("pong")
+            except asyncio.TimeoutError:
+                # Send updated stats every 30 seconds
+                stats = audit_logger.get_statistics()
+                await websocket.send_json({"type": "stats", "data": stats})
+    except Exception as e:
+        print(f"[ws] audit connection closed: {e}")
+
+
 # ===================================================================
 # SYSTEM ENDPOINTS
 # ===================================================================

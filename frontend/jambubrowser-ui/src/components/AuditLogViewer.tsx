@@ -27,9 +27,37 @@ export function AuditLogViewer() {
   const [error, setError] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [limit, setLimit] = useState(50);
+  const [wsConnected, setWsConnected] = useState(false);
 
   useEffect(() => {
     fetchAuditData();
+    
+    // Set up WebSocket for live updates
+    const ws = new WebSocket("ws://localhost:8001/ws/audit");
+    ws.onopen = () => {
+      setWsConnected(true);
+      console.log("WebSocket connected for audit logs");
+    };
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === "stats") {
+          setStats(data.data);
+        }
+      } catch (e) {
+        console.error("Failed to parse WebSocket message:", e);
+      }
+    };
+    ws.onclose = () => {
+      setWsConnected(false);
+    };
+    ws.onerror = () => {
+      setWsConnected(false);
+    };
+    
+    return () => {
+      ws.close();
+    };
   }, [selectedCategory, limit]);
 
   const fetchAuditData = async () => {
@@ -89,6 +117,9 @@ export function AuditLogViewer() {
   return (
     <div className="audit-log-viewer glass">
       <h3>Audit Log</h3>
+      <div className={`ws-status ${wsConnected ? 'connected' : 'disconnected'}`}>
+        {wsConnected ? '● Live' : '○ Offline'}
+      </div>
       
       {stats && (
         <div className="audit-stats">
