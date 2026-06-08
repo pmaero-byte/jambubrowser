@@ -660,6 +660,13 @@ async def check_url_privacy(url: str):
     }
 
 
+@app.get("/audit/stats")
+async def audit_stats():
+    """Get audit statistics."""
+    audit_logger = get_audit_logger()
+    return audit_logger.get_statistics()
+
+
 @app.get("/audit/log")
 async def audit_log(category: str = None, limit: int = 100):
     """Get audit log entries."""
