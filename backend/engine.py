@@ -1710,16 +1710,13 @@ async def _brain_only_research(query: str) -> dict:
     try:
         from sentence_transformers import SentenceTransformer
         import numpy as np
+        from backend.core.vector_search import search_similar, is_sqlite_vec_available
 
         model = SentenceTransformer("all-MiniLM-L6-v2")
         query_vec = model.encode(query).astype(np.float32).tobytes()
 
-        with get_db_cursor() as cursor:
-            cursor.execute(
-                "SELECT d.text, d.url FROM vec_documents v JOIN documents d ON v.id = d.id WHERE v.embedding MATCH ? AND k = 15",
-                (query_vec,),
-            )
-            rows = cursor.fetchall()
+        # Use vector_search module which handles both sqlite-vec and fallback
+        rows = search_similar(query_vec, k=15)
 
         scored = sorted(
             [(sum(1 for w in set(query.lower().split()) if w in r[0].lower()), r[0], r[1])
