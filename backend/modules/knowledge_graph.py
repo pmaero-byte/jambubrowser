@@ -248,14 +248,17 @@ class KnowledgeGraph:
             from backend.core.database import get_db_cursor
             from backend.core.vector_search import store_embedding
             
+            # First insert the document
+            doc_id = None
             with get_db_cursor() as cursor:
                 cursor.execute(
                     "INSERT INTO documents (url, text) VALUES (?, ?)",
                     (url, text[:5000])
                 )
                 doc_id = cursor.lastrowid
-                
-                # Generate and store embedding
+            
+            # Then generate and store embedding in a separate connection
+            if doc_id:
                 try:
                     from sentence_transformers import SentenceTransformer
                     import numpy as np
