@@ -12,6 +12,8 @@ import { TabSystem } from "./components/TabSystem";
 import { MessageList } from "./components/MessageList";
 import { BrainGraph3D } from "./BrainGraph3D";
 import { AgentAvatar3D } from "./AgentAvatar3D";
+import { PrivacyControls } from "./components/PrivacyControls";
+import { AuditLogViewer } from "./components/AuditLogViewer";
 
 // --- Hook for API interaction (Modular Logic) ---
 import { localFetch } from "./utils/api";
@@ -26,7 +28,7 @@ function App() {
   const [activeTabId, setActiveTabId] = useState('1');
 
   // 2. Navigation & Theme State
-  const [activeTab, setActiveTab] = useState<'chat' | 'stealth' | 'graph' | 'workspace'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'stealth' | 'graph' | 'workspace' | 'privacy' | 'audit'>('chat');
   const [showHistory, setShowHistory] = useState(false);
   const [fullPower, setFullPower] = useState(false);
 
@@ -136,6 +138,16 @@ function App() {
             {activeTab === 'graph' && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="overlay-graph glass">
                 <BrainGraph3D data={{}} />
+              </motion.div>
+            )}
+            {activeTab === 'privacy' && (
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="overlay-privacy glass">
+                <PrivacyControls />
+              </motion.div>
+            )}
+            {activeTab === 'audit' && (
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="overlay-audit glass">
+                <AuditLogViewer />
               </motion.div>
             )}
           </AnimatePresence>
