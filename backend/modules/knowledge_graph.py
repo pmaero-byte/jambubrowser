@@ -243,6 +243,17 @@ class KnowledgeGraph:
                 self._relations.append(rel)
                 new_relations += 1
 
+        # Also store in documents table for /research endpoint
+        try:
+            from backend.core.database import get_db_cursor
+            with get_db_cursor() as cursor:
+                cursor.execute(
+                    "INSERT INTO documents (url, text) VALUES (?, ?)",
+                    (url, text[:5000])
+                )
+        except Exception as e:
+            print(f"Warning: Could not insert into documents table: {e}")
+
         return {
             'entities_extracted': len(entities),
             'new_entities': new_entities,

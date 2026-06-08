@@ -19,8 +19,7 @@ def is_sqlite_vec_available() -> bool:
     if _sqlite_vec_available is None:
         try:
             with get_db_cursor() as cursor:
-                cursor.execute("SELECT 1 FROM vec_documents LIMIT 1")
-                # If we can query, check if it's a vec0 table
+                # Check if vec_documents is a vec0 virtual table
                 cursor.execute("SELECT sql FROM sqlite_master WHERE name='vec_documents'")
                 result = cursor.fetchone()
                 _sqlite_vec_available = result and 'vec0' in result[0]
