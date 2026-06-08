@@ -1,5 +1,4 @@
 import { motion } from "framer-motion";
-import { AgentAvatar3D } from "../AgentAvatar3D";
 
 /**
  * Premium Message List
@@ -30,7 +29,7 @@ export const MessageList = ({ messages, onSourceClick }: MessageListProps) => {
           className={`message ${msg.role}`}
         >
           <div className="avatar">
-            {msg.role === "user" ? "U" : <AgentAvatar3D status="idle" />}
+            {msg.role === "user" ? "U" : "J"}
           </div>
           <div className="content">
             <div className="answer">{msg.content}</div>

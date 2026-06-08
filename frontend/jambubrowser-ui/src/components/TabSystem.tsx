@@ -29,9 +29,9 @@ export const TabSystem = ({ tabs, activeTabId, onTabSelect, onTabClose, onAddTab
           {tabs.map(tab => (
             <motion.div 
               key={tab.id}
-              initial={{ opacity: 0, w: 0 }}
-              animate={{ opacity: 1, w: 'auto' }}
-              exit={{ opacity: 0, w: 0 }}
+              initial={{ opacity: 0, width: 0 }}
+              animate={{ opacity: 1, width: 'auto' }}
+              exit={{ opacity: 0, width: 0 }}
               className={`tab-item ${tab.id === activeTabId ? 'active' : ''}`}
               onClick={() => onTabSelect(tab.id)}
             >

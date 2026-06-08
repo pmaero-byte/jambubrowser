@@ -1,4 +1,3 @@
-import { motion } from "framer-motion";
 import { Trees, Zap, BrainCircuit, Box, Shield, History } from "lucide-react";
 
 /**

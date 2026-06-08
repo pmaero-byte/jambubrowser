@@ -1,5 +1,4 @@
-import { useState, useRef, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { useState, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 
 // --- Modular UI Components ---
@@ -10,8 +9,6 @@ import { MetricsPanel } from "./components/MetricsPanel";
 import { BrowserPane } from "./components/BrowserPane";
 import { TabSystem } from "./components/TabSystem";
 import { MessageList } from "./components/MessageList";
-import { BrainGraph3D } from "./BrainGraph3D";
-import { AgentAvatar3D } from "./AgentAvatar3D";
 import { PrivacyControls } from "./components/PrivacyControls";
 import { AuditLogViewer } from "./components/AuditLogViewer";
 
@@ -36,12 +33,11 @@ function App() {
   const [messages, setMessages] = useState<any[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [status, setStatus] = useState("Local LLM Active");
 
   // 4. Performance Metrics State
   const [metrics, setMetrics] = useState({ nodes: 0, tokens: 0, ram: 0, duration: 0 });
 
-  const activeTab = tabs.find(t => t.id === activeTabId) || tabs[0];
+  const currentTab = tabs.find(t => t.id === activeTabId) || tabs[0];
 
   // --- Handlers ---
 
@@ -64,7 +60,6 @@ function App() {
 
   const handleSourceClick = (url: string) => {
     updateUrl(url);
-    addNotification("📍 Navigating to source evidence...");
   };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -78,20 +73,31 @@ function App() {
     // A. Update local UI state
     setMessages(prev => [...prev, { role: "user", content: input }]);
     const query = input; setInput(""); setIsLoading(true);
-    setStatus("Jambu Swarm Spawning...");
 
-    // B. Call the Rust Orchestrator
+    // B. Call the Backend API
     try {
-      const res: any = await invoke("execute_query", { 
-        query, persist: false, clientId: "ui", deepResearch: fullPower,
-        domain: "general", llmConfig: { provider: "local" } 
+      const res = await localFetch("/research", {
+        method: "POST",
+        body: JSON.stringify({ query, brain_only: !fullPower })
       });
+      const data = await res.json();
 
       // C. Update metrics and show assistant response
-      setMetrics(p => ({ ...p, nodes: res.brain_doc_count, tokens: res.total_tokens }));
-      setMessages(prev => [...prev, { role: "assistant", content: res.answer, sources: res.sources }]);
-    } catch (err) { console.error(err); } 
-    finally { setIsLoading(false); setStatus("Local LLM Active"); }
+      setMetrics(p => ({ ...p, nodes: data.doc_count || 0 }));
+      setMessages(prev => [...prev, { 
+        role: "assistant", 
+        content: data.answer, 
+        sources: data.sources 
+      }]);
+    } catch (err) { 
+      console.error(err);
+      setMessages(prev => [...prev, { 
+        role: "assistant", 
+        content: "Sorry, I encountered an error processing your request." 
+      }]);
+    } finally { 
+      setIsLoading(false); 
+    }
   };
 
   return (
@@ -130,16 +136,11 @@ function App() {
             onAddTab={addTab} 
           />
           <BrowserPane 
-            url={activeTab.url} 
+            url={currentTab.url} 
             onUrlChange={updateUrl} 
           />
           
           <AnimatePresence>
-            {activeTab === 'graph' && (
-              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="overlay-graph glass">
-                <BrainGraph3D data={{}} />
-              </motion.div>
-            )}
             {activeTab === 'privacy' && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="overlay-privacy glass">
                 <PrivacyControls />
