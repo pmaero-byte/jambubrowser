@@ -2,8 +2,8 @@
 Metasearch & Discovery
 ======================
 This module handles finding information across the internet.
-It uses 'SearXNG' as primary, with fallback to direct DuckDuckGo
-and Google search when SearXNG is unavailable.
+It uses 'SearXNG' as primary, with fallback to DuckDuckGo API
+and other search providers when SearXNG is unavailable.
 """
 
 import httpx
@@ -14,59 +14,67 @@ from urllib.parse import quote_plus
 SEARXNG_URL = "http://localhost:8888/search"
 
 # Fallback search providers
-DUCKDUCKGO_HTML = "https://html.duckduckgo.com/html/"
-GOOGLE_SEARCH = "https://www.google.com/search"
+DUCKDUCKGO_API = "https://api.duckduckgo.com/"
 
 
 async def _search_duckduckgo(query: str, max_results: int = 10) -> List[Dict]:
-    """Direct DuckDuckGo HTML search as fallback."""
+    """DuckDuckGo instant answer API search as fallback."""
     results = []
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                DUCKDUCKGO_HTML,
-                data={"q": query, "b": ""},
+            resp = await client.get(
+                DUCKDUCKGO_API,
+                params={"q": query, "format": "json"},
                 timeout=15.0,
-                follow_redirects=True,
             )
             if resp.status_code == 200:
-                # Parse HTML results
-                html = resp.text
-                # Extract result blocks
-                result_pattern = re.compile(
-                    r'<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>(.*?)</a>.*?'
-                    r'<a[^>]*class="result__snippet"[^>]*>(.*?)</a>',
-                    re.DOTALL
-                )
-                for match in result_pattern.finditer(html)[:max_results]:
-                    url, title, snippet = match
-                    # Clean HTML tags
-                    title = re.sub(r'<[^>]+>', '', title).strip()
-                    snippet = re.sub(r'<[^>]+>', '', snippet).strip()
-                    # Decode URL
-                    if 'uddg=' in url:
-                        url = url.split('uddg=')[1].split('&')[0]
+                data = resp.json()
+                
+                # Add abstract if available
+                abstract = data.get("Abstract", "")
+                abstract_url = data.get("AbstractURL", "")
+                if abstract and abstract_url:
                     results.append({
-                        "url": url,
-                        "title": title,
-                        "content": snippet,
+                        "url": abstract_url,
+                        "title": data.get("Heading", query),
+                        "content": abstract,
                         "engine": "duckduckgo"
                     })
+                
+                # Add related topics
+                for topic in data.get("RelatedTopics", [])[:max_results - len(results)]:
+                    if isinstance(topic, dict) and "Text" in topic:
+                        results.append({
+                            "url": topic.get("FirstURL", ""),
+                            "title": topic.get("Text", "")[:100],
+                            "content": topic.get("Text", ""),
+                            "engine": "duckduckgo"
+                        })
+                
+                # Add results from instant answers
+                for result in data.get("Results", [])[:max_results - len(results)]:
+                    results.append({
+                        "url": result.get("FirstURL", ""),
+                        "title": result.get("Text", "")[:100],
+                        "content": result.get("Text", ""),
+                        "engine": "duckduckgo"
+                    })
+                    
     except Exception as e:
         print(f"DuckDuckGo search error: {e}")
     return results
 
 
-async def _search_google(query: str, max_results: int = 10) -> List[Dict]:
-    """Direct Google search as fallback (limited - may be blocked)."""
+async def _search_google_scrape(query: str, max_results: int = 10) -> List[Dict]:
+    """Direct Google search scraping as fallback (may be blocked)."""
     results = []
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
-                GOOGLE_SEARCH,
+                "https://www.google.com/search",
                 params={"q": query, "num": max_results},
                 headers={
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 },
                 timeout=15.0,
                 follow_redirects=True,
@@ -100,7 +108,7 @@ async def _search_google(query: str, max_results: int = 10) -> List[Dict]:
 async def multi_engine_search(query: str, engines: str = "google,bing,duckduckgo") -> List[dict]:
     """
     Asks many search engines at once for information about a topic.
-    Uses SearXNG as primary, falls back to direct search if unavailable.
+    Uses SearXNG as primary, falls back to DuckDuckGo API if unavailable.
     
     - query: What you want to find.
     - engines: Which engines to ask (Google is default).
@@ -123,29 +131,17 @@ async def multi_engine_search(query: str, engines: str = "google,bing,duckduckgo
     except Exception as e:
         print(f"SearXNG not available: {e}")
     
-    # Fallback to direct search
-    print("Using fallback search providers...")
-    all_results = []
-    
-    # Try DuckDuckGo (most reliable fallback)
+    # Fallback to DuckDuckGo API
+    print("Using DuckDuckGo API fallback...")
     ddg_results = await _search_duckduckgo(query)
-    all_results.extend(ddg_results)
     
-    # If not enough results, try Google
-    if len(all_results) < 5:
-        google_results = await _search_google(query)
-        all_results.extend(google_results)
+    if ddg_results:
+        return ddg_results
     
-    # Deduplicate by URL
-    seen = set()
-    unique_results = []
-    for r in all_results:
-        url = r.get("url", "")
-        if url not in seen:
-            seen.add(url)
-            unique_results.append(r)
-    
-    return unique_results
+    # Last resort: Google scraping (may be blocked)
+    print("Using Google scraping fallback...")
+    google_results = await _search_google_scrape(query)
+    return google_results
 
 
 def filter_trusted_results(results: List[dict], top_n: int = 5) -> List[dict]:
