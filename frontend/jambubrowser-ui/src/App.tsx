@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useCallback } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 
 // --- Modular UI Components ---
@@ -11,9 +11,12 @@ import { TabSystem } from "./components/TabSystem";
 import { MessageList } from "./components/MessageList";
 import { PrivacyControls } from "./components/PrivacyControls";
 import { AuditLogViewer } from "./components/AuditLogViewer";
+import { AgentStatusBar } from "./components/AgentStatusBar";
+import { VaultUnlock } from "./components/VaultUnlock";
 
-// --- Hook for API interaction (Modular Logic) ---
+// --- Hooks ---
 import { localFetch } from "./utils/api";
+import { useKeyboardShortcuts } from "./utils/useKeyboardShortcuts";
 
 import "./App.css";
 
@@ -25,7 +28,7 @@ function App() {
   const [activeTabId, setActiveTabId] = useState('1');
 
   // 2. Navigation & Theme State
-  const [activeTab, setActiveTab] = useState<'chat' | 'stealth' | 'graph' | 'workspace' | 'privacy' | 'audit'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'stealth' | 'graph' | 'workspace' | 'privacy' | 'audit' | 'vault'>('chat');
   const [showHistory, setShowHistory] = useState(false);
   const [fullPower, setFullPower] = useState(false);
 
@@ -36,6 +39,9 @@ function App() {
 
   // 4. Performance Metrics State
   const [metrics, setMetrics] = useState({ nodes: 0, tokens: 0, ram: 0, duration: 0 });
+
+  // History for browser navigation
+  const [history, setHistory] = useState<{ url: string; title: string; timestamp: number }[]>([]);
 
   const currentTab = tabs.find(t => t.id === activeTabId) || tabs[0];
 
@@ -58,11 +64,31 @@ function App() {
     setTabs(tabs.map(t => t.id === activeTabId ? { ...t, url } : t));
   };
 
-  const handleSourceClick = (url: string) => {
+  const visitUrl = (url: string, title: string) => {
+    setHistory(prev => [{ url, title, timestamp: Date.now() }, ...prev].slice(0, 200));
     updateUrl(url);
   };
 
+  const handleSourceClick = (url: string) => {
+    visitUrl(url, url);
+  };
+
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // --- Keyboard Shortcuts ---
+
+  useKeyboardShortcuts({
+    "Meta+K": useCallback(() => {
+      document.querySelector<HTMLInputElement>(".input-area input")?.focus();
+    }, []),
+    "Meta+P": useCallback(() => setActiveTab("privacy"), []),
+    "Meta+L": useCallback(() => setActiveTab("audit"), []),
+    "Meta+1": useCallback(() => setActiveTab("chat"), []),
+    "Meta+T": useCallback(() => addTab(), []),
+    "Escape": useCallback(() => {
+      if (activeTab === "privacy" || activeTab === "audit") setActiveTab("chat");
+    }, [activeTab]),
+  });
 
   // --- Handlers (The 'Brain' of the UI) ---
 
@@ -107,6 +133,7 @@ function App() {
         fullPower={fullPower} setFullPower={setFullPower}
         showHistory={showHistory} setShowHistory={setShowHistory}
       />
+      <AgentStatusBar />
       
       <div className="main-layout split-view">
         {/* Left Side: Agentic Chat Sidebar (30%) */}
@@ -149,6 +176,31 @@ function App() {
             {activeTab === 'audit' && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="overlay-audit glass">
                 <AuditLogViewer />
+              </motion.div>
+            )}
+            {activeTab === 'vault' && (
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="overlay-audit glass">
+                <VaultUnlock />
+              </motion.div>
+            )}
+            {showHistory && (
+              <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }} className="overlay-history glass">
+                <div className="history-panel">
+                  <h3>Browser History</h3>
+                  {history.length === 0 ? (
+                    <p style={{ color: "var(--text-dim)", fontSize: "0.85rem" }}>No history yet.</p>
+                  ) : (
+                    <div className="history-list">
+                      {history.map((item, i) => (
+                        <div key={i} className="history-item" onClick={() => visitUrl(item.url, item.title)}>
+                          <div className="history-title">{item.title || item.url}</div>
+                          <div className="history-url">{item.url}</div>
+                          <div className="history-time">{new Date(item.timestamp).toLocaleString()}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </motion.div>
             )}
           </AnimatePresence>

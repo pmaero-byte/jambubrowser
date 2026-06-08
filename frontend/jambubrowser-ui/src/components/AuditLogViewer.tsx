@@ -14,10 +14,10 @@ interface AuditEntry {
 
 interface AuditStats {
   total_entries: number;
-  categories: Record<string, number>;
-  chain_valid: boolean;
+  by_category: Record<string, number>;
   oldest_entry: number | null;
   newest_entry: number | null;
+  retention_days: number;
 }
 
 export function AuditLogViewer() {
@@ -31,13 +31,8 @@ export function AuditLogViewer() {
 
   useEffect(() => {
     fetchAuditData();
-    
-    // Set up WebSocket for live updates
     const ws = new WebSocket("ws://localhost:8001/ws/audit");
-    ws.onopen = () => {
-      setWsConnected(true);
-      console.log("WebSocket connected for audit logs");
-    };
+    ws.onopen = () => setWsConnected(true);
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
@@ -48,34 +43,22 @@ export function AuditLogViewer() {
         console.error("Failed to parse WebSocket message:", e);
       }
     };
-    ws.onclose = () => {
-      setWsConnected(false);
-    };
-    ws.onerror = () => {
-      setWsConnected(false);
-    };
-    
-    return () => {
-      ws.close();
-    };
+    ws.onclose = () => setWsConnected(false);
+    ws.onerror = () => setWsConnected(false);
+    return () => ws.close();
   }, [selectedCategory, limit]);
 
   const fetchAuditData = async () => {
     try {
       setLoading(true);
-      
-      // Fetch stats
       const statsResponse = await localFetch("/audit/stats");
       const statsData = await statsResponse.json();
       setStats(statsData);
-      
-      // Fetch entries
       const entriesResponse = await localFetch(
         `/audit/log?limit=${limit}${selectedCategory !== "all" ? `&category=${selectedCategory}` : ""}`
       );
       const entriesData = await entriesResponse.json();
       setEntries(entriesData.entries || []);
-      
       setError(null);
     } catch (err) {
       setError("Failed to fetch audit data");
@@ -120,7 +103,7 @@ export function AuditLogViewer() {
       <div className={`ws-status ${wsConnected ? 'connected' : 'disconnected'}`}>
         {wsConnected ? '● Live' : '○ Offline'}
       </div>
-      
+
       {stats && (
         <div className="audit-stats">
           <div className="stat">
@@ -128,14 +111,12 @@ export function AuditLogViewer() {
             <span className="value">{stats.total_entries}</span>
           </div>
           <div className="stat">
-            <span className="label">Chain Valid:</span>
-            <span className={`value ${stats.chain_valid ? 'secure' : 'error'}`}>
-              {stats.chain_valid ? 'Yes' : 'No'}
-            </span>
+            <span className="label">Categories:</span>
+            <span className="value">{Object.keys(stats.by_category || {}).length}</span>
           </div>
           <div className="stat">
-            <span className="label">Categories:</span>
-            <span className="value">{Object.keys(stats.categories).length}</span>
+            <span className="label">Retention:</span>
+            <span className="value">{stats.retention_days}d</span>
           </div>
         </div>
       )}
@@ -143,8 +124,8 @@ export function AuditLogViewer() {
       <div className="controls">
         <label>
           Category:
-          <select 
-            value={selectedCategory} 
+          <select
+            value={selectedCategory}
             onChange={(e) => setSelectedCategory(e.target.value)}
           >
             <option value="all">All</option>
@@ -157,18 +138,16 @@ export function AuditLogViewer() {
             <option value="error">Error</option>
           </select>
         </label>
-        
         <label>
           Limit:
-          <input 
-            type="number" 
-            value={limit} 
+          <input
+            type="number"
+            value={limit}
             onChange={(e) => setLimit(parseInt(e.target.value) || 50)}
             min={10}
             max={500}
           />
         </label>
-        
         <button onClick={fetchAuditData} className="refresh-btn">
           Refresh
         </button>
@@ -190,7 +169,7 @@ export function AuditLogViewer() {
               {entry.session_id && (
                 <div className="entry-session">Session: {entry.session_id}</div>
               )}
-              <div className="entry-hash">Hash: {entry.hash.substring(0, 16)}...</div>
+              <div className="entry-hash">Hash: {(entry.hash || "").substring(0, 16)}...</div>
             </div>
           ))
         )}

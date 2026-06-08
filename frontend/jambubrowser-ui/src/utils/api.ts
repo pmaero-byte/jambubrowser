@@ -1,9 +1,5 @@
-const BACKEND_URL = "http://localhost:8001";
+const BACKEND_URL = import.meta.env.DEV ? "" : "http://localhost:8001";
 
-/**
- * Local fetch helper that routes requests to the local backend
- * In production, this would use Tauri's invoke or IPC
- */
 export async function localFetch(path: string, options?: RequestInit): Promise<Response> {
   const url = `${BACKEND_URL}${path}`;
   return fetch(url, {
@@ -15,10 +11,9 @@ export async function localFetch(path: string, options?: RequestInit): Promise<R
   });
 }
 
-/**
- * WebSocket connection for live updates
- */
 export function createWebSocket(path: string): WebSocket {
-  const wsUrl = `ws://localhost:8001${path}`;
+  const wsUrl = import.meta.env.DEV
+    ? `ws://localhost:5173${path}`
+    : `ws://localhost:8001${path}`;
   return new WebSocket(wsUrl);
 }

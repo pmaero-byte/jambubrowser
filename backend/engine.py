@@ -785,44 +785,6 @@ async def set_privacy_mode(req: PrivacyModeRequest):
         )
 
 
-@app.get("/fingerprint/generate")
-async def generate_fingerprint():
-    """Generate a new browser fingerprint."""
-    from backend.modules.fingerprint_rotator import get_rotator
-    rotator = get_rotator()
-    profile = rotator.generate_profile()
-    return {
-        "profile_id": profile.profile_id,
-        "user_agent": profile.user_agent,
-        "viewport": f"{profile.viewport_width}x{profile.viewport_height}",
-        "timezone": profile.timezone,
-        "language": profile.language,
-    }
-
-
-@app.get("/fingerprint/list")
-async def list_fingerprints():
-    """List all generated fingerprints."""
-    from backend.modules.fingerprint_rotator import get_rotator
-    rotator = get_rotator()
-    return {"profiles": rotator.list_profiles()}
-
-
-@app.post("/fingerprint/rotate")
-async def rotate_fingerprint(current_id: str = None):
-    """Generate a new fingerprint different from the current one."""
-    from backend.modules.fingerprint_rotator import get_rotator
-    rotator = get_rotator()
-    new_profile = rotator.rotate_profile(current_id)
-    return {
-        "profile_id": new_profile.profile_id,
-        "user_agent": new_profile.user_agent,
-        "viewport": f"{new_profile.viewport_width}x{new_profile.viewport_height}",
-        "timezone": new_profile.timezone,
-        "language": new_profile.language,
-    }
-
-
 class InterruptRequest(BaseModel):
     new_instruction: str = ""
     client_id: str = "default"
@@ -1519,6 +1481,38 @@ async def get_vault_credential(url: str):
     return {"found": False}
 
 
+class VaultUnlockRequest(BaseModel):
+    master_password: str = ""
+
+
+@app.post("/vault/unlock")
+async def vault_unlock(req: VaultUnlockRequest):
+    """Unlock the credential vault with master password."""
+    vault = get_vault()
+    success = vault.unlock(req.master_password)
+    if success:
+        return {"success": True, "message": "Vault unlocked"}
+    return {"success": False, "error": "Invalid password or vault is locked out"}
+
+
+@app.post("/vault/lock")
+async def vault_lock():
+    """Lock the credential vault."""
+    vault = get_vault()
+    vault.lock()
+    return {"success": True, "message": "Vault locked"}
+
+
+@app.get("/vault/status")
+async def vault_status():
+    """Get vault lock status."""
+    vault = get_vault()
+    return {
+        "locked": vault.is_locked,
+        "access_log": vault.get_access_log()[-10:],
+    }
+
+
 # ===================================================================
 # VISION & PERCEPTION
 # ===================================================================
@@ -1815,18 +1809,37 @@ async def _brain_only_research(query: str) -> dict:
 
 async def _expand_query(query: str, client_id: str, llm_config: dict) -> list:
     """Use LLM to generate diverse search queries."""
-    base_url = llm_config.get("baseUrl", "http://localhost:8080/v1")
-    model_id = llm_config.get("modelId", "gemma-4-12b")
+    cfg = _resolve_llm_config(llm_config)
+    base_url = cfg.get("baseUrl", "http://localhost:11434/v1")
+    model_id = cfg.get("modelId", "gemma4:12b-it-qat")
+    api_key = cfg.get("apiKey", "")
+    provider = cfg.get("provider", "ollama")
 
     prompt = f"Diverse search queries for: '{query}'. Return exactly 3 lines, one query per line."
     async with httpx.AsyncClient() as client:
         try:
-            resp = await client.post(
-                f"{base_url.rstrip('/')}/chat/completions",
-                json={"model": model_id, "messages": [{"role": "user", "content": prompt}]},
-                timeout=10.0,
-            )
-            return resp.json()["choices"][0]["message"]["content"].strip().split("\n")
+            headers = {"Content-Type": "application/json"}
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+
+            if provider == "ollama":
+                url = f"{base_url.removesuffix('/v1')}/api/generate"
+                payload = {"model": model_id, "prompt": prompt, "stream": False}
+            else:
+                url = f"{base_url}/chat/completions"
+                payload = {"model": model_id, "messages": [{"role": "user", "content": prompt}]}
+
+            resp = await client.post(url, json=payload, headers=headers, timeout=10.0)
+            if resp.status_code != 200:
+                return [query]
+
+            data = resp.json()
+            if provider == "ollama":
+                content = data.get("response", "")
+            else:
+                content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+            return [line.strip() for line in content.strip().split("\n") if line.strip()][:3]
         except Exception:
             return [query]
 

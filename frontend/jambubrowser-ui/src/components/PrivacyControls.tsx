@@ -1,32 +1,11 @@
 import { useState, useEffect } from "react";
 import { localFetch } from "../utils/api";
 
-interface PrivacyReport {
-  mode: string;
-  network: {
-    local_only: boolean;
-    external_requests_allowed: boolean;
-    blocked_domains_count: number;
-  };
-  content: {
-    pii_detection_enabled: boolean;
-    tracking_protection: boolean;
-  };
-  audit: {
-    enabled: boolean;
-    chain_valid: boolean;
-    total_entries: number;
-  };
-  vault: {
-    locked: boolean;
-    credentials_count: number;
-  };
-}
-
 export function PrivacyControls() {
-  const [report, setReport] = useState<PrivacyReport | null>(null);
+  const [report, setReport] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [settingMode, setSettingMode] = useState(false);
 
   useEffect(() => {
     fetchPrivacyReport();
@@ -44,6 +23,21 @@ export function PrivacyControls() {
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const setPrivacyMode = async (mode: string) => {
+    try {
+      setSettingMode(true);
+      await localFetch("/privacy/mode", {
+        method: "POST",
+        body: JSON.stringify({ mode }),
+      });
+      await fetchPrivacyReport();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSettingMode(false);
     }
   };
 
@@ -66,101 +60,97 @@ export function PrivacyControls() {
     );
   }
 
+  const privacy = report?.privacy || {};
+  const audit = report?.audit || {};
+  const vaultStatus = report?.vault_status || "unknown";
+
   return (
     <div className="privacy-controls glass">
       <h3>Privacy Controls</h3>
-      
-      {report && (
-        <>
-          <div className="status-section">
-            <h4>Network</h4>
-            <ul>
-              <li>
-                <span className="label">Mode:</span>
-                <span className={`value ${report.network.local_only ? 'secure' : 'warning'}`}>
-                  {report.mode}
-                </span>
-              </li>
-              <li>
-                <span className="label">Local Only:</span>
-                <span className={`value ${report.network.local_only ? 'secure' : 'warning'}`}>
-                  {report.network.local_only ? 'Yes' : 'No'}
-                </span>
-              </li>
-              <li>
-                <span className="label">External Requests:</span>
-                <span className={`value ${report.network.external_requests_allowed ? 'warning' : 'secure'}`}>
-                  {report.network.external_requests_allowed ? 'Allowed' : 'Blocked'}
-                </span>
-              </li>
-              <li>
-                <span className="label">Blocked Domains:</span>
-                <span className="value">{report.network.blocked_domains_count}</span>
-              </li>
-            </ul>
-          </div>
 
-          <div className="status-section">
-            <h4>Content Protection</h4>
-            <ul>
-              <li>
-                <span className="label">PII Detection:</span>
-                <span className={`value ${report.content.pii_detection_enabled ? 'secure' : 'warning'}`}>
-                  {report.content.pii_detection_enabled ? 'Enabled' : 'Disabled'}
-                </span>
-              </li>
-              <li>
-                <span className="label">Tracking Protection:</span>
-                <span className={`value ${report.content.tracking_protection ? 'secure' : 'warning'}`}>
-                  {report.content.tracking_protection ? 'Enabled' : 'Disabled'}
-                </span>
-              </li>
-            </ul>
-          </div>
+      <div className="status-section">
+        <h4>Privacy Mode</h4>
+        <div className="mode-selector">
+          {["standard", "enhanced", "maximum", "local_only"].map((mode) => (
+            <button
+              key={mode}
+              className={`mode-btn ${privacy.mode === mode ? "active" : ""}`}
+              onClick={() => setPrivacyMode(mode)}
+              disabled={settingMode}
+            >
+              {mode.replace("_", " ")}
+            </button>
+          ))}
+        </div>
+      </div>
 
-          <div className="status-section">
-            <h4>Audit</h4>
-            <ul>
-              <li>
-                <span className="label">Enabled:</span>
-                <span className={`value ${report.audit.enabled ? 'secure' : 'warning'}`}>
-                  {report.audit.enabled ? 'Yes' : 'No'}
-                </span>
-              </li>
-              <li>
-                <span className="label">Chain Valid:</span>
-                <span className={`value ${report.audit.chain_valid ? 'secure' : 'error'}`}>
-                  {report.audit.chain_valid ? 'Yes' : 'No'}
-                </span>
-              </li>
-              <li>
-                <span className="label">Total Entries:</span>
-                <span className="value">{report.audit.total_entries}</span>
-              </li>
-            </ul>
-          </div>
+      <div className="status-section">
+        <h4>Protection Status</h4>
+        <ul>
+          <li>
+            <span className="label">Local Only:</span>
+            <span className={`value ${privacy.local_only ? "secure" : "warning"}`}>
+              {privacy.local_only ? "Yes" : "No"}
+            </span>
+          </li>
+          <li>
+            <span className="label">PII Removal:</span>
+            <span className={`value ${privacy.pii_removal ? "secure" : "warning"}`}>
+              {privacy.pii_removal ? "Enabled" : "Disabled"}
+            </span>
+          </li>
+          <li>
+            <span className="label">Tracking Blocked:</span>
+            <span className={`value ${privacy.tracking_blocked ? "secure" : "warning"}`}>
+              {privacy.tracking_blocked ? "Yes" : "No"}
+            </span>
+          </li>
+          <li>
+            <span className="label">PII Detections:</span>
+            <span className="value">{privacy.audit_statistics?.pii_detections || 0}</span>
+          </li>
+          <li>
+            <span className="label">Blocked Requests:</span>
+            <span className="value">{privacy.audit_statistics?.blocked_requests || 0}</span>
+          </li>
+        </ul>
+      </div>
 
-          <div className="status-section">
-            <h4>Credential Vault</h4>
-            <ul>
-              <li>
-                <span className="label">Status:</span>
-                <span className={`value ${report.vault.locked ? 'secure' : 'warning'}`}>
-                  {report.vault.locked ? 'Locked' : 'Unlocked'}
-                </span>
-              </li>
-              <li>
-                <span className="label">Credentials:</span>
-                <span className="value">{report.vault.credentials_count}</span>
-              </li>
-            </ul>
-          </div>
+      <div className="status-section">
+        <h4>Credential Vault</h4>
+        <ul>
+          <li>
+            <span className="label">Status:</span>
+            <span className={`value ${vaultStatus === "locked" ? "secure" : "warning"}`}>
+              {vaultStatus === "locked" ? "Locked" : "Unlocked"}
+            </span>
+          </li>
+        </ul>
+      </div>
 
-          <button onClick={fetchPrivacyReport} className="refresh-btn">
-            Refresh Report
-          </button>
-        </>
-      )}
+      <div className="status-section">
+        <h4>Audit Log</h4>
+        <ul>
+          <li>
+            <span className="label">Total Entries:</span>
+            <span className="value">{audit.total_entries || 0}</span>
+          </li>
+          <li>
+            <span className="label">Retention:</span>
+            <span className="value">{audit.retention_days || 90} days</span>
+          </li>
+          {audit.by_category && Object.keys(audit.by_category).length > 0 && (
+            <li>
+              <span className="label">Categories:</span>
+              <span className="value">{Object.keys(audit.by_category).length}</span>
+            </li>
+          )}
+        </ul>
+      </div>
+
+      <button onClick={fetchPrivacyReport} className="refresh-btn">
+        Refresh Report
+      </button>
     </div>
   );
 }
