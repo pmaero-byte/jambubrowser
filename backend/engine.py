@@ -101,7 +101,7 @@ def _strip_think(text: str) -> str:
     return _THINK_RE.sub("", text).strip()
 
 
-async def _call_llm(prompt: str, system: str | None = None, *, max_tokens: int = 500, temperature: float = 0.3, timeout: float = 30.0) -> tuple[str, dict]:
+async def _call_llm(prompt: str, system: Optional[str] = None, *, max_tokens: int = 500, temperature: float = 0.3, timeout: float = 30.0) -> tuple[str, dict]:
     """Unified LLM call. Returns (answer_text, usage_dict). Provider-aware."""
     cfg = _resolve_llm_config({})
     provider = cfg.get("provider", "ollama")
@@ -215,7 +215,7 @@ def _new_task_id() -> str:
     return uuid.uuid4().hex[:8]
 
 
-async def broadcast_agent_state(client_id: str, state: str, zone: str | None = None) -> None:
+async def broadcast_agent_state(client_id: str, state: str, zone: Optional[str] = None) -> None:
     payload = {
         "type": "agent.state",
         "state": state,
@@ -229,10 +229,10 @@ async def broadcast_agent_state(client_id: str, state: str, zone: str | None = N
 async def broadcast_agent_telemetry(
     client_id: str,
     action: str,
-    file_path: str | None = None,
-    tokens_generated: int | None = None,
-    tokens_per_sec: float | None = None,
-    context_size: int | None = None,
+    file_path: Optional[str] = None,
+    tokens_generated: Optional[int] = None,
+    tokens_per_sec: Optional[float] = None,
+    context_size: Optional[int] = None,
 ) -> None:
     payload = {
         "type": "agent.telemetry",
@@ -275,7 +275,7 @@ async def broadcast_task_end(
     client_id: str,
     task_id: str,
     status: str,
-    result_preview: str | None = None,
+    result_preview: Optional[str] = None,
 ) -> None:
     elapsed = time.time() - _task_token_starts.get(task_id, time.time())
     final_tokens = _task_token_counts.get(task_id, 0)
@@ -298,7 +298,7 @@ async def broadcast_task_end(
     _task_token_counts.pop(task_id, None)
 
 
-def is_cancelled(task_id: str | None) -> bool:
+def is_cancelled(task_id: Optional[str]) -> bool:
     if not task_id:
         return False
     flag = cancel_flags.get(task_id)

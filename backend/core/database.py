@@ -51,16 +51,32 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
             if _memory_db_conn is None:
                 _memory_db_conn = sqlite3.connect(path)
                 _memory_db_conn.row_factory = sqlite3.Row
-                _memory_db_conn.enable_load_extension(True)
-                sqlite_vec.load(_memory_db_conn)
-                _memory_db_conn.enable_load_extension(False)
+                # Enable load extension if supported (not available in Apple's Python)
+                if hasattr(_memory_db_conn, 'enable_load_extension'):
+                    _memory_db_conn.enable_load_extension(True)
+                    sqlite_vec.load(_memory_db_conn)
+                    _memory_db_conn.enable_load_extension(False)
+                else:
+                    # Fallback: try to load sqlite_vec without extension loading
+                    try:
+                        sqlite_vec.load(_memory_db_conn)
+                    except Exception:
+                        pass  # sqlite_vec not available
             conn = _memory_db_conn
     else:
         conn = sqlite3.connect(path)
         conn.row_factory = sqlite3.Row
-        conn.enable_load_extension(True)
-        sqlite_vec.load(conn)
-        conn.enable_load_extension(False)
+        # Enable load extension if supported (not available in Apple's Python)
+        if hasattr(conn, 'enable_load_extension'):
+            conn.enable_load_extension(True)
+            sqlite_vec.load(conn)
+            conn.enable_load_extension(False)
+        else:
+            # Fallback: try to load sqlite_vec without extension loading
+            try:
+                sqlite_vec.load(conn)
+            except Exception:
+                pass  # sqlite_vec not available
     
     cursor = conn.cursor()
     
