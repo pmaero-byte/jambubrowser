@@ -125,6 +125,12 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
     except sqlite3.OperationalError:
         cursor.execute("ALTER TABLE missions ADD COLUMN next_run REAL")
     
+    # Migration: Add schedule column if missing (for existing databases)
+    try:
+        cursor.execute("SELECT schedule FROM missions LIMIT 1")
+    except sqlite3.OperationalError:
+        cursor.execute("ALTER TABLE missions ADD COLUMN schedule TEXT")
+    
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS custom_tools (
             name TEXT PRIMARY KEY,

@@ -1131,11 +1131,11 @@ async def scrape(req: ScrapeRequest):
         )
 
         async with AsyncWebCrawler(config=browser_config) as crawler:
-            result = await crawler.arun(url=req.url, config=run_config)
+            result = await crawler.arun(url=req.url, js_code=js_code, config=run_config)
 
         if result.success:
             content = result.markdown[:50000]
-            sanitized = sanitize_content_for_storage(content)
+            sanitized_content, sanitization_result = sanitize_content_for_storage(content)
             
             # Log successful scrape
             audit.log(
@@ -1143,8 +1143,8 @@ async def scrape(req: ScrapeRequest):
                 action="scrape_success",
                 details={
                     "url": req.url,
-                    "content_length": len(sanitized.sanitized_content),
-                    "pii_removed": len(sanitized.pii_removed),
+                    "content_length": len(sanitized_content),
+                    "pii_removed": len(sanitization_result.pii_removed),
                 },
                 session_id=req.client_id if hasattr(req, 'client_id') else None,
             )
@@ -1152,7 +1152,7 @@ async def scrape(req: ScrapeRequest):
             return {
                 "success": True,
                 "url": req.url,
-                "markdown": sanitized.sanitized_content,
+                "markdown": sanitized_content,
                 "title": result.metadata.get("title", "") if result.metadata else "",
             }
         return {"success": False, "url": req.url, "error": "Failed to scrape page"}
@@ -1160,8 +1160,8 @@ async def scrape(req: ScrapeRequest):
         async with httpx.AsyncClient() as client:
             resp = await client.get(req.url, timeout=15.0, follow_redirects=True)
             content = resp.text[:50000]
-            sanitized = sanitize_content_for_storage(content)
-            return {"success": True, "url": req.url, "markdown": sanitized.sanitized_content, "title": ""}
+            sanitized_content, _ = sanitize_content_for_storage(content)
+            return {"success": True, "url": req.url, "markdown": sanitized_content, "title": ""}
     except Exception as e:
         # Log the error
         audit.log(
@@ -1245,7 +1245,7 @@ async def perform_actions(req: MultiActionRequest):
             
             # Sanitize content before returning
             content = result.markdown[:10000] if result.success else ""
-            sanitized = sanitize_content_for_storage(content)
+            sanitized_content, sanitization_result = sanitize_content_for_storage(content)
             
             # Log successful action
             audit.log(
@@ -1253,13 +1253,13 @@ async def perform_actions(req: MultiActionRequest):
                 action="perform_actions_success",
                 details={
                     "url": req.url,
-                    "content_length": len(sanitized.sanitized_content),
-                    "pii_removed": len(sanitized.pii_removed),
+                    "content_length": len(sanitized_content),
+                    "pii_removed": len(sanitization_result.pii_removed),
                 },
                 session_id=req.client_id,
             )
             
-            return {"status": "success", "markdown": sanitized.sanitized_content}
+            return {"status": "success", "markdown": sanitized_content}
     except ImportError:
         return {"status": "error", "message": "crawl4ai not installed"}
     except Exception as e:
