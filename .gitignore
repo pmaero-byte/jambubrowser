@@ -8,6 +8,9 @@ dist/
 # Conda environment
 searxng-env/
 
+# MLX virtual environment
+mlx-venv/
+
 # Node
 node_modules/
 browser-app/dist/
