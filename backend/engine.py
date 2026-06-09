@@ -80,6 +80,11 @@ CLOUD_PROVIDERS = {
         "modelId": "MiniMax-M2.7",
         "apiKey": os.environ.get("MINIMAX_API_KEY", ""),
     },
+    "mlx": {
+        "baseUrl": "http://127.0.0.1:8080/v1",
+        "modelId": "gemma4:12b",
+        "apiKey": "",
+    },
 }
 
 
@@ -89,7 +94,7 @@ def _resolve_llm_config(cfg: dict) -> dict:
     if cfg:
         merged.update({k: v for k, v in cfg.items() if v})
     provider = merged.get("provider", "ollama")
-    if provider in CLOUD_PROVIDERS and not merged.get("apiKey"):
+    if provider in CLOUD_PROVIDERS:
         merged.update(CLOUD_PROVIDERS[provider])
     return merged
 
@@ -138,6 +143,8 @@ async def _call_llm(prompt: str, system: Optional[str] = None, *, max_tokens: in
                 "options": {"temperature": temperature, "num_predict": max_tokens},
             }
         else:
+            if provider == "mlx" and timeout < 60.0:
+                timeout = 60.0  # MLX server may need more time for cold starts
             url = f"{base_url}/chat/completions"
             messages = []
             if system:
@@ -1048,11 +1055,8 @@ async def research(req: ResearchRequest):
 
                 # Vector search for final context
                 query_vec = model.encode(req.query).astype(np.float32).tobytes()
-                cursor.execute(
-                    "SELECT d.text, d.url FROM vec_documents v JOIN documents d ON v.id = d.id WHERE v.embedding MATCH ? AND k = 8",
-                    (query_vec,),
-                )
-                rows = cursor.fetchall()
+                from backend.core.vector_search import search_similar
+                rows = search_similar(query_vec, k=8)
         except ImportError:
             rows = []
             for item in crawled:
@@ -1595,11 +1599,8 @@ async def recall_memory(query: str):
 
         with get_db_cursor() as cursor:
             query_vec = model.encode(query).astype(np.float32).tobytes()
-            cursor.execute(
-                "SELECT d.text, d.url FROM vec_documents v JOIN documents d ON v.id = d.id WHERE v.embedding MATCH ? AND k = 10",
-                (query_vec,),
-            )
-            rows = cursor.fetchall()
+            from backend.core.vector_search import search_similar
+            rows = search_similar(query_vec, k=10)
 
         return {
             "memory": [
@@ -2264,7 +2265,7 @@ async def computer_capture(region: str = "full"):
         
         with open(tmp, "rb") as f:
             data = base64.b64encode(f.read()).decode()
-        return {"image_data": data, "format": "png", "region": region}
+        return {"success": True, "image_data": data, "format": "png", "region": region}
     except PermissionError:
         return {"error": "Permission denied. Grant accessibility permissions in System Settings → Privacy & Security → Accessibility"}
     except subprocess.TimeoutExpired:
@@ -2707,6 +2708,7 @@ async def generate_fingerprint(req: FingerprintGenerateRequest):
     rotator = get_rotator()
     profile = rotator.generate_profile(req.os_family)
     return {
+        "success": True,
         "profile": profile.to_dict(),
         "playwright_config": rotator.get_profile_for_playwright(profile.profile_id),
     }
@@ -2741,6 +2743,7 @@ async def rotate_fingerprint(current_profile_id: str = None):
     rotator = get_rotator()
     profile = rotator.rotate_profile(current_profile_id)
     return {
+        "success": True,
         "profile": profile.to_dict(),
         "playwright_config": rotator.get_profile_for_playwright(profile.profile_id),
     }
@@ -2877,14 +2880,78 @@ async def setup_gemma4(model_size: str = "12b"):
 
 @app.get("/models/providers")
 async def check_providers():
-    """Check which LLM providers are available (Ollama, llama.cpp)."""
+    """Check which LLM providers are available (Ollama, llama.cpp, MLX)."""
     from backend.modules.model_manager import get_model_manager
+    from backend.modules.mlx_provider import is_mlx_available, is_mlx_server_running
     manager = get_model_manager()
+    mlx_avail = is_mlx_available()
     return {
         "ollama": await manager.is_ollama_running(),
         "llamacpp": await manager.is_llamacpp_running(),
-        "recommended": "ollama",
+        "mlx": mlx_avail,
+        "mlx_server": is_mlx_server_running() if mlx_avail else False,
+        "recommended": "mlx" if mlx_avail else "ollama",
     }
+
+
+@app.get("/mlx/status")
+async def mlx_status():
+    """Get MLX provider status."""
+    from backend.modules.mlx_provider import get_provider_info, is_mlx_available
+    if not is_mlx_available():
+        return {"available": False, "message": "mlx-lm not installed. Run: pip install mlx-lm"}
+    return get_provider_info()
+
+
+@app.post("/mlx/server/start")
+async def mlx_start(model: str = "gemma4:12b", port: int = 8080):
+    """Start MLX LM server."""
+    from backend.modules.mlx_provider import mlx_start_server, is_mlx_available
+    if not is_mlx_available():
+        raise HTTPException(status_code=400, detail="mlx-lm not installed. Run: pip install mlx-lm")
+    result = await mlx_start_server(model=model, port=port)
+    if result.get("status") == "error":
+        raise HTTPException(status_code=500, detail=result.get("message", "Failed to start MLX server"))
+    return result
+
+
+@app.post("/mlx/server/stop")
+async def mlx_stop():
+    """Stop MLX LM server."""
+    from backend.modules.mlx_provider import mlx_stop_server
+    return mlx_stop_server()
+
+
+@app.get("/mlx/models")
+async def mlx_models():
+    """List available MLX models (both definitions and locally cached)."""
+    from backend.modules.mlx_provider import get_available_mlx_models, mlx_list_cached_models
+    return {
+        "available": get_available_mlx_models(),
+        "cached": await mlx_list_cached_models(),
+    }
+
+
+@app.post("/mlx/models/download")
+async def mlx_download(model_id: str = "gemma4:12b"):
+    """Download an MLX model from HuggingFace."""
+    from backend.modules.mlx_provider import mlx_download_model, is_mlx_available
+    if not is_mlx_available():
+        raise HTTPException(status_code=400, detail="mlx-lm not installed")
+    result = await mlx_download_model(model_id)
+    if result.get("status") == "error":
+        raise HTTPException(status_code=500, detail=result.get("message", "Download failed"))
+    return result
+
+
+@app.post("/mlx/generate")
+async def mlx_generate_endpoint(prompt: str, system: Optional[str] = None, model: str = "gemma4:12b", max_tokens: int = 500, temperature: float = 0.3):
+    """Direct MLX inference without server."""
+    from backend.modules.mlx_provider import mlx_generate, is_mlx_available
+    if not is_mlx_available():
+        raise HTTPException(status_code=400, detail="mlx-lm not installed")
+    text, usage = await mlx_generate(prompt=prompt, system=system, model=model, max_tokens=max_tokens, temperature=temperature)
+    return {"response": text, "usage": usage}
 
 
 @app.get("/llm/config")

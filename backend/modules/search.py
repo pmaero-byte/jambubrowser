@@ -18,48 +18,55 @@ DUCKDUCKGO_API = "https://api.duckduckgo.com/"
 
 
 async def _search_duckduckgo(query: str, max_results: int = 10) -> List[Dict]:
-    """DuckDuckGo instant answer API search as fallback."""
+    """DuckDuckGo search via duckduckgo_search library (fallback)."""
     results = []
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                DUCKDUCKGO_API,
-                params={"q": query, "format": "json"},
-                timeout=15.0,
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                
-                # Add abstract if available
-                abstract = data.get("Abstract", "")
-                abstract_url = data.get("AbstractURL", "")
-                if abstract and abstract_url:
-                    results.append({
-                        "url": abstract_url,
-                        "title": data.get("Heading", query),
-                        "content": abstract,
-                        "engine": "duckduckgo"
-                    })
-                
-                # Add related topics
-                for topic in data.get("RelatedTopics", [])[:max_results - len(results)]:
-                    if isinstance(topic, dict) and "Text" in topic:
+        from ddgs import DDGS
+        with DDGS() as ddgs:
+            for r in ddgs.text(query, max_results=max_results):
+                results.append({
+                    "url": r.get("href", ""),
+                    "title": r.get("title", "")[:100],
+                    "content": r.get("body", ""),
+                    "engine": "duckduckgo"
+                })
+    except ImportError:
+        # Fallback to instant answer API if library not installed
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    DUCKDUCKGO_API,
+                    params={"q": query, "format": "json"},
+                    timeout=15.0,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    abstract = data.get("Abstract", "")
+                    abstract_url = data.get("AbstractURL", "")
+                    if abstract and abstract_url:
                         results.append({
-                            "url": topic.get("FirstURL", ""),
-                            "title": topic.get("Text", "")[:100],
-                            "content": topic.get("Text", ""),
+                            "url": abstract_url,
+                            "title": data.get("Heading", query),
+                            "content": abstract,
                             "engine": "duckduckgo"
                         })
-                
-                # Add results from instant answers
-                for result in data.get("Results", [])[:max_results - len(results)]:
-                    results.append({
-                        "url": result.get("FirstURL", ""),
-                        "title": result.get("Text", "")[:100],
-                        "content": result.get("Text", ""),
-                        "engine": "duckduckgo"
-                    })
-                    
+                    for topic in data.get("RelatedTopics", [])[:max_results - len(results)]:
+                        if isinstance(topic, dict) and "Text" in topic:
+                            results.append({
+                                "url": topic.get("FirstURL", ""),
+                                "title": topic.get("Text", "")[:100],
+                                "content": topic.get("Text", ""),
+                                "engine": "duckduckgo"
+                            })
+                    for result in data.get("Results", [])[:max_results - len(results)]:
+                        results.append({
+                            "url": result.get("FirstURL", ""),
+                            "title": result.get("Text", "")[:100],
+                            "content": result.get("Text", ""),
+                            "engine": "duckduckgo"
+                        })
+        except Exception as e:
+            print(f"DuckDuckGo API fallback error: {e}")
     except Exception as e:
         print(f"DuckDuckGo search error: {e}")
     return results
