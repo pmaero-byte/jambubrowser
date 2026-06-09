@@ -36,6 +36,7 @@ function App() {
   const [messages, setMessages] = useState<any[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [llmProvider, setLlmProvider] = useState("auto");
 
   // 4. Performance Metrics State
   const [metrics, setMetrics] = useState({ nodes: 0, tokens: 0, ram: 0, duration: 0 });
@@ -104,7 +105,11 @@ function App() {
     try {
       const res = await localFetch("/research", {
         method: "POST",
-        body: JSON.stringify({ query, brain_only: !fullPower })
+        body: JSON.stringify({ 
+          query, 
+          brain_only: !fullPower,
+          llm_provider: llmProvider === "auto" ? undefined : llmProvider
+        })
       });
       const data = await res.json();
 
@@ -152,6 +157,7 @@ function App() {
           <CommandBar 
             input={input} setInput={setInput} isLoading={isLoading}
             handleSubmit={handleSubmit} domain="general" setDomain={() => {}}
+            llmProvider={llmProvider} setLlmProvider={setLlmProvider}
             startListening={() => {}} fileInputRef={fileInputRef} handleImageSelect={() => {}}
           />
         </div>

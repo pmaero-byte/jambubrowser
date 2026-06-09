@@ -18,25 +18,47 @@ interface CommandBarProps {
   handleImageSelect: (e: any) => void;
   domain: string;
   setDomain: (val: string) => void;
+  llmProvider: string;
+  setLlmProvider: (val: string) => void;
 }
 
 export const CommandBar = ({ 
   input, setInput, isLoading, handleSubmit, 
   startListening, fileInputRef, handleImageSelect, 
-  domain, setDomain 
+  domain, setDomain,
+  llmProvider, setLlmProvider
 }: CommandBarProps) => {
   return (
     <motion.div layout className="input-container">
-      <div className="domain-bar">
-        {['general', 'academic', 'coding'].map(d => (
-          <button 
-            key={d} 
-            className={domain === d ? 'active' : ''} 
-            onClick={() => setDomain(d)}
-          >
-            {d.charAt(0).toUpperCase() + d.slice(1)}
-          </button>
-        ))}
+      <div className="bar-row">
+        <div className="domain-bar">
+          {['general', 'academic', 'coding'].map(d => (
+            <button 
+              key={d} 
+              className={domain === d ? 'active' : ''} 
+              onClick={() => setDomain(d)}
+            >
+              {d.charAt(0).toUpperCase() + d.slice(1)}
+            </button>
+          ))}
+        </div>
+        <div className="provider-bar">
+          {[
+            { id: 'auto', label: 'Auto' },
+            { id: 'ollama', label: 'Ollama' },
+            { id: 'mlx', label: 'MLX' },
+            { id: 'minimax', label: 'MiniMax' },
+          ].map(p => (
+            <button
+              key={p.id}
+              className={llmProvider === p.id ? 'active' : ''}
+              onClick={() => setLlmProvider(p.id)}
+              title={`Use ${p.label} LLM provider`}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
       </div>
       
       <form className="input-area glass" onSubmit={handleSubmit}>

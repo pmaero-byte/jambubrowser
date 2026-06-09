@@ -539,6 +539,46 @@
   backdrop-filter: blur(16px);
 }
 
+/* Command Bar - Domain + Provider row */
+.bar-row {
+  display: flex;
+  gap: 8px;
+  padding: 6px 10px 0;
+  flex-wrap: wrap;
+}
+
+.domain-bar,
+.provider-bar {
+  display: flex;
+  gap: 4px;
+}
+
+.domain-bar button,
+.provider-bar button {
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  color: var(--text-dim);
+  padding: 3px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 0.7rem;
+  transition: all 0.2s;
+  font-family: inherit;
+}
+
+.domain-bar button:hover,
+.provider-bar button:hover {
+  border-color: var(--accent);
+  color: var(--text-main);
+}
+
+.domain-bar button.active,
+.provider-bar button.active {
+  background: rgba(0, 255, 100, 0.12);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 /* Agent Status Bar */
 .agent-status-bar {
   height: 28px;
