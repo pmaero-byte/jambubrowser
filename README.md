@@ -11,14 +11,30 @@ Jambubrowser is a fully local, privacy-first autonomous AI browser and research 
 ### Prerequisites
 - Python 3.9+
 - Node.js 18+
-- Ollama (for local LLM)
+- **Ollama** (for local LLM via Ollama) **or** **MLX** (Apple Silicon-native inference, recommended)
 
 ### Backend
 ```bash
-cd backend
+# Install backend dependencies
 pip install -r requirements.txt
+
+# Start the engine
 python3 -m uvicorn backend.engine:app --host 127.0.0.1 --port 8001
 ```
+
+### MLX LM Setup (Apple Silicon, Recommended)
+```bash
+# Create MLX virtual environment (requires Python 3.11+)
+python3.11 -m venv mlx-venv
+mlx-venv/bin/pip install mlx-lm mlx-vlm
+
+# Start the MLX VLM server with Gemma 4 12B (auto-downloads from HuggingFace)
+mlx-venv/bin/python3 backend/scripts/mlx_vlm_server.py \
+  --model mlx-community/gemma-4-12B-it-4bit \
+  --port 8080
+```
+
+Then send research requests with `"llm_provider": "mlx"`.
 
 ### Frontend
 ```bash
@@ -100,7 +116,8 @@ python3 -m pytest tests/test_e2e.py -v
 - **Hybrid RAG Pipeline**: SQLite-vec vector search + semantic memory
 - **Knowledge Graph**: Entity extraction, relationship inference, topic clustering
 - **Swarm Research**: Decomposes complex queries into parallel sub-missions
-- **LLM Synthesis**: Local (Ollama/Gemma4) + Cloud (MiniMax) support
+- **LLM Synthesis**: Local (Ollama/MLX/Gemma4) + Cloud (MiniMax) support
+- **MLX LM Provider**: Apple Silicon-native inference via `mlx-vlm` — 12-33 tok/s on M4 Pro with Gemma 4 12B, 4 privacy modes, local-first
 - **Brain-Only Mode**: Search local knowledge vault without web access
 
 ### Browser & Automation
@@ -164,6 +181,12 @@ python3 -m pytest tests/test_e2e.py -v
 | Computer | `/computer/keyboard` | POST | Keyboard input |
 | Multimodal | `/multimodal/image` | POST | Process image |
 | Multimodal | `/multimodal/text` | POST | Process text |
+| MLX | `/mlx/status` | GET | MLX provider status |
+| MLX | `/mlx/server/start` | POST | Start MLX VLM server |
+| MLX | `/mlx/server/stop` | POST | Stop MLX server |
+| MLX | `/mlx/models` | GET | List available MLX models |
+| MLX | `/mlx/models/download` | POST | Download MLX model |
+| MLX | `/mlx/generate` | POST | Direct MLX inference |
 | WebSocket | `/ws/{client_id}` | WS | Agent state updates |
 | WebSocket | `/ws/audit` | WS | Live audit log |
 
@@ -208,6 +231,8 @@ See [docs/API.md](docs/API.md) for complete API reference.
 | Missions | `backend/modules/missions.py` | Cron-based scheduler |
 | Consensus | `backend/modules/consensus_engine.py` | Multi-node voting |
 | Supply Chain | `backend/core/supply_chain.py` | Dependency verification |
+| MLX Provider | `backend/modules/mlx_provider.py` | Apple Silicon MLX integration, model registry, server lifecycle |
+| MLX VLM Server | `backend/scripts/mlx_vlm_server.py` | OpenAI-compatible FastAPI server for Gemma 4 via mlx-vlm |
 
 ---
 
