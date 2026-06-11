@@ -1,4 +1,4 @@
-import { Trees, Zap, BrainCircuit, Box, Shield, History, KeyRound, FileText, Brain } from "lucide-react";
+import { Trees, Zap, BrainCircuit, Box, Shield, History, KeyRound, FileText, Brain, HelpCircle } from "lucide-react";
 
 /**
  * Premium Navigation Sidebar
@@ -14,9 +14,10 @@ interface HeaderProps {
   setFullPower: (val: boolean) => void;
   showHistory: boolean;
   setShowHistory: (val: boolean) => void;
+  onShowOnboarding?: () => void;
 }
 
-export const Header = ({ activeTab, setActiveTab, fullPower, setFullPower, showHistory, setShowHistory }: HeaderProps) => {
+export const Header = ({ activeTab, setActiveTab, fullPower, setFullPower, showHistory, setShowHistory, onShowOnboarding }: HeaderProps) => {
   return (
     <header className="header glass">
       <div className="title-area">
@@ -38,6 +39,11 @@ export const Header = ({ activeTab, setActiveTab, fullPower, setFullPower, showH
 
       <div className="header-actions">
         <button onClick={() => setShowHistory(!showHistory)}><History size={16}/> {showHistory ? 'Hide' : 'History'}</button>
+        {onShowOnboarding && (
+          <button onClick={onShowOnboarding} title="Show onboarding (Cmd+?)">
+            <HelpCircle size={16} />
+          </button>
+        )}
         {fullPower && <span className="god-mode-active">AGENT MODE</span>}
         <label className="full-power-toggle">
           <input type="checkbox" checked={fullPower} onChange={(e) => setFullPower(e.target.checked)} />

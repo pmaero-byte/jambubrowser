@@ -15,6 +15,8 @@ import { AgentStatusBar } from "./components/AgentStatusBar";
 import { VaultUnlock } from "./components/VaultUnlock";
 import { AgentTimeline } from "./components/AgentTimeline";
 import { MemoryPanel } from "./components/MemoryPanel";
+import { OnboardingWizard } from "./components/OnboardingWizard";
+import { ResizableSplitView } from "./components/ResizableSplitView";
 
 // --- Hooks ---
 import { localFetch } from "./utils/api";
@@ -44,6 +46,9 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [llmProvider, setLlmProvider] = useState("auto");
   const [agentEvents, setAgentEvents] = useState<AgentEvent[]>([]);
+
+  // Onboarding state — auto-shown on first run, can be reopened
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   // 4. Performance Metrics State
   const [metrics, setMetrics] = useState({ nodes: 0, tokens: 0, ram: 0, duration: 0 });
@@ -94,6 +99,7 @@ function App() {
     "Meta+M": useCallback(() => setActiveTab("memory"), []),
     "Meta+1": useCallback(() => setActiveTab("chat"), []),
     "Meta+T": useCallback(() => addTab(), []),
+    "Meta+?": useCallback(() => setShowOnboarding(true), []),
     "Escape": useCallback(() => {
       if (activeTab === "privacy" || activeTab === "audit" || activeTab === "memory") setActiveTab("chat");
     }, [activeTab]),
@@ -181,34 +187,41 @@ function App() {
         activeTab={activeTab} setActiveTab={setActiveTab}
         fullPower={fullPower} setFullPower={setFullPower}
         showHistory={showHistory} setShowHistory={setShowHistory}
+        onShowOnboarding={() => setShowOnboarding(true)}
       />
       <AgentStatusBar />
 
-      <div className="main-layout split-view">
-        {/* Left Side: Agentic Chat Sidebar (30%) */}
-        <div className="sidebar-chat glass">
-          <MetricsPanel {...metrics} />
-          <div className="chat-window">
-            {messages.length === 0 && <Welcome />}
-            <MessageList
-              messages={messages}
-              onSourceClick={handleSourceClick}
-              agentTimeline={
-                isLoading || agentEvents.length > 0 ? (
-                  <AgentTimeline events={agentEvents} isActive={isLoading} />
-                ) : undefined
-              }
+      <ResizableSplitView
+        sidebar={
+          <div className="sidebar-chat glass">
+            <MetricsPanel {...metrics} />
+            <div className="chat-window">
+              {messages.length === 0 && <Welcome />}
+              <MessageList
+                messages={messages}
+                onSourceClick={handleSourceClick}
+                isStreaming={isLoading}
+                agentTimeline={
+                  isLoading || agentEvents.length > 0 ? (
+                    <AgentTimeline
+                      events={agentEvents}
+                      isActive={isLoading}
+                      onDismiss={!isLoading ? () => setAgentEvents([]) : undefined}
+                    />
+                  ) : undefined
+                }
+              />
+            </div>
+            <CommandBar
+              input={input} setInput={setInput} isLoading={isLoading}
+              handleSubmit={handleSubmit} domain="general" setDomain={() => {}}
+              llmProvider={llmProvider} setLlmProvider={setLlmProvider}
+              startListening={() => {}} fileInputRef={fileInputRef} handleImageSelect={() => {}}
             />
           </div>
-          <CommandBar
-            input={input} setInput={setInput} isLoading={isLoading}
-            handleSubmit={handleSubmit} domain="general" setDomain={() => {}}
-            llmProvider={llmProvider} setLlmProvider={setLlmProvider}
-            startListening={() => {}} fileInputRef={fileInputRef} handleImageSelect={() => {}}
-          />
-        </div>
-
-        {/* Right Side: Immersive Browser Area (70%) */}
+        }
+      >
+        {/* Right Side: Immersive Browser Area */}
         <div className="browser-area">
           <TabSystem
             tabs={tabs}
@@ -265,7 +278,13 @@ function App() {
             )}
           </AnimatePresence>
         </div>
-      </div>
+      </ResizableSplitView>
+
+      {/* Onboarding wizard — auto-shown on first run, or via Cmd+? */}
+      <OnboardingWizard
+        forceOpen={showOnboarding}
+        onClose={() => setShowOnboarding(false)}
+      />
     </main>
   );
 }
