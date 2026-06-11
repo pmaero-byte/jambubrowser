@@ -1,16 +1,15 @@
 [package]
 name = "browser-app"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "Jambubrowser — Sovereign Autonomous Research Agent"
+authors = ["Jambu AI <hi@jambu.ai>"]
+license = "MIT"
+repository = "https://github.com/pmaero-byte/jambubrowser"
+homepage = "https://github.com/pmaero-byte/jambubrowser"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+rust-version = "1.77"
 
 [lib]
-# The `_lib` suffix may seem redundant but it is necessary
-# to make the lib name unique and wouldn't conflict with the bin name.
-# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "browser_app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
@@ -21,11 +20,24 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 tauri-plugin-shell = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-deep-link = "2"
+tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 urlencoding = "2.1"
+log = "0.4"
+env_logger = "0.11"
+thiserror = "1"
+anyhow = "1"
 
-
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

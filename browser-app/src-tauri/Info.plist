@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Jambubrowser</string>
+    <key>CFBundleDisplayName</key>
+    <string>Jambubrowser</string>
+    <key>CFBundleIdentifier</key>
+    <string>ai.jambu.browser</string>
+    <key>CFBundleShortVersionString</key>
+    <string>3.0.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleSignature</key>
+    <string>????</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>11.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSRequiresAquaSystemAppearance</key>
+    <false/>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Jambubrowser uses AppleScript to launch the Python backend and other system services for autonomous research.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>Jambubrowser can use the camera for computer-vision features (optional, disabled by default).</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Jambubrowser can use the microphone for voice input (optional, disabled by default).</string>
+    <key>NSDesktopFolderUsageDescription</key>
+    <string>Jambubrowser needs to save research reports to your Desktop.</string>
+    <key>NSDocumentsFolderUsageDescription</key>
+    <string>Jambubrowser needs to read and save research data to your Documents.</string>
+    <key>NSDownloadsFolderUsageDescription</key>
+    <string>Jambubrowser saves downloaded resources for offline research.</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.developer-tools</string>
+    <key>LSEnvironment</key>
+    <dict>
+        <key>JAMBU_AUTOSTART</key>
+        <string>1</string>
+    </dict>
+    <key>CFBundleURLTypes</key>
+    <dict>
+        <key>CFBundleURLName</key>
+        <string>ai.jambu.browser.deeplink</string>
+        <key>CFBundleURLSchemes</key>
+        <array>
+            <string>jambubrowser</string>
+        </array>
+    </dict>
+    <key>NSHumanReadableCopyright</key>
+    <string>© 2026 Jambu AI. All rights reserved.</string>
+</dict>
+</plist>

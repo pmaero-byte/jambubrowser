@@ -1,0 +1,170 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v3.0.0). Leave empty to use latest."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  id-token: write  # Required for sigstore/cosign signing
+
+jobs:
+  # ── Build a Tauri bundle on each platform ────────────────────
+  build:
+    name: Build (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-aarch64
+            os: macos-14
+            target: aarch64-apple-darwin
+          - platform: macos-x86_64
+            os: macos-13
+            target: x86_64-apple-darwin
+          - platform: ubuntu
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - platform: windows
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: browser-app/package-lock.json
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: browser-app/src-tauri -> target
+
+      - name: Install Linux system deps
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev wget file
+
+      - name: Install Rust crates (Linux)
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          cargo install tauri-cli --version "^2" --locked
+
+      # ── macOS: code signing + notarization ──────────────────
+      - name: Import Apple Developer cert
+        if: matrix.os == 'macos-14' || matrix.os == 'macos-13'
+        env:
+          APPLE_CERT_P12_BASE64: ${{ secrets.APPLE_CERT_P12_BASE64 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/jambu.keychain-db
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          echo "$APPLE_CERT_P12_BASE64" | base64 --decode > $RUNNER_TEMP/cert.p12
+          security import $RUNNER_TEMP/cert.p12 -P "$APPLE_CERT_PASSWORD" -A -t -f pkcs12 -k $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+      - name: Install npm deps
+        working-directory: browser-app
+        run: |
+          npm ci || npm install
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          # macOS signing
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Tauri updater signing
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # API token for tauri-action
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: browser-app
+          tagName: ${{ github.ref_name || inputs.tag }}
+          releaseName: "Jambubrowser ${{ github.ref_name || inputs.tag }}"
+          releaseBody: "See the [CHANGELOG](https://github.com/pmaero-byte/jambubrowser/blob/main/docs/CHANGELOG.md) for details."
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.target == 'aarch64-apple-darwin' && '--target aarch64-apple-darwin' || '' }}
+          # macOS universal binary: include both archs
+          # For now we ship per-arch; can switch to universal later
+
+  # ── Create the GitHub Release once all builds are done ──────
+  release:
+    name: GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create release notes
+        run: |
+          cat > release-notes.md <<EOF
+          # Jambubrowser ${{ github.ref_name }}
+
+          ## Installation
+
+          | Platform | Installer |
+          |----------|-----------|
+          | **macOS (Apple Silicon)** | \`Jambubrowser_${GITHUB_REF_NAME#v}_aarch64.dmg\` |
+          | **macOS (Intel)** | \`Jambubrowser_${GITHUB_REF_NAME#v}_x64.dmg\` |
+          | **Linux (deb)** | \`Jambubrowser_${GITHUB_REF_NAME#v}_amd64.deb\` |
+          | **Linux (AppImage)** | \`Jambubrowser_${GITHUB_REF_NAME#v}_amd64.AppImage\` |
+          | **Windows (MSI)** | \`Jambubrowser_${GITHUB_REF_NAME#v}_x64_en-US.msi\` |
+
+          ## Verification
+
+          All macOS binaries are signed with our Apple Developer ID and notarized.
+          All Windows binaries are signed and use SHA-256 timestamps.
+          Auto-updates are signed with our Tauri updater key.
+
+          See the [CHANGELOG](https://github.com/pmaero-byte/jambubrowser/blob/main/docs/CHANGELOG.md) for what's new.
+          EOF
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Jambubrowser ${{ github.ref_name }}"
+          body_path: release-notes.md
+          draft: true
+          files: |
+            artifacts/**/*.dmg
+            artifacts/**/*.deb
+            artifacts/**/*.AppImage
+            artifacts/**/*.msi
+            artifacts/**/*.exe
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

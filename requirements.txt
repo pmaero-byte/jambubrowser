@@ -1,0 +1,47 @@
+# ─────────────────────────────────────────────────────────────
+# Jambubrowser — Python dependencies
+# ─────────────────────────────────────────────────────────────
+# Install with:  pip install -r requirements.txt
+# Python 3.9+ required.
+# ─────────────────────────────────────────────────────────────
+
+# Web framework
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.0.0
+starlette>=0.27.0
+
+# HTTP client
+httpx>=0.25.0
+requests>=2.31.0
+
+# System / process
+psutil>=5.9.0
+
+# Database
+sqlite-vec>=0.1.0
+
+# Crypto (vault, audit hash chain)
+cryptography>=41.0.0
+
+# Markdown processing
+markdownify>=0.11.0
+
+# MCP server (for Claude/Cursor integration)
+mcp>=1.0.0
+
+# Semantic search / embeddings (optional, falls back to numpy)
+sentence-transformers>=2.2.0
+numpy>=1.24.0
+
+# WebSocket support
+websockets>=12.0
+
+# Test framework
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+anyio>=4.0.0
+
+# Lint / format
+ruff>=0.1.0
+mypy>=1.7.0

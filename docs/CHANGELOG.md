@@ -2,6 +2,38 @@
 
 All notable changes to Jambubrowser.
 
+## [3.1.0] - 2026-06-11
+
+### Added — Tauri shippable build
+
+**Tauri 2 desktop wrapper (`browser-app/`) is now production-ready:**
+- `tauri.conf.json` hardened: real Content-Security-Policy, 1280x800 default window with min-size, proper bundle metadata (category, copyright, publisher, short/long description, homepage), Linux deb/rpm/appimage targets with proper deps
+- `Info.plist` with bundle metadata, macOS permission descriptions, deep-link URL scheme (`jambubrowser://`), per-folder usage strings, environment variables for autostart
+- `entitlements.plist` with hardened-runtime settings, network client/server, sidecar execution, file access scopes (sandboxed)
+- `Cargo.toml` adds `tauri-plugin-updater`, `tauri-plugin-notification`, `tauri-plugin-deep-link`, `tauri-plugin-process`; release profile tuned for size (LTO, opt-level "s", strip)
+- `lib.rs` registers all 5 plugins, uses `env_logger`, spawns backend services on a non-blocking thread
+- `capabilities/default.json` updated with: window/webview/event/menu/tray defaults, `shell:allow-spawn` for Python + llama-server, `shell:allow-open` for browser navigation, scoped `shell:allow-execute` for sidecars
+- Auto-updater configured for GitHub Releases endpoint with `createUpdaterArtifacts: true`
+
+**Build pipeline (`scripts/`):**
+- `dev.sh` — one-command dev mode: starts backend, auto-detects MLX (Apple Silicon) or Ollama, then Tauri. Color-coded logs to `/tmp/jambu-*.log`. Flags: `--no-llm`, `--no-backend`
+- `build.sh` — production build with optional code signing. Auto-detects host platform, supports `--target <triple>`, `--skip-signing`, `--debug`
+- `sign.sh` — standalone macOS signing + notarization helper. Signs inner binaries (deep, strict, runtime), verifies, then submits to `notarytool` and staples the ticket. Env-driven: `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`
+- `gen-updater-keys.sh` — generates Tauri updater keypair (private + public). Refuses to overwrite existing keys. Outputs to `~/.tauri/jambu-updater.*`
+
+**CI/CD (`.github/workflows/`):**
+- `test.yml` — runs on every push: Python tests on Python 3.9/3.10/3.11/3.12, frontend build, integration tests, ruff lint, `tsc --noEmit`
+- `release.yml` — runs on `v*` tags: 4-platform matrix (macOS aarch64, macOS x86_64, Linux, Windows), Apple Developer ID code signing + notarization, Tauri updater signing, draft GitHub Release with all installers
+- `dependabot.yml` — weekly updates for pip, npm (frontend + tauri), cargo, and GitHub Actions
+
+**Env hygiene:**
+- `.env.example` documents every supported env var (LLM provider, signing, GitHub tokens, observability)
+- `requirements.txt` at project root (was missing) with version-pinned deps
+- `.gitignore` already covers `.env`, `*.key`, `node_modules`, build artifacts
+
+**Frontend (browser-app/README.md) rewritten** with full Tauri documentation:
+stack, architecture, prerequisites, dev/build/sign workflow, distribution, project structure, available plugins, custom URL scheme, troubleshooting
+
 ## [3.0.0] - 2026-06-11
 
 ### Added — The Three Pillars

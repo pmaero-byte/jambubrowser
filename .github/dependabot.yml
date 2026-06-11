@@ -1,0 +1,78 @@
+name: dependabot
+
+# Auto-update dependencies weekly
+# See https://docs.github.com/en/code-security/dependabot
+
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      python-deps:
+        patterns: ["*"]
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "python"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+
+  - package-ecosystem: "npm"
+    directory: "/frontend/jambubrowser-ui"
+    schedule:
+      interval: "weekly"
+    groups:
+      frontend-deps:
+        patterns: ["*"]
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "frontend"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+
+  - package-ecosystem: "npm"
+    directory: "/browser-app"
+    schedule:
+      interval: "weekly"
+    groups:
+      tauri-deps:
+        patterns: ["*"]
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "tauri"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+
+  - package-ecosystem: "cargo"
+    directory: "/browser-app/src-tauri"
+    schedule:
+      interval: "weekly"
+    groups:
+      rust-deps:
+        patterns: ["*"]
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "rust"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      ci-deps:
+        patterns: ["*"]
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "ci"

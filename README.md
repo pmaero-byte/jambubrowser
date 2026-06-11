@@ -305,6 +305,53 @@ cd frontend/jambubrowser-ui && npm run build
 
 ---
 
+## Development Scripts
+
+Hand-rolled scripts in `scripts/` make the dev loop one command:
+
+```bash
+./scripts/dev.sh                 # backend + LLM + Tauri in one shot
+./scripts/build.sh               # production build for current platform
+./scripts/build.sh --skip-signing  # unsigned (local testing)
+./scripts/sign.sh <path-to-.app>   # sign + notarize an existing macOS build
+./scripts/gen-updater-keys.sh    # generate the Tauri auto-updater keypair
+```
+
+See `scripts/dev.sh` for the full menu, or just run with `--help`.
+
+---
+
+## Tauri Desktop App
+
+The Tauri 2 shell in `browser-app/` wraps the React frontend with a Rust
+orchestrator. It spawns the Python backend and llama-server sidecar on first
+launch, handles `jambubrowser://` deep links, and ships native auto-updates.
+
+```bash
+cd browser-app
+npm install
+npm run tauri dev          # dev mode
+npm run tauri build        # release build
+```
+
+**Code signing (macOS):** set the `APPLE_SIGNING_IDENTITY`, `APPLE_ID`,
+`APPLE_PASSWORD`, `APPLE_TEAM_ID` env vars (see `.env.example`), then run
+`./scripts/build.sh`. The release workflow in `.github/workflows/release.yml`
+does this automatically on `v*` tags.
+
+**Auto-updates:** generate a keypair with `./scripts/gen-updater-keys.sh` and
+paste the public key into `browser-app/src-tauri/tauri.conf.json` under
+`plugins.updater.pubkey`. The private key stays in CI secrets as
+`TAURI_SIGNING_PRIVATE_KEY`.
+
+**CI/CD:** see `.github/workflows/` for `test.yml` (every push) and `release.yml`
+(multi-platform matrix on tags). Dependabot is configured in
+`.github/dependabot.yml` for weekly dependency updates.
+
+See `browser-app/README.md` for the full Tauri-specific documentation.
+
+---
+
 ## License
 
 Built for digital freedom by [pmaero-byte](https://github.com/pmaero-byte).
