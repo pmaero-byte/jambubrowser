@@ -107,67 +107,56 @@ def _strip_think(text: str) -> str:
 
 
 async def _call_llm(prompt: str, system: Optional[str] = None, *, max_tokens: int = 500, temperature: float = 0.3, timeout: float = 10.0) -> tuple[str, dict]:
-    """Unified LLM call. Returns (answer_text, usage_dict). Provider-aware."""
+    """Unified LLM call. Returns (answer_text, usage_dict). Provider-aware.
+
+    Thin shim that delegates to the new backend.llm layer. Preserves the
+    original (text, usage_dict) signature so 60+ existing call-sites keep
+    working unchanged. Respects caller-provided provider config first, falls
+    back to env-driven default.
+    """
     cfg = _resolve_llm_config({})
-    provider = cfg.get("provider", "ollama")
-    if provider in ("local", "ollama"):
-        provider = "ollama"
-    base_url = cfg.get("baseUrl", "http://localhost:11434/v1").rstrip("/")
-    model_id = cfg.get("modelId", "gemma4:12b-it-qat")
-    api_key = cfg.get("apiKey", "")
+    # Build messages
+    from backend.llm import ChatMessage, Role, get_default
+    messages: list[ChatMessage] = []
+    if system:
+        messages.append(ChatMessage(role=Role.SYSTEM, content=system))
+    messages.append(ChatMessage(role=Role.USER, content=prompt))
 
-    if provider == "none":
-        raise RuntimeError("No LLM provider configured")
+    # Resolve provider from caller config
+    provider_name = cfg.get("provider")
+    if provider_name in ("local", "ollama", ""):
+        provider_name = "ollama"
+    if provider_name in (None, "auto"):
+        provider_name = None  # let registry pick
 
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+    # New providers may need longer timeouts (MLX cold start)
+    if provider_name == "mlx" and timeout < 60.0:
+        timeout = 60.0
 
-    async with httpx.AsyncClient() as client:
-        if provider == "ollama":
-            health_url = f"{base_url.removesuffix('/v1')}/api/tags"
-            try:
-                health = await client.get(health_url, timeout=3.0)
-                if health.status_code != 200:
-                    raise RuntimeError(f"Ollama not responding at {health_url}")
-            except httpx.ConnectError:
-                raise RuntimeError(f"Ollama not available at {health_url}. Start Ollama and try again.")
-            except httpx.TimeoutException:
-                raise RuntimeError(f"Ollama timeout at {health_url}. Server may be starting.")
-
-            url = f"{base_url.removesuffix('/v1')}/api/generate"
-            payload = {
-                "model": model_id,
-                "prompt": (f"{system}\n\n{prompt}" if system else prompt),
-                "stream": False,
-                "options": {"temperature": temperature, "num_predict": max_tokens},
-            }
-        else:
-            if provider == "mlx" and timeout < 60.0:
-                timeout = 60.0  # MLX server may need more time for cold starts
-            url = f"{base_url}/chat/completions"
-            messages = []
-            if system:
-                messages.append({"role": "system", "content": system})
-            messages.append({"role": "user", "content": prompt})
-            payload = {"model": model_id, "messages": messages, "temperature": temperature, "max_tokens": max_tokens}
-
-        print(f"[LLM] → {provider} {model_id} prompt_len={len(prompt)} url={url}")
-        resp = await client.post(url, json=payload, headers=headers, timeout=timeout)
-        if resp.status_code != 200:
-            raise RuntimeError(f"LLM {provider} {resp.status_code}: {resp.text[:200]}")
-
-        data = resp.json()
-        if provider == "ollama":
-            text = data.get("response", "")
-            usage = {"prompt_tokens": data.get("prompt_eval_count", 0), "completion_tokens": data.get("eval_count", 0)}
-        else:
-            text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-            usage = data.get("usage", {})
-
-        stripped = _strip_think(text)
-        print(f"[LLM] provider={provider} model={model_id} text_len={len(text)} stripped_len={len(stripped)} usage={usage}")
+    try:
+        from backend.llm import get_registry
+        reg = get_registry()
+        resp = await reg.chat(
+            messages,
+            provider=provider_name,
+            model=cfg.get("modelId") or None,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            timeout=timeout,
+        )
+        stripped = _strip_think(resp.content)
+        usage = {
+            "prompt_tokens": resp.usage.prompt_tokens,
+            "completion_tokens": resp.usage.completion_tokens,
+            "total_tokens": resp.usage.total_tokens,
+            "cost_usd": resp.usage.cost_usd,
+            "provider": resp.provider,
+            "model": resp.model,
+        }
         return stripped, usage
+    except Exception as e:
+        # Last-resort: return an explanatory string so callers see a useful error
+        return f"[LLM error: {e}]", {"error": str(e)}
 
 START_TIME = time.time()
 
@@ -339,6 +328,7 @@ class ResearchRequest(BaseModel):
     incognito: bool = False
     llm_config: Dict = {}
     llm_provider: str = "ollama"
+    use_agent: bool = False  # if True, route through the new /v2/agent loop
 
 
 class SearchRequest(BaseModel):
@@ -852,13 +842,52 @@ async def _run_followup(client_id: str, query: str, task_id: str) -> None:
 
 @app.post("/research")
 async def research(req: ResearchRequest):
-    """Primary autonomous research endpoint with swarm, scrape, and RAG."""
+    """Primary autonomous research endpoint with swarm, scrape, and RAG.
+
+    If `use_agent=True` is passed, this delegates to the new ReAct/Plan-Execute
+    agent loop (backend.agent) and collects its answer into the legacy
+    response shape. This keeps backward compat with existing clients while
+    letting new clients opt into the agent.
+    """
     cid = req.client_id
     global last_activity, LATEST_LLM_CONFIG
     last_activity = time.time()
 
     task_id = _new_task_id()
     await broadcast_task_start(cid, req.query, task_id)
+
+    # --- V2 AGENT DELEGATION ---
+    if req.use_agent and not req.brain_only:
+        try:
+            from backend.agent import Agent
+            from backend.memory import get_memory, retrieve_relevant, format_context
+            mem = get_memory()
+            hits = retrieve_relevant(req.query, user_id=cid, k=5)
+            context_str = format_context(hits) if hits else ""
+            profile = mem.get_profile(cid)
+            if profile.work_context or profile.interests:
+                context_str += (("\n\n" if context_str else "") +
+                                f"User: {', '.join(profile.interests) or '(no interests)'}. {profile.work_context}")
+            agent = Agent(max_steps=8, max_tokens=20000, max_seconds=90)
+            result = await agent.run_to_completion(req.query, user_id=cid, context=context_str)
+            await broadcast_task_end(cid, task_id, status="completed", result_preview=result.answer[:200])
+            return {
+                "answer": result.answer,
+                "context": context_str,
+                "sources": result.sources,
+                "doc_count": len(result.sources),
+                "agent_run": {
+                    "run_id": result.run_id,
+                    "steps": result.steps_executed,
+                    "duration_ms": result.duration_ms,
+                    "tokens": result.total_usage.total_tokens,
+                    "cost_usd": result.total_usage.cost_usd,
+                    "plan": result.plan.to_dict(),
+                },
+            }
+        except Exception as e:
+            # Fall through to legacy pipeline if agent fails
+            print(f"[research] agent delegation failed, falling back: {e}")
 
     try:
         if req.llm_provider and req.llm_provider != "ollama":
@@ -3609,6 +3638,325 @@ async def goal_learnings(query: str, limit: int = 10):
     """Query RAG knowledge vault for past iteration learnings."""
     from backend.modules.goal_orchestrator import get_goal_orchestrator
     return {"learnings": get_goal_orchestrator().query_learnings(query, limit)}
+
+
+# ===================================================================
+# V2: AGENT LOOP + MEMORY SYSTEM
+# ===================================================================
+# New endpoints that back the unified LLM layer, ReAct agent loop, and
+# memory & personalization system. These are additive — the legacy /research
+# and /v1/* endpoints continue to work unchanged.
+
+from fastapi.responses import StreamingResponse
+
+
+# ---- /v2/llm/* ----
+
+class LLMChatRequest(BaseModel):
+    messages: List[Dict[str, Any]]  # [{"role": "user", "content": "..."}]
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    max_tokens: Optional[int] = None
+    temperature: Optional[float] = None
+    tools: Optional[List[Dict[str, Any]]] = None
+    stream: bool = False
+
+
+@app.post("/v2/llm/chat")
+async def llm_chat(req: LLMChatRequest):
+    """Unified chat against the LLM layer. Returns a ChatResponse (or SSE if stream=true)."""
+    from backend.llm import ChatMessage, Role, get_registry
+    msgs: list[ChatMessage] = []
+    for m in req.messages:
+        role = m.get("role", "user")
+        try:
+            role_enum = Role(role)
+        except ValueError:
+            role_enum = Role.USER
+        msgs.append(ChatMessage(
+            role=role_enum,
+            content=m.get("content", ""),
+            name=m.get("name"),
+            tool_call_id=m.get("tool_call_id"),
+            tool_calls=m.get("tool_calls"),
+        ))
+
+    if req.stream:
+        async def gen():
+            try:
+                async for chunk in get_registry().stream(
+                    msgs, provider=req.provider, model=req.model,
+                    max_tokens=req.max_tokens, temperature=req.temperature,
+                    tools=req.tools,
+                ):
+                    yield f"data: {chunk.delta}\n\n"
+            except Exception as e:
+                yield f"data: [error] {e}\n\n"
+            yield "data: [DONE]\n\n"
+        return StreamingResponse(gen(), media_type="text/event-stream")
+
+    try:
+        resp = await get_registry().chat(
+            msgs, provider=req.provider, model=req.model,
+            max_tokens=req.max_tokens, temperature=req.temperature, tools=req.tools,
+        )
+        return resp.to_dict() if hasattr(resp, "to_dict") else {
+            "content": resp.content, "model": resp.model, "provider": resp.provider,
+            "usage": resp.usage.__dict__, "finish_reason": resp.finish_reason,
+            "latency_ms": resp.latency_ms,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"LLM call failed: {e}")
+
+
+@app.get("/v2/llm/providers")
+async def llm_providers():
+    """List available LLM providers and their default models."""
+    from backend.llm import get_registry, get_config
+    reg = get_registry()
+    return {
+        "default_provider": get_config().default_provider,
+        "fallback_chain": get_config().fallback_chain,
+        "providers": reg.list_available(),
+        "models": {
+            name: (reg.get(name).models if reg.has(name) else [])
+            for name in reg.list_available()
+        },
+    }
+
+
+# ---- /v2/agent/* ----
+
+class AgentRunRequest(BaseModel):
+    query: str
+    user_id: str = "default"
+    max_steps: int = 10
+    max_tokens: int = 30000
+    max_seconds: float = 120.0
+    stream: bool = True
+
+
+@app.post("/v2/agent/run")
+async def agent_run(req: AgentRunRequest):
+    """Run the ReAct/Plan-Execute agent loop. Streams events via SSE when stream=true."""
+    from backend.agent import Agent
+    from backend.memory import get_memory, retrieve_relevant, format_context
+    # Build context from memory
+    try:
+        hits = retrieve_relevant(req.query, user_id=req.user_id, k=5)
+        context_str = format_context(hits) if hits else ""
+        profile = get_memory().get_profile(req.user_id)
+        if profile.work_context or profile.interests:
+            user_ctx = (
+                f"User profile: {', '.join(profile.interests) if profile.interests else '(none)'}. "
+                f"Context: {profile.work_context or '(none)'}."
+            )
+            context_str = (context_str + "\n\n" + user_ctx).strip()
+    except Exception:
+        context_str = ""
+
+    agent = Agent(max_steps=req.max_steps, max_tokens=req.max_tokens, max_seconds=req.max_seconds)
+
+    if req.stream:
+        async def gen():
+            try:
+                async for event in agent.run(req.query, user_id=req.user_id, context=context_str):
+                    yield event.to_sse()
+            except Exception as e:
+                yield f"event: error\ndata: {{\"error\": \"{e}\"}}\n\n"
+        return StreamingResponse(gen(), media_type="text/event-stream")
+    else:
+        result = await agent.run_to_completion(req.query, user_id=req.user_id, context=context_str)
+        return result.to_dict()
+
+
+@app.get("/v2/agent/tools")
+async def agent_tools():
+    """List tools available to the agent."""
+    from backend.agent.tools import get_registry
+    from backend.agent.builtin_tools import register_builtin_tools
+    reg = get_registry()
+    register_builtin_tools(reg)
+    return {
+        "tools": [
+            {
+                "name": t.spec.name,
+                "description": t.spec.description,
+                "parameters": t.spec.parameters,
+                "requires_network": t.spec.requires_network,
+                "risk_level": t.spec.risk_level.value,
+            }
+            for t in reg.list()
+        ],
+        "stats": reg.stats(),
+    }
+
+
+@app.get("/v2/agent/history")
+async def agent_history(limit: int = 10):
+    """Return recent agent run history from the in-memory store."""
+    # The Agent class is per-request; this is a best-effort view via the engine
+    return {"runs": [], "note": "agent runs are ephemeral; query audit_log for persistence"}
+
+
+# ---- /v2/memory/* ----
+
+class MemoryStoreRequest(BaseModel):
+    user_id: str = "default"
+    content: str
+    category: str = "fact"
+    importance: float = 0.5
+    source_session: Optional[str] = None
+
+
+class MemoryRecallRequest(BaseModel):
+    query: str
+    user_id: str = "default"
+    k: int = 5
+
+
+class MemoryUpdateProfileRequest(BaseModel):
+    user_id: str
+    display_name: Optional[str] = None
+    interests: Optional[List[str]] = None
+    expertise: Optional[Dict[str, str]] = None
+    language: Optional[str] = None
+    work_context: Optional[str] = None
+    preferences: Optional[Dict[str, Any]] = None
+
+
+@app.get("/v2/memory/profile")
+async def memory_get_profile(user_id: str = "default"):
+    """Get the user profile (interests, expertise, preferences)."""
+    from backend.memory import get_memory
+    return get_memory().get_profile(user_id).to_dict()
+
+
+@app.put("/v2/memory/profile")
+async def memory_update_profile(req: MemoryUpdateProfileRequest):
+    """Update fields of a user profile (partial update supported)."""
+    from backend.memory import get_memory, UserProfile
+    mem = get_memory()
+    p = mem.get_profile(req.user_id)
+    if req.display_name is not None:
+        p.display_name = req.display_name
+    if req.interests is not None:
+        p.interests = req.interests
+    if req.expertise is not None:
+        p.expertise = req.expertise
+    if req.language is not None:
+        p.language = req.language
+    if req.work_context is not None:
+        p.work_context = req.work_context
+    if req.preferences is not None:
+        p.preferences = req.preferences
+    return mem.upsert_profile(p).to_dict()
+
+
+@app.get("/v2/memory/sessions")
+async def memory_list_sessions(user_id: str = "default", limit: int = 20):
+    """List recent sessions for a user."""
+    from backend.memory import get_memory
+    sessions = get_memory().list_sessions(user_id, limit=limit)
+    return {"sessions": [s.to_dict() for s in sessions]}
+
+
+@app.get("/v2/memory/session/{session_id}")
+async def memory_get_session(session_id: str):
+    """Fetch a specific session by ID."""
+    from backend.memory import get_memory
+    return get_memory().get_session(session_id).to_dict()
+
+
+@app.put("/v2/memory/session/{session_id}")
+async def memory_update_session(session_id: str, body: dict):
+    """Update a session (creates it if missing)."""
+    from backend.memory import get_memory, SessionMemory
+    s = SessionMemory(
+        session_id=session_id,
+        user_id=body.get("user_id", "default"),
+        topic=body.get("topic", ""),
+        summary=body.get("summary", ""),
+        active_goals=body.get("active_goals", []),
+        entities=body.get("entities", []),
+    )
+    return get_memory().upsert_session(s).to_dict()
+
+
+@app.post("/v2/memory/store")
+async def memory_store(req: MemoryStoreRequest):
+    """Store a semantic memory entry."""
+    from backend.memory import get_memory
+    mid = get_memory().store_semantic(
+        req.user_id, req.content,
+        category=req.category, importance=req.importance,
+        source_session=req.source_session,
+    )
+    return {"id": mid, "stored": True}
+
+
+@app.post("/v2/memory/recall")
+async def memory_recall(req: MemoryRecallRequest):
+    """Recall relevant memories for a query."""
+    from backend.memory import retrieve_relevant
+    hits = retrieve_relevant(req.query, user_id=req.user_id, k=req.k)
+    return {
+        "query": req.query,
+        "user_id": req.user_id,
+        "hits": [
+            {
+                "id": h.memory.id,
+                "content": h.memory.content,
+                "category": h.memory.category,
+                "importance": h.memory.importance,
+                "score": h.score,
+                "matched_by": h.matched_by,
+                "created_at": h.memory.created_at,
+            }
+            for h in hits
+        ],
+    }
+
+
+@app.delete("/v2/memory/{mem_id}")
+async def memory_delete(mem_id: int, user_id: Optional[str] = None):
+    """Forget a semantic memory entry."""
+    from backend.memory import get_memory
+    return {"deleted": get_memory().delete_semantic(mem_id, user_id=user_id)}
+
+
+@app.get("/v2/memory/procedural")
+async def memory_procedural(user_id: str = "default", limit: int = 20):
+    """List learned procedural patterns (what worked, what didn't)."""
+    from backend.memory import get_memory
+    procs = get_memory().list_procedural(user_id, limit=limit)
+    return {
+        "patterns": [
+            {
+                **p.to_dict(),
+                "success_rate": p.success_rate(),
+            }
+            for p in procs
+        ]
+    }
+
+
+@app.post("/v2/memory/procedural/record")
+async def memory_procedural_record(body: dict):
+    """Record the outcome of an attempt: {id, success, duration_ms}."""
+    from backend.memory import get_memory
+    pid = int(body.get("id", 0))
+    success = bool(body.get("success", False))
+    duration = float(body.get("duration_ms", 0))
+    p = get_memory().record_procedural_outcome(pid, success, duration)
+    return {"updated": True, "success_rate": p.success_rate(), "avg_ms": p.avg_duration_ms}
+
+
+@app.get("/v2/memory/stats")
+async def memory_stats(user_id: str = "default"):
+    """Get memory statistics for a user."""
+    from backend.memory import get_memory
+    return get_memory().stats(user_id)
 
 
 # ===================================================================

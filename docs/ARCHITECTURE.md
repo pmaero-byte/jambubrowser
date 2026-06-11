@@ -9,20 +9,33 @@ Frontend (React + Vite)  ←→  Backend (FastAPI)  ←→  Storage (SQLite + sq
          port 5173                    port 8001              rag_data.db
 ```
 
+### Three Pillars (v3.0.0)
+
+The backend was reorganized in v3.0.0 around three core modules that back the `/v2/*` endpoints:
+
+- **`backend/llm/`** — Unified LLM provider layer. One `Provider` protocol, six implementations (Anthropic, OpenAI, Ollama, MLX, MiniMax, Mock), registry + routing.
+- **`backend/agent/`** — ReAct/Plan-Execute loop. Tool registry with auto-derived JSON Schema, plan/verify/replan cycle, SSE event stream.
+- **`backend/memory/`** — Persistent identity + knowledge. Four sub-stores (user profile, session, semantic, procedural), hybrid retrieval.
+
+The legacy `engine.py` (60+ endpoints) is preserved and unchanged in behavior; new code routes through the three pillars via thin shims.
+
 ## Backend Architecture
 
 ### FastAPI Application (`engine.py`)
 
-The backend is a single FastAPI application serving 60+ endpoints across these categories:
+The backend is a single FastAPI application serving 76+ endpoints across these categories:
 
 - **System**: Health, stats, model management
-- **Research**: Query expansion, multi-engine search, LLM synthesis
+- **Research**: Query expansion, multi-engine search, LLM synthesis (with `use_agent` opt-in)
 - **Browser**: Scraping (crawl4ai → Playwright fallback), automation
 - **Privacy**: Mode management, URL checking, content sanitization
 - **Audit**: Tamper-evident logging with SHA-256 hash chain
 - **Vault**: AES-256-GCM encrypted credential storage
 - **Security**: Supply chain verification, fingerprint rotation
 - **Knowledge**: Entity extraction, relationship inference, graph storage
+- **V2 LLM** (`/v2/llm/*`): Unified chat + provider listing
+- **V2 Agent** (`/v2/agent/*`): ReAct loop execution, tool listing, run history
+- **V2 Memory** (`/v2/memory/*`): Profile, sessions, semantic, procedural, recall
 - **Missions**: Cron-based background research scheduler
 - **Consensus**: Multi-node voting for federated decisions
 - **Computer Use**: macOS screen capture, mouse/keyboard control

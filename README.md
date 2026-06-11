@@ -45,6 +45,38 @@ npm run dev
 
 Open `http://localhost:5173` in your browser.
 
+### LLM Provider Configuration (v3)
+Configure providers via env vars (all optional, sensible defaults):
+
+```bash
+# Default: "auto" picks the first healthy provider in the fallback chain
+export JAMBU_LLM_PROVIDER="auto"
+
+# Override the fallback chain (order matters — first healthy wins)
+export JAMBU_LLM_FALLBACK_CHAIN="ollama,mlx,anthropic,openai,minimax"
+
+# Privacy: refuse cloud providers (max privacy mode)
+export JAMBU_LLM_LOCAL_ONLY="true"
+
+# Per-provider credentials
+export ANTHROPIC_API_KEY="sk-ant-..."
+export OPENAI_API_KEY="sk-..."
+export MINIMAX_API_KEY="..."
+
+# Per-provider model + base URL overrides
+export JAMBU_LLM_ANTHROPIC_MODEL="claude-sonnet-4-6"
+export JAMBU_LLM_OPENAI_MODEL="gpt-4o"
+export JAMBU_LLM_OLLAMA_MODEL="gemma4:12b-it-qat"
+export JAMBU_LLM_OPENAI_BASE_URL="https://api.openai.com/v1"  # or vLLM, Together, etc.
+
+# Then in the CommandBar, pick a provider from the dropdown, or use "auto".
+```
+
+V2 endpoints exposed by the running engine:
+- `POST /v2/llm/chat` — unified chat (any provider, optional streaming)
+- `POST /v2/agent/run` — ReAct/Plan-Execute loop with SSE events
+- `GET/POST /v2/memory/*` — 4-store memory CRUD + hybrid recall
+
 ### Test
 ```bash
 # Unit tests (22 tests)
@@ -100,6 +132,11 @@ python3 -m pytest tests/test_e2e.py -v
 ---
 
 ## Features
+
+### Agentic Research (v3 — the three pillars)
+- **Unified LLM Layer**: 6 providers (Anthropic, OpenAI, Ollama, MLX, MiniMax, Mock) behind one `Provider` protocol. Auto-discovery, env-driven defaults, smart routing (`cheapest` / `fastest` / `quality` / `fallback` / `local_only`), per-request cost tracking.
+- **ReAct Agent Loop**: Plan → Execute → Verify → Replan, with streaming SSE events. Auto-derived JSON Schema for every tool, 10 built-in tools wrapping existing capabilities (web_search, scrape_url, vault_get, knowledge_query, memory_recall, memory_store, code_exec, goal_set, risk_check, final_answer). Budget-aware (max steps / tokens / seconds).
+- **Memory & Personalization**: 4 sub-stores (user profile, session, semantic with embeddings, procedural with success rates). Hybrid retrieval: 60% vector + 30% recency+importance + 10% FTS, with profile-interest boost. Per-user scoping, full forget support.
 
 ### Privacy & Security
 - **4 Privacy Modes**: Standard, Enhanced, Maximum, Local-Only
@@ -233,19 +270,33 @@ See [docs/API.md](docs/API.md) for complete API reference.
 | Supply Chain | `backend/core/supply_chain.py` | Dependency verification |
 | MLX Provider | `backend/modules/mlx_provider.py` | Apple Silicon MLX integration, model registry, server lifecycle |
 | MLX VLM Server | `backend/scripts/mlx_vlm_server.py` | OpenAI-compatible FastAPI server for Gemma 4 via mlx-vlm |
+| **LLM Layer (v3)** | `backend/llm/` | Unified provider abstraction: 6 providers, registry, routing, cost estimation |
+| **Agent Loop (v3)** | `backend/agent/` | ReAct/Plan-Execute loop with tool registry, verification, replanning, SSE events |
+| **Memory (v3)** | `backend/memory/` | 4-store memory system: user profile, session, semantic (with embeddings), procedural |
+| **V2 Endpoints (v3)** | `backend/engine.py:36xx+` | 16 new `/v2/*` endpoints: LLM chat, agent run, memory CRUD + recall |
 
 ---
 
 ## Testing
 
 ```bash
-# Run all 52 tests
-python3 -m pytest tests/test_backend.py tests/test_e2e.py -v
+# Run all 183 tests
+python3 -m pytest tests/test_backend.py tests/test_engine.py tests/test_e2e.py \
+                   tests/test_llm_layer.py tests/test_memory_system.py tests/test_agent_loop.py -v
 
-# Unit tests only (22)
+# Unit tests (22)
 python3 -m pytest tests/test_backend.py -v
 
-# E2E tests only (30, requires running backend)
+# LLM layer (28)
+python3 -m pytest tests/test_llm_layer.py -v
+
+# Memory system (25)
+python3 -m pytest tests/test_memory_system.py -v
+
+# Agent loop (25)
+python3 -m pytest tests/test_agent_loop.py -v
+
+# E2E tests (30, requires running backend)
 python3 -m pytest tests/test_e2e.py -v
 
 # Frontend build

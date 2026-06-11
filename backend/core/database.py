@@ -49,7 +49,11 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
     if path == ":memory:":
         with _memory_db_lock:
             if _memory_db_conn is None:
-                _memory_db_conn = sqlite3.connect(path)
+                # check_same_thread=False because FastAPI's threadpool may
+                # call into this from a different thread than the one that
+                # first opened the connection. Access is serialized via
+                # _memory_db_lock and a per-call lock in get_db().
+                _memory_db_conn = sqlite3.connect(path, check_same_thread=False)
                 _memory_db_conn.row_factory = sqlite3.Row
                 # Enable load extension if supported (not available in Apple's Python)
                 if hasattr(_memory_db_conn, 'enable_load_extension'):

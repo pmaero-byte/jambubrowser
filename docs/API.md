@@ -874,6 +874,306 @@ Live audit log updates.
 
 ---
 
+## V2: LLM Provider Layer
+
+The unified LLM provider layer (`backend.llm/`) abstracts every LLM call through a single `Provider` protocol. New providers can be added by writing a class that implements `chat()` and `stream()`.
+
+### POST /v2/llm/chat
+
+Unified chat against the configured default provider, or a specific one via `provider`.
+
+**Request:**
+```json
+{
+  "messages": [{"role": "user", "content": "Hello!"}],
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-6",
+  "max_tokens": 1024,
+  "temperature": 0.3,
+  "tools": null,
+  "stream": false
+}
+```
+
+**Response (non-streaming):**
+```json
+{
+  "content": "Hello! How can I help?",
+  "model": "claude-sonnet-4-6",
+  "provider": "anthropic",
+  "usage": {"prompt_tokens": 8, "completion_tokens": 12, "total_tokens": 20, "cost_usd": 0.0002},
+  "finish_reason": "stop",
+  "latency_ms": 850
+}
+```
+
+**Response (streaming, when `stream: true`):** Server-Sent Events with `data: <delta>` lines, terminated by `data: [DONE]`.
+
+### GET /v2/llm/providers
+
+List all discovered providers, their models, and the current fallback chain.
+
+**Response:**
+```json
+{
+  "default_provider": "auto",
+  "fallback_chain": ["ollama", "mlx", "anthropic", "openai", "minimax"],
+  "providers": ["anthropic", "openai", "ollama", "mlx", "minimax", "mock"],
+  "models": {
+    "anthropic": ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+    "openai": ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "o1", "o1-mini", "o3-mini"]
+  }
+}
+```
+
+---
+
+## V2: ReAct Agent Loop
+
+The agent loop (`backend/agent/`) replaces the fixed linear `/research` pipeline with a proper Plan → Execute → Verify → Replan cycle. The loop streams events via SSE so the frontend can show a live timeline of what the agent is doing.
+
+### POST /v2/agent/run
+
+Run the agent loop. Streams events when `stream: true`, returns a single JSON result otherwise.
+
+**Request:**
+```json
+{
+  "query": "What is the latest on WebGPU in 2026?",
+  "user_id": "default",
+  "max_steps": 10,
+  "max_tokens": 30000,
+  "max_seconds": 120,
+  "stream": true
+}
+```
+
+**SSE Event types (one of):**
+- `run_started` — query received
+- `plan_created` — LLM decomposed goal into steps
+- `step_started` — about to call a tool
+- `tool_called` — tool returned a result
+- `tool_failed` — tool raised an error
+- `step_verified` — LLM judged whether the step advanced the goal
+- `replanned` — new plan after a failure
+- `answer_ready` — final answer text + sources + token usage
+- `run_completed` — total duration, step count, cost
+- `run_failed` — fatal error
+
+**Non-streaming response:**
+```json
+{
+  "run_id": "abc123",
+  "query": "...",
+  "answer": "WebGPU in 2026 ...",
+  "plan": {"steps": [...]},
+  "steps_executed": 4,
+  "sources": ["https://...", "https://..."],
+  "usage": {"prompt_tokens": 1200, "completion_tokens": 350, "total_tokens": 1550, "cost_usd": 0.006},
+  "duration_ms": 8500,
+  "success": true
+}
+```
+
+### GET /v2/agent/tools
+
+List the tools available to the agent with their JSON Schemas.
+
+**Response:**
+```json
+{
+  "tools": [
+    {
+      "name": "web_search",
+      "description": "Search the web via SearXNG → DuckDuckGo → Google",
+      "parameters": {"type": "object", "properties": {"query": {"type": "string"}, ...}, "required": ["query"]},
+      "requires_network": true,
+      "risk_level": "low"
+    },
+    ...
+  ],
+  "stats": [{"name": "web_search", "calls": 12, "success": 11, "failure": 1, "avg_ms": 850, "risk": "low"}]
+}
+```
+
+### GET /v2/agent/history
+
+Recent agent runs (in-memory, ephemeral).
+
+---
+
+## V2: Memory & Personalization
+
+The memory system (`backend/memory/`) provides persistent identity, session context, semantic knowledge, and procedural learning. All memories are scoped to a `user_id`.
+
+### GET /v2/memory/profile?user_id=...
+
+Fetch a user profile (auto-creates a default if missing).
+
+**Response:**
+```json
+{
+  "user_id": "alice",
+  "display_name": "Alice",
+  "interests": ["rust", "ai", "cryptography"],
+  "expertise": {"rust": "advanced", "python": "intermediate"},
+  "language": "en",
+  "work_context": "Building a custom async runtime",
+  "preferences": {"verbosity": "concise"},
+  "created_at": 1781170000.0,
+  "updated_at": 1781175000.0
+}
+```
+
+### PUT /v2/memory/profile
+
+Update fields of a user profile. Partial update supported.
+
+**Request:**
+```json
+{
+  "user_id": "alice",
+  "interests": ["rust", "ai", "cryptography", "compiler-design"],
+  "work_context": "Now working on a JIT compiler"
+}
+```
+
+### GET /v2/memory/sessions?user_id=...&limit=20
+
+List recent sessions for a user, ordered by most recent first.
+
+### GET /v2/memory/session/{session_id}
+### PUT /v2/memory/session/{session_id}
+
+Fetch or update a session's topic, summary, active goals, entities.
+
+### POST /v2/memory/store
+
+Store a new semantic memory entry.
+
+**Request:**
+```json
+{
+  "user_id": "alice",
+  "content": "User prefers tokio over async-std",
+  "category": "preference",
+  "importance": 0.8,
+  "source_session": "sess_abc"
+}
+```
+
+`category` is one of: `fact`, `preference`, `context`, `learning`, `goal`, `skill`.
+
+### POST /v2/memory/recall
+
+Recall relevant memories for a query. Uses hybrid ranking: 60% vector similarity + 30% recency+importance + 10% FTS, with a profile-interest boost.
+
+**Request:**
+```json
+{
+  "query": "What runtime should I use?",
+  "user_id": "alice",
+  "k": 5
+}
+```
+
+**Response:**
+```json
+{
+  "query": "What runtime should I use?",
+  "user_id": "alice",
+  "hits": [
+    {
+      "id": 7,
+      "content": "User prefers tokio over async-std",
+      "category": "preference",
+      "importance": 0.8,
+      "score": 0.78,
+      "matched_by": "vector+importance+profile+recency"
+    }
+  ]
+}
+```
+
+### DELETE /v2/memory/{id}?user_id=...
+
+Forget a semantic memory entry. User-scoped — Bob cannot delete Alice's memories.
+
+### GET /v2/memory/procedural?user_id=...&limit=20
+
+List learned procedural patterns with success rates.
+
+**Response:**
+```json
+{
+  "patterns": [
+    {
+      "id": 1,
+      "user_id": "alice",
+      "task_pattern": "recommend runtime",
+      "approach": "suggest tokio",
+      "success_count": 8,
+      "failure_count": 2,
+      "avg_duration_ms": 1200,
+      "last_used": 1781175000.0,
+      "success_rate": 0.8
+    }
+  ]
+}
+```
+
+### POST /v2/memory/procedural/record
+
+Record the outcome of a procedural attempt.
+
+**Request:**
+```json
+{"id": 1, "success": true, "duration_ms": 950}
+```
+
+### GET /v2/memory/stats?user_id=...
+
+Get memory counts for a user.
+
+**Response:** `{"profiles": 1, "sessions": 12, "semantic_memories": 47, "procedural_memories": 3}`
+
+---
+
+## /research v2 — Opt-in agent mode
+
+The existing `/research` endpoint gained a `use_agent: bool` flag. When `True`, it delegates to the new agent loop while preserving the legacy response shape for backward compatibility.
+
+**Request:**
+```json
+{
+  "query": "What is WebGPU?",
+  "use_agent": true,
+  "brain_only": false
+}
+```
+
+**Response** (same as legacy + an `agent_run` block):
+```json
+{
+  "answer": "WebGPU is ...",
+  "context": "User context from memory...",
+  "sources": ["https://..."],
+  "doc_count": 5,
+  "agent_run": {
+    "run_id": "abc123",
+    "steps": 4,
+    "duration_ms": 8500,
+    "tokens": 1550,
+    "cost_usd": 0.006,
+    "plan": {"steps": [...]}
+  }
+}
+```
+
+Setting `use_agent: false` (the default) preserves the existing linear pipeline behavior.
+
+---
+
 ## Error Responses
 
 All errors follow this format:

@@ -2,6 +2,96 @@
 
 All notable changes to Jambubrowser.
 
+## [3.0.0] - 2026-06-11
+
+### Added — The Three Pillars
+
+This release consolidates Jambubrowser's LLM, agent, and memory subsystems into
+production-grade modules. The codebase gains a unified provider abstraction, a
+proper ReAct/Plan-Execute agent loop with verification, and a real memory &
+personalization system.
+
+**Pillar 1 — Unified LLM Provider Layer** (`backend/llm/`)
+- `base.py` — `Provider` Protocol, `ChatMessage`, `Usage`, `ChatResponse`, `StreamChunk`
+- `registry.py` — Singleton registry with auto-discovery + env-driven default
+- `routing.py` — `Router` with `cheapest` / `fastest` / `quality` / `fallback` / `local_only` / `auto` strategies
+- `config.py` — Env-based config: `JAMBU_LLM_PROVIDER`, `JAMBU_LLM_FALLBACK_CHAIN`, `JAMBU_LLM_TIMEOUT`, `JAMBU_LLM_LOCAL_ONLY`, per-provider model + base URL overrides
+- `providers/anthropic.py` — Claude Opus / Sonnet / Haiku with proper system-prompt handling, tool use, streaming
+- `providers/openai.py` — GPT-4o / GPT-4.1 / o1 / o3-mini with tool use, streaming
+- `providers/ollama.py` — Native `/api/chat` + `/api/generate` fallback
+- `providers/mlx.py` — Apple Silicon MLX VLM server wrapper
+- `providers/minimax.py` — MiniMax cloud fallback
+- `providers/mock.py` — Deterministic mock for tests + offline demos (supports tool-call mode)
+- Cost estimation table covering all paid providers (per-1M-token pricing)
+
+**Pillar 2 — ReAct / Plan-Execute Agent Loop** (`backend/agent/`)
+- `loop.py` — `Agent` class with `run()` (async iterator over events) + `run_to_completion()`
+- `plan.py` — LLM-driven goal decomposition, JSON parsing, replan on failure
+- `tools.py` — `ToolSpec`, `ToolRegistry`, auto-derived JSON Schema from Python signatures, Anthropic + OpenAI tool format converters
+- `verifier.py` — LLM-based "did this step advance the goal?" judge with heuristic fallbacks
+- `events.py` — SSE event types: `run_started`, `plan_created`, `step_started`, `tool_called`, `tool_failed`, `step_verified`, `replanned`, `answer_ready`, `run_completed`, `run_failed`
+- `builtin_tools.py` — 10 tools wrapping existing capabilities: `web_search`, `scrape_url`, `vault_get`, `knowledge_query`, `memory_recall`, `memory_store`, `code_exec`, `goal_set`, `risk_check`, `final_answer`
+- Budget enforcement: `max_steps`, `max_tokens`, `max_seconds`
+
+**Pillar 3 — Real Memory & Personalization** (`backend/memory/`)
+- `store.py` — `MemoryStore` with 4 sub-stores: `user_profile`, `session_memory`, `semantic_memory`, `procedural_memory`
+- `retrieval.py` — Hybrid ranking: 60% vector similarity + 30% recency+importance + 10% FTS, with profile-boost
+- New SQLite tables: `user_profile`, `session_memory`, `semantic_memory`, `procedural_memory`
+- Procedural memory tracks what approaches worked, picks the best on repeat tasks
+- `format_context()` helper to render retrieval hits as LLM-readable context
+- `embed_text()` helper for sentence-transformers embedding (optional, with numpy fallback)
+
+**New API Surface** (16 new endpoints)
+- `POST /v2/llm/chat` — Unified chat with optional streaming SSE
+- `GET /v2/llm/providers` — List providers + models
+- `POST /v2/agent/run` — Run the agent loop (streaming or non-streaming)
+- `GET /v2/agent/tools` — List tools available to the agent
+- `GET /v2/agent/history` — Recent agent runs
+- `GET /v2/memory/profile` / `PUT /v2/memory/profile` — User profile CRUD
+- `GET /v2/memory/sessions` / `GET/PUT /v2/memory/session/{id}` — Session memory
+- `POST /v2/memory/store` — Store semantic memory
+- `POST /v2/memory/recall` — Hybrid retrieval
+- `DELETE /v2/memory/{id}` — Forget a memory
+- `GET /v2/memory/procedural` / `POST /v2/memory/procedural/record` — Procedural patterns
+- `GET /v2/memory/stats` — Memory statistics
+
+**`/research` opt-in agent mode**
+- `ResearchRequest` gained `use_agent: bool = False` — when `True`, the request delegates to the new ReAct loop, returning the legacy response shape + an `agent_run` block with full run metadata (steps, duration, tokens, cost, plan)
+- Backward compat: all existing clients continue to work unchanged
+
+**Frontend updates** (`frontend/jambubrowser-ui/`)
+- New `AgentTimeline.tsx` component — visualizes agent steps as they happen (plan → tools → verification → answer)
+- New `MemoryPanel.tsx` component — user profile, memory recall, session history
+- New `utils/agent.ts` — SSE stream parser + `runResearchWithAgent()` helper
+- New `utils/memory.ts` — memory API client
+- New `utils/types.ts` — TypeScript types for new APIs
+- `App.tsx` — `fullPower` now defaults to `True` (agent mode); `Cmd+M` keyboard shortcut opens memory panel
+- `MessageList.tsx` — accepts `agentTimeline` prop, renders above messages, shows step count + cost + duration
+- `Header.tsx` — "Memory" tab added with Brain icon; "GOD MODE" → "AGENT MODE" label
+
+**Threading fix**
+- `backend/core/database.py:52` — In-memory SQLite singleton now uses `check_same_thread=False` so FastAPI's threadpool can use it. Pre-existing issue surfaced by the new endpoints; this is the minimal-blast-radius fix.
+
+### Tests — 78 new tests
+- `tests/test_llm_layer.py` — 28 tests (base types, config, providers, registry, routing, tool format conversion)
+- `tests/test_memory_system.py` — 25 tests (all 4 stores, retrieval, privacy scoping)
+- `tests/test_agent_loop.py` — 25 tests (tool registry, builtin tools, plan parsing, verifier, events, agent loop)
+
+**Total project test count: 75 unit + 30 E2E + 78 new = 183 tests**
+
+### Environment variables (new)
+- `JAMBU_LLM_PROVIDER` — `auto` (default), `anthropic`, `openai`, `ollama`, `mlx`, `minimax`, `mock`
+- `JAMBU_LLM_MODEL` — override the default model for the selected provider
+- `JAMBU_LLM_FALLBACK_CHAIN` — comma-separated provider list (default: `ollama,mlx,anthropic,openai,minimax`)
+- `JAMBU_LLM_TIMEOUT` — per-request timeout in seconds (default: 30)
+- `JAMBU_LLM_HEALTH_TIMEOUT` — health check timeout (default: 3)
+- `JAMBU_LLM_MAX_TOKENS` — default max tokens (default: 1024)
+- `JAMBU_LLM_TEMPERATURE` — default temperature (default: 0.3)
+- `JAMBU_LLM_LOCAL_ONLY` — force `local_only` routing (privacy mode enforcement)
+- `JAMBU_LLM_ANTHROPIC_MODEL`, `JAMBU_LLM_OPENAI_MODEL`, `JAMBU_LLM_OLLAMA_MODEL`, `JAMBU_LLM_MLX_MODEL`, `JAMBU_LLM_MINIMAX_MODEL` — per-provider model overrides
+- `JAMBU_LLM_OPENAI_BASE_URL` — override the OpenAI-compatible base URL (e.g. for vLLM, Together)
+- `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `MINIMAX_API_KEY` — provider API keys (existing)
+
 ## [2.1.0] - 2026-06-08
 
 ### Fixed
