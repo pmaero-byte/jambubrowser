@@ -2,6 +2,41 @@
 
 All notable changes to Jambubrowser.
 
+## [3.2.0] - 2026-06-11
+
+### Added — Evaluation harness
+
+`backend/eval/` — a lightweight benchmark framework for measuring research-agent
+quality across LLM providers. Inspired by GAIA and WebArena but built as
+small, self-contained suites that run in minutes.
+
+**Core** (`backend/eval/`)
+- `harness.py` — `Task`, `TaskResult`, `SuiteResult`, `Harness` with `run_task` + `run_suite` + `compare_providers`
+- `metrics.py` — `exact_match`, `contains_match`, `fuzzy_match`, `number_match`, `email_redaction_match`
+- `store.py` — SQLite-backed results storage (reuses `backend.core.database`)
+- `report.py` — Markdown + JSON + comparison reports
+- `cli.py` — `python -m backend.eval {list,run,compare,report}`
+- `__main__.py` — `python -m backend.eval ...` invocation
+
+**Task suites** (`backend/eval/tasks/`)
+- `smoke.py` — 5 fast sanity tasks (~30s)
+- `gaia_mini.py` — 10 reasoning tasks (capital, arithmetic, multihop, common sense, logic, dates, math, causal, reading, conversion)
+- `webarena_mini.py` — 8 browser-based tasks using the agent loop
+- `privacy.py` — 7 PII redaction + prompt-injection resistance tasks
+- `memory.py` — 5 memory-layer tasks (recall, procedural, store+recall, context, forgetting)
+
+**35 eval tests pass** (`tests/test_eval.py`)
+
+**Usage:**
+```bash
+python -m backend.eval list                              # show all tasks
+python -m backend.eval run --suite smoke --provider mock # run smoke
+python -m backend.eval compare --suite smoke --providers mock,ollama,anthropic
+python -m backend.eval report --limit 20                 # past runs
+```
+
+See `docs/EVAL.md` for the full API.
+
 ## [3.1.0] - 2026-06-11
 
 ### Added — Tauri shippable build
