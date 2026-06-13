@@ -12,6 +12,10 @@ Flow:
 5. Tool Persistence → save successful script to toolbox with metadata
 """
 
+import logging
+
+log = logging.getLogger("jambu.skill_synthesizer")
+
 import asyncio
 import hashlib
 import json

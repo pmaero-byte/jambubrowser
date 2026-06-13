@@ -13,9 +13,12 @@ Features:
 - Topic clustering
 """
 
+import logging
 import re
 import json
 import hashlib
+
+log = logging.getLogger("jambu.knowledge_graph")
 import time
 from typing import Optional, List, Dict, Set, Tuple
 from dataclasses import dataclass, field
@@ -267,9 +270,9 @@ class KnowledgeGraph:
                     embedding = model.encode(text).astype(np.float32).tobytes()
                     store_embedding(doc_id, embedding)
                 except Exception as e:
-                    print(f"Warning: Could not generate embedding: {e}")
+                    log.warning("Could not generate embedding: %s", e)
         except Exception as e:
-            print(f"Warning: Could not insert into documents table: {e}")
+            log.warning("Could not insert into documents table: %s", e)
 
         return {
             'entities_extracted': len(entities),

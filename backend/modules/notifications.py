@@ -12,10 +12,13 @@ Supports:
 - Notification history in database
 """
 
+import logging
 import os
 import sys
 import subprocess
 import json
+
+log = logging.getLogger("jambu.notifications")
 import time
 import hashlib
 import asyncio
@@ -101,12 +104,11 @@ class Notifier:
             return False
 
     def _send_terminal(self, notification: Notification):
-        prefix_map = {Urgency.LOW: '🔵', Urgency.NORMAL: '📢', Urgency.HIGH: '⚠️', Urgency.CRITICAL: '🚨'}
-        prefix = prefix_map.get(notification.urgency, '📢')
-        print(f"\n{prefix} [{notification.category}] {notification.title}")
-        print(f"   {notification.message}")
+        prefix_map = {Urgency.LOW: 'blue', Urgency.NORMAL: 'bell', Urgency.HIGH: 'warning', Urgency.CRITICAL: 'error'}
+        prefix = prefix_map.get(notification.urgency, 'bell')
+        log.info("[%s] [%s] %s: %s", prefix, notification.category, notification.title, notification.message)
         if notification.action_url:
-            print(f"   Action: {notification.action_label} → {notification.action_url}")
+            log.info("  Action: %s -> %s", notification.action_label, notification.action_url)
 
     async def send(self, title: str, message: str, urgency: Urgency = Urgency.NORMAL,
                    category: str = "general", action_url: str = "",

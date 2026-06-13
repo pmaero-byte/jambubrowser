@@ -1,0 +1,54 @@
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+mlx-venv/
+*.so
+
+# Node / Frontend
+frontend/
+browser-app/
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Dev / test
+tests/
+*.test.py
+pytest.ini
+.ruff_cache/
+.mypy_cache/
+
+# Config
+.env
+.env.local
+*.secret
+
+# Docs
+docs/
+README.md
+CHANGELOG.md
+
+# Scripts
+scripts/
+
+# Artifacts
+dist/
+build/
+*.png
+*.jpg
+*.jpeg

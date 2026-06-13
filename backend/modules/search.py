@@ -7,7 +7,10 @@ and other search providers when SearXNG is unavailable.
 """
 
 import httpx
+import logging
 import re
+
+log = logging.getLogger("jambu.search")
 from typing import List, Dict
 from urllib.parse import quote_plus
 
@@ -66,9 +69,9 @@ async def _search_duckduckgo(query: str, max_results: int = 10) -> List[Dict]:
                             "engine": "duckduckgo"
                         })
         except Exception as e:
-            print(f"DuckDuckGo API fallback error: {e}")
+            log.warning("DuckDuckGo API fallback error: %s", e)
     except Exception as e:
-        print(f"DuckDuckGo search error: {e}")
+        log.warning("DuckDuckGo search error: %s", e)
     return results
 
 
@@ -108,7 +111,7 @@ async def _search_google_scrape(query: str, max_results: int = 10) -> List[Dict]
                         if len(results) >= max_results:
                             break
     except Exception as e:
-        print(f"Google search error: {e}")
+        log.warning("Google search error: %s", e)
     return results
 
 
@@ -136,17 +139,17 @@ async def multi_engine_search(query: str, engines: str = "google,bing,duckduckgo
                 if results:
                     return results
     except Exception as e:
-        print(f"SearXNG not available: {e}")
-    
+        log.warning("SearXNG not available: %s", e)
+
     # Fallback to DuckDuckGo API
-    print("Using DuckDuckGo API fallback...")
+    log.info("Using DuckDuckGo API fallback...")
     ddg_results = await _search_duckduckgo(query)
-    
+
     if ddg_results:
         return ddg_results
-    
+
     # Last resort: Google scraping (may be blocked)
-    print("Using Google scraping fallback...")
+    log.info("Using Google scraping fallback...")
     google_results = await _search_google_scrape(query)
     return google_results
 

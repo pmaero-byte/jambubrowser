@@ -9,10 +9,13 @@ a full-featured scheduler.
 """
 
 import asyncio
+import logging
 import time
 import hashlib
 import json
 import re
+
+log = logging.getLogger("jambu.missions")
 from typing import Optional, List, Dict, Callable, Awaitable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -407,7 +410,7 @@ class MissionScheduler:
                     await self._execute_mission(mission)
 
             except Exception as e:
-                print(f"MissionScheduler error: {e}")
+                log.error("MissionScheduler error: %s", e)
 
             await asyncio.sleep(self._check_interval)
 

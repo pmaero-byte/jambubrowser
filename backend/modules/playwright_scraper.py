@@ -6,8 +6,11 @@ Provides fallback browser automation capabilities.
 """
 
 import asyncio
+import logging
 from typing import Optional, Dict, Any, List
 from markdownify import markdownify as md
+
+log = logging.getLogger("jambu.playwright_scraper")
 
 
 async def scrape_with_playwright(
@@ -143,7 +146,7 @@ async def perform_actions_with_playwright(
                         elif action_type == "goto" and value:
                             await page.goto(value, wait_until=wait_until, timeout=timeout)
                     except Exception as e:
-                        print(f"Action {action_type} failed: {e}")
+                        log.error("Action %s failed: %s", action_type, e)
                         continue
                 
                 # Get final page content

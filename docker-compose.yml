@@ -1,6 +1,43 @@
 version: '3.8'
 
 services:
+  # ── Jambubrowser Engine ──────────────────────────────────────────
+  engine:
+    build: .
+    container_name: jambu-engine
+    ports:
+      - "8001:8001"
+    environment:
+      - JAMBU_LLM_PROVIDER=ollama
+      - SEARXNG_URL=http://searxng:8080/search
+      - OLLAMA_BASE_URL=http://ollama:11434
+    depends_on:
+      ollama:
+        condition: service_healthy
+    networks:
+      - searxng-net
+    restart: unless-stopped
+
+  # ── Local LLM (optional) ─────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: jambu-ollama
+    profiles:
+      - llm
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - searxng-net
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  # ── Search cache ─────────────────────────────────────────────────
   redis:
     container_name: redis
     image: docker.io/valkey/valkey:8-alpine
@@ -75,3 +112,4 @@ volumes:
   valkey-data:
   sandbox-code:
   sandbox-tmp:
+  ollama_data:

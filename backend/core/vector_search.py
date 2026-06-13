@@ -4,9 +4,12 @@ Vector Search Module
 Provides vector search functionality with fallback when sqlite-vec is not available.
 """
 
+import logging
 import sqlite3
 from typing import List, Tuple, Optional
 from backend.core.database import get_db_cursor
+
+log = logging.getLogger("jambu.vector_search")
 
 
 # Global flag for sqlite-vec availability
@@ -45,7 +48,7 @@ def store_embedding(doc_id: int, embedding: bytes) -> bool:
                 )
             return True
     except Exception as e:
-        print(f"Error storing embedding: {e}")
+        log.error("Error storing embedding: %s", e)
         return False
 
 
@@ -110,7 +113,7 @@ def search_similar(embedding: bytes, k: int = 8) -> List[Tuple[str, str]]:
             
             return cursor.fetchall()
     except Exception as e:
-        print(f"Error in vector search: {e}")
+        log.error("Error in vector search: %s", e)
         return []
 
 
@@ -121,5 +124,5 @@ def clear_embeddings() -> bool:
             cursor.execute("DELETE FROM vec_documents")
             return True
     except Exception as e:
-        print(f"Error clearing embeddings: {e}")
+        log.error("Error clearing embeddings: %s", e)
         return False

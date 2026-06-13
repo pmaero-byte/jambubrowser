@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from fastapi import Request, HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
+from backend.core.security_events import log_security_event
 
 
 @dataclass
@@ -95,7 +96,8 @@ class RateLimiter:
         for k in expired[:1000]:
             del self._buckets[k]
 
-    async def is_allowed(self, client_ip: str, path: str) -> Tuple[bool, float, float]:
+    async def is_allowed(self, client_ip: str, path: str,
+                         method: str = "GET") -> Tuple[bool, float, float]:
         """
         Check if a request is allowed under the rate limit.
 
@@ -103,7 +105,7 @@ class RateLimiter:
             (allowed, remaining_tokens, reset_time_seconds)
         """
         async with self._lock:
-            # Check for endpoint-specific limit
+            # Check for endpoint-specific limit (path prefix match)
             for ep_path, (rate, burst) in self._endpoint_limits.items():
                 if path.startswith(ep_path):
                     key = self._get_bucket_key(client_ip, ep_path)
@@ -112,15 +114,20 @@ class RateLimiter:
                     return (allowed, bucket.tokens, 
                             (bucket.max_tokens - bucket.tokens) / rate if rate > 0 else 0)
 
-            # Default limit
-            key = self._get_bucket_key(client_ip, "default")
-            bucket = self._get_or_create_bucket(
-                key, self.default_rate, self.default_burst
-            )
+            # Method-aware default: POST/PUT/DELETE tighter than GET/HEAD
+            if method in ("POST", "PUT", "DELETE", "PATCH"):
+                default_key = "default_post"
+                # Use the stored default_post limit if set, otherwise fall back
+                rate, burst = self._endpoint_limits.get(default_key,
+                    (self.default_rate / 2, self.default_burst / 2))
+            else:
+                rate, burst = self.default_rate, self.default_burst
+
+            key = self._get_bucket_key(client_ip, default_key if method in ("POST", "PUT", "DELETE", "PATCH") else "default")
+            bucket = self._get_or_create_bucket(key, rate, burst)
             allowed = bucket.consume()
             return (allowed, bucket.tokens,
-                    (bucket.max_tokens - bucket.tokens) / self.default_rate 
-                    if self.default_rate > 0 else 0)
+                    (bucket.max_tokens - bucket.tokens) / rate if rate > 0 else 0)
 
     def get_stats(self) -> dict:
         """Get rate limiter statistics."""
@@ -153,9 +160,16 @@ class RateLimitMiddleware:
             return
 
         client_ip = scope.get("client", ("unknown", 0))[0]
-        allowed, remaining, reset_time = await self.limiter.is_allowed(client_ip, path)
+        method = scope.get("method", "GET")
+        allowed, remaining, reset_time = await self.limiter.is_allowed(client_ip, path, method)
 
         if not allowed:
+            log_security_event(
+                action="rate_limit_exceeded",
+                client_ip=client_ip,
+                path=path,
+                method=method,
+            )
             body = b'{"error":"Rate limit exceeded. Try again later."}'
             await send({
                 "type": "http.response.start",
