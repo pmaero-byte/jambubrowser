@@ -330,6 +330,11 @@ class PrivacyManager:
         self.content_sanitizer = ContentSanitizer(mode)
         self.audit_logger = AuditLogger()
 
+    def set_mode(self, mode: PrivacyMode):
+        self.mode = mode
+        self.network_isolator = NetworkIsolator(mode)
+        self.content_sanitizer = ContentSanitizer(mode)
+
     def sanitize_request(
         self,
         url: str,
