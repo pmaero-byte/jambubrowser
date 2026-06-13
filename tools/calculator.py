@@ -37,6 +37,8 @@ _SAFE_FUNCTIONS = {
 def _safe_eval(node: ast.AST) -> Any:
     """Recursively evaluate an AST node with strict whitelisting."""
     if isinstance(node, ast.Constant):
+        if isinstance(node.value, bool):
+            raise ValueError("Booleans are not allowed")
         if isinstance(node.value, (int, float, complex)):
             return node.value
         raise ValueError(f"Unsupported constant: {node.value!r}")
@@ -105,5 +107,5 @@ def run(**kwargs: Any) -> dict:
             return {"error": "Invalid expression"}
         result = _safe_eval(tree)
         return {"result": result}
-    except (SyntaxError, ValueError, TypeError) as e:
+    except (SyntaxError, ValueError, TypeError, ZeroDivisionError, OverflowError) as e:
         return {"error": str(e)}
