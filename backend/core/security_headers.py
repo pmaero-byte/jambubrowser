@@ -36,6 +36,24 @@ _SECURITY_HEADERS = {
 }
 
 
+_HSTS_VALUE = "max-age=31536000; includeSubDomains"
+
+
+def _is_https(scope: Scope) -> bool:
+    """Return True if the request was made over HTTPS.
+
+    Checks the ASGI `scheme` first (set by reverse proxies like uvicorn
+    behind TLS terminators) and falls back to the `X-Forwarded-Proto`
+    header for setups where the proxy forwards the original scheme.
+    """
+    if scope.get("scheme") == "https":
+        return True
+    for name, value in scope.get("headers", []):
+        if name.lower() == b"x-forwarded-proto" and value.lower() == b"https":
+            return True
+    return False
+
+
 class SecurityHeadersMiddleware:
     """ASGI middleware that injects standard security headers into every response."""
 
@@ -48,11 +66,15 @@ class SecurityHeadersMiddleware:
             await self.app(scope, receive, send)
             return
 
+        extra = {}
+        if _is_https(scope):
+            extra["Strict-Transport-Security"] = _HSTS_VALUE
+
         async def send_wrapper(message):
             if message["type"] == "http.response.start":
                 headers = list(message.get("headers", []))
                 existing_keys = {h[0].lower() for h in headers}
-                for name, value in self.headers.items():
+                for name, value in {**self.headers, **extra}.items():
                     if name.lower().encode("latin-1") not in existing_keys:
                         headers.append((name.encode("latin-1"), value.encode("latin-1")))
                 message["headers"] = headers

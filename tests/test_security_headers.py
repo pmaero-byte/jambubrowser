@@ -105,3 +105,94 @@ class TestSecurityHeadersMiddleware:
         from backend.core.security_headers import _DEFAULT_PERMISSIONS
         assert "camera=()" in _DEFAULT_PERMISSIONS
         assert "microphone=()" in _DEFAULT_PERMISSIONS
+
+    def test_hsts_set_on_https_request(self):
+        from backend.core.security_headers import SecurityHeadersMiddleware
+
+        async def test():
+            async def inner_app(scope, receive, send):
+                await send({"type": "http.response.start", "status": 200, "headers": []})
+                await send({"type": "http.response.body", "body": b""})
+
+            mw = SecurityHeadersMiddleware(inner_app, headers={})
+
+            captured_headers = []
+
+            async def send(message):
+                if message["type"] == "http.response.start":
+                    captured_headers.extend(message.get("headers", []))
+
+            scope = {"type": "http", "method": "GET", "path": "/", "scheme": "https", "headers": []}
+            await mw(scope, AsyncMock(), send)
+
+            header_dict = {name.decode("latin-1"): value.decode("latin-1")
+                           for name, value in captured_headers}
+            assert "Strict-Transport-Security" in header_dict
+            assert "max-age=31536000" in header_dict["Strict-Transport-Security"]
+
+        asyncio.run(test())
+
+    def test_hsts_set_via_forwarded_proto(self):
+        from backend.core.security_headers import SecurityHeadersMiddleware
+
+        async def test():
+            async def inner_app(scope, receive, send):
+                await send({"type": "http.response.start", "status": 200, "headers": []})
+                await send({"type": "http.response.body", "body": b""})
+
+            mw = SecurityHeadersMiddleware(inner_app, headers={})
+
+            captured_headers = []
+
+            async def send(message):
+                if message["type"] == "http.response.start":
+                    captured_headers.extend(message.get("headers", []))
+
+            scope = {
+                "type": "http",
+                "method": "GET",
+                "path": "/",
+                "scheme": "http",
+                "headers": [(b"x-forwarded-proto", b"https")],
+            }
+            await mw(scope, AsyncMock(), send)
+
+            header_dict = {name.decode("latin-1"): value.decode("latin-1")
+                           for name, value in captured_headers}
+            assert "Strict-Transport-Security" in header_dict
+
+        asyncio.run(test())
+
+    def test_hsts_not_set_on_plain_http(self):
+        from backend.core.security_headers import SecurityHeadersMiddleware
+
+        async def test():
+            async def inner_app(scope, receive, send):
+                await send({"type": "http.response.start", "status": 200, "headers": []})
+                await send({"type": "http.response.body", "body": b""})
+
+            mw = SecurityHeadersMiddleware(inner_app, headers={})
+
+            captured_headers = []
+
+            async def send(message):
+                if message["type"] == "http.response.start":
+                    captured_headers.extend(message.get("headers", []))
+
+            scope = {"type": "http", "method": "GET", "path": "/", "scheme": "http", "headers": []}
+            await mw(scope, AsyncMock(), send)
+
+            header_dict = {name.decode("latin-1"): value.decode("latin-1")
+                           for name, value in captured_headers}
+            assert "Strict-Transport-Security" not in header_dict
+
+        asyncio.run(test())
+
+    def test_is_https_helper(self):
+        from backend.core.security_headers import _is_https
+
+        assert _is_https({"scheme": "https", "headers": []}) is True
+        assert _is_https({"scheme": "http", "headers": []}) is False
+        assert _is_https({"scheme": "http", "headers": [(b"x-forwarded-proto", b"https")]}) is True
+        assert _is_https({"scheme": "http", "headers": [(b"x-forwarded-proto", b"HTTPS")]}) is True
+        assert _is_https({"scheme": "http", "headers": [(b"x-forwarded-proto", b"http")]}) is False
