@@ -19,14 +19,44 @@ router = APIRouter(tags=["system"])
 
 @router.get("/health")
 async def health():
-    """System health with real-time metrics."""
+    """System health with real-time metrics + dependency probes."""
     mem = psutil.virtual_memory()
+    checks = {}
+    overall = "online"
+
+    try:
+        from backend.core.database import get_db_cursor
+        with get_db_cursor() as cursor:
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+        checks["database"] = "ok"
+    except Exception as e:
+        checks["database"] = f"error: {type(e).__name__}"
+        overall = "degraded"
+
+    try:
+        from backend.core.audit import get_audit_logger
+        stats = get_audit_logger().get_statistics()
+        checks["audit"] = "ok"
+        checks["audit_entries"] = stats.get("total_entries", 0)
+    except Exception as e:
+        checks["audit"] = f"error: {type(e).__name__}"
+        overall = "degraded"
+
+    try:
+        from backend.core.vault import get_vault
+        vault = get_vault()
+        checks["vault"] = "locked" if vault.is_locked else "unlocked"
+    except Exception as e:
+        checks["vault"] = f"error: {type(e).__name__}"
+
     return {
-        "status": "online",
+        "status": overall,
         "message": "Jambubrowser v2.0 is ready.",
         "ram_used_gb": round(mem.used / (1024 ** 3), 2),
         "ram_total_gb": round(mem.total / (1024 ** 3), 2),
         "cpu_percent": psutil.cpu_percent(interval=None),
+        "checks": checks,
     }
 
 
