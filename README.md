@@ -79,10 +79,10 @@ V2 endpoints exposed by the running engine:
 
 ### Test
 ```bash
-# Unit tests (22 tests)
+# Unit tests (~22 tests)
 python3 -m pytest tests/test_backend.py -v
 
-# E2E tests (30 tests, requires running backend)
+# E2E tests (~30 tests, requires running backend)
 python3 -m pytest tests/test_e2e.py -v
 ```
 
@@ -322,7 +322,7 @@ See [docs/API.md](docs/API.md) for complete API reference.
 ## Testing
 
 ```bash
-# Run all 336 tests
+# Run all tests (575 pass, 33 known failures in legacy phase2-5 tests)
 python3 -m pytest tests/test_backend.py tests/test_engine.py tests/test_e2e.py \
                    tests/test_llm_layer.py tests/test_memory_system.py tests/test_agent_loop.py \
                    tests/test_core_security.py tests/test_engine_runtime.py \
@@ -334,7 +334,7 @@ python3 -m pytest tests/test_backend.py tests/test_engine.py tests/test_e2e.py \
                    tests/test_health_endpoint.py tests/test_privacy.py \
                    tests/test_supply_chain.py tests/test_exec_request.py -v
 
-# Unit tests (22)
+# Unit tests (~22)
 python3 -m pytest tests/test_backend.py -v
 
 # LLM layer (28)
@@ -414,5 +414,9 @@ See `browser-app/README.md` for the full Tauri-specific documentation.
 ---
 
 ## License
+
+## License
+
+MIT — see [LICENSE](LICENSE).
 
 Built for digital freedom by [pmaero-byte](https://github.com/pmaero-byte).

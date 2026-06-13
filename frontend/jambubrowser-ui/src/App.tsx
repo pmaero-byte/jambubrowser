@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 
 // --- Modular UI Components ---
@@ -36,7 +36,7 @@ function App() {
   const [activeTabId, setActiveTabId] = useState('1');
 
   // 2. Navigation & Theme State
-  const [activeTab, setActiveTab] = useState<'chat' | 'stealth' | 'graph' | 'workspace' | 'privacy' | 'audit' | 'vault' | 'memory'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'privacy' | 'audit' | 'vault' | 'memory'>('chat');
   const [showHistory, setShowHistory] = useState(false);
   const [fullPower, setFullPower] = useState(true); // default to agent mode
 
@@ -46,6 +46,8 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [llmProvider, setLlmProvider] = useState("auto");
   const [agentEvents, setAgentEvents] = useState<AgentEvent[]>([]);
+
+  const [privacyRefreshKey, setPrivacyRefreshKey] = useState(0);
 
   // Onboarding state — auto-shown on first run, can be reopened
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -85,8 +87,6 @@ function App() {
   const handleSourceClick = (url: string) => {
     visitUrl(url, url);
   };
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // --- Keyboard Shortcuts ---
 
@@ -178,6 +178,7 @@ function App() {
       setMessages((prev) => [...prev, { role: "assistant", content: msg }]);
     } finally {
       setIsLoading(false);
+      setPrivacyRefreshKey((k) => k + 1);
     }
   };
 
@@ -216,7 +217,6 @@ function App() {
               input={input} setInput={setInput} isLoading={isLoading}
               handleSubmit={handleSubmit} domain="general" setDomain={() => {}}
               llmProvider={llmProvider} setLlmProvider={setLlmProvider}
-              startListening={() => {}} fileInputRef={fileInputRef} handleImageSelect={() => {}}
             />
           </div>
         }
@@ -238,7 +238,7 @@ function App() {
           <AnimatePresence>
             {activeTab === 'privacy' && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="overlay-privacy glass">
-                <PrivacyControls />
+                <PrivacyControls refreshKey={privacyRefreshKey} />
               </motion.div>
             )}
             {activeTab === 'audit' && (

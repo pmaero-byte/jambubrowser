@@ -35,14 +35,6 @@
   "bundle": {
     "active": true,
     "targets": ["app", "dmg", "deb", "rpm", "appimage", "msi", "nsis"],
-    "externalBin": [
-      "binaries/llama-server"
-    ],
-    "resources": [
-      "binaries/*.dylib",
-      "binaries/*.so",
-      "binaries/*.dll"
-    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -57,7 +49,6 @@
     "publisher": "Jambu AI",
     "homepage": "https://github.com/pmaero-byte/jambubrowser",
     "createUpdaterArtifacts": true,
-    "publisherName": "Jambu AI",
     "windows": {
       "certificateThumbprint": null,
       "digestAlgorithm": "sha256",
@@ -95,7 +86,7 @@
       "endpoints": [
         "https://github.com/pmaero-byte/jambubrowser/releases/latest/download/{{target}}/{{arch}}/{{current_version}}"
       ],
-      "pubkey": "PLACEHOLDER_REPLACE_WITH_ACTUAL_PUBLIC_KEY_FROM_TAURI_GENERATE_KEYPAIR",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDZFRjI3M0JGNzYwQjdBOTEKUldTUmVndDJ2M1B5YmhXUjdFOTZ6WjZwdXlQQ2xvck1Memg4aTk0QjZkLysvcmJWclRrTGVQbHkK",
       "windows": {
         "installMode": "passive"
       }

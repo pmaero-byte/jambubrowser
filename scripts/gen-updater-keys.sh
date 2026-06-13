@@ -29,7 +29,7 @@ fi
 
 echo "Generating Tauri updater keypair..."
 npx --yes @tauri-apps/cli signer generate --password "$(openssl rand -hex 32)" \
-  --save-private-key "$PRIVATE_KEY"
+  --write-keys "$PRIVATE_KEY"
 
 echo
 echo "════════════════════════════════════════════════════════════"

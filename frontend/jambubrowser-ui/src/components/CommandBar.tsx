@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Mic, Paperclip, ArrowUpRight } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 
 /**
  * Floating Command Bar (The Pill)
@@ -13,9 +13,6 @@ interface CommandBarProps {
   setInput: (val: string) => void;
   isLoading: boolean;
   handleSubmit: (e: any) => void;
-  startListening: () => void;
-  fileInputRef: any;
-  handleImageSelect: (e: any) => void;
   domain: string;
   setDomain: (val: string) => void;
   llmProvider: string;
@@ -24,7 +21,6 @@ interface CommandBarProps {
 
 export const CommandBar = ({ 
   input, setInput, isLoading, handleSubmit, 
-  startListening, fileInputRef, handleImageSelect, 
   domain, setDomain,
   llmProvider, setLlmProvider
 }: CommandBarProps) => {
@@ -62,18 +58,6 @@ export const CommandBar = ({
       </div>
       
       <form className="input-area glass" onSubmit={handleSubmit}>
-        <button type="button" onClick={startListening}>
-          <Mic size={18}/>
-        </button>
-        <button type="button" onClick={() => fileInputRef.current?.click()}>
-          <Paperclip size={18}/>
-        </button>
-        <input 
-          ref={fileInputRef} 
-          type="file" 
-          style={{display:'none'}} 
-          onChange={handleImageSelect} 
-        />
         <input 
           value={input} 
           onChange={e => setInput(e.target.value)} 

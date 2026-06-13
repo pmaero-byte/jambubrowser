@@ -172,4 +172,4 @@ Configure in `tauri.conf.json` `bundle.macOS` and `Info.plist` `CFBundleURLTypes
 
 ## License
 
-© 2026 Jambu AI. All rights reserved.
+MIT License — see [LICENSE](../LICENSE) at the project root.

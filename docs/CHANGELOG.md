@@ -111,7 +111,7 @@ release closes every P2 item from the most recent improvement audit.
 - Exposes all Jambubrowser features as MCP tools for AI assistants.
   stdio + HTTP/SSE transports.
 
-**Tests — 336 pass, 3 pre-existing vault failures**
+**Tests — 336 pass at time of release (575 pass / 33 fail as of Jun 2026, with 26 legacy failures in phase2-5 tests)**
 | File | Tests | Coverage |
 |---|---|---|
 | `test_core_security.py` | 41 | `is_safe_url`, `safe_filename`, etc. |
@@ -130,7 +130,7 @@ release closes every P2 item from the most recent improvement audit.
 | `test_privacy.py` | 28 | `PIIDetector`, `NetworkIsolator`, etc. |
 | `test_supply_chain.py` | 14 | `SupplyChainVerifier` |
 | `test_exec_request.py` | 16 | `ExecRequest`, `ResearchRequest` |
-| **Total new this release** | **291** | |
+| **New in this release** | **291** | |
 
 **Docker**
 - `Dockerfile` + `.dockerignore`

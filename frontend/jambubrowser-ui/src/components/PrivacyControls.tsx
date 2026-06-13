@@ -1,15 +1,43 @@
 import { useState, useEffect } from "react";
 import { localFetch } from "../utils/api";
 
-export function PrivacyControls() {
+const MODE_INFO: Record<string, { label: string; desc: string; warns: string | null }> = {
+  standard: {
+    label: "Standard",
+    desc: "No restrictions. All engines, all LLMs, all URLs allowed.",
+    warns: null,
+  },
+  enhanced: {
+    label: "Enhanced",
+    desc: "PII redacted from stored content. Tracking IDs stripped from scraped text. Headers cleaned.",
+    warns: null,
+  },
+  maximum: {
+    label: "Maximum",
+    desc: "PII + URL redaction. Known tracking domains blocked. External calls may fail silently.",
+    warns: "Web search and agent research may return thin or no results.",
+  },
+  local_only: {
+    label: "Local Only",
+    desc: "Zero network access. Only local LLM + local knowledge vault. No search, no scraping.",
+    warns: "Agent cannot search the web. Cloud LLMs blocked. Most features require local model setup.",
+  },
+};
+
+interface PrivacyControlsProps {
+  refreshKey?: number;
+}
+
+export function PrivacyControls({ refreshKey }: PrivacyControlsProps) {
   const [report, setReport] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [settingMode, setSettingMode] = useState(false);
+  const [pendingMode, setPendingMode] = useState<string | null>(null);
 
   useEffect(() => {
     fetchPrivacyReport();
-  }, []);
+  }, [refreshKey]);
 
   const fetchPrivacyReport = async () => {
     try {
@@ -26,7 +54,33 @@ export function PrivacyControls() {
     }
   };
 
-  const setPrivacyMode = async (mode: string) => {
+  const confirmSetMode = async () => {
+    if (!pendingMode) return;
+    try {
+      setSettingMode(true);
+      await localFetch("/privacy/mode", {
+        method: "POST",
+        body: JSON.stringify({ mode: pendingMode }),
+      });
+      setPendingMode(null);
+      await fetchPrivacyReport();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSettingMode(false);
+    }
+  };
+
+  const handleModeClick = (mode: string) => {
+    const info = MODE_INFO[mode];
+    if (info?.warns) {
+      setPendingMode(mode);
+    } else {
+      setPrivacyModeDirect(mode);
+    }
+  };
+
+  const setPrivacyModeDirect = async (mode: string) => {
     try {
       setSettingMode(true);
       await localFetch("/privacy/mode", {
@@ -68,20 +122,47 @@ export function PrivacyControls() {
     <div className="privacy-controls glass">
       <h3>Privacy Controls</h3>
 
+      {/* Confirmation dialog for restrictive modes */}
+      {pendingMode && (
+        <div className="confirm-overlay">
+          <div className="confirm-box">
+            <h4>Change to {MODE_INFO[pendingMode]?.label}?</h4>
+            <p>{MODE_INFO[pendingMode]?.warns}</p>
+            <div className="confirm-actions">
+              <button className="btn-confirm" onClick={confirmSetMode} disabled={settingMode}>
+                {settingMode ? "Applying..." : "Confirm"}
+              </button>
+              <button className="btn-cancel" onClick={() => setPendingMode(null)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="status-section">
         <h4>Privacy Mode</h4>
         <div className="mode-selector">
-          {["standard", "enhanced", "maximum", "local_only"].map((mode) => (
-            <button
-              key={mode}
-              className={`mode-btn ${privacy.mode === mode ? "active" : ""}`}
-              onClick={() => setPrivacyMode(mode)}
-              disabled={settingMode}
-            >
-              {mode.replace("_", " ")}
-            </button>
-          ))}
+          {["standard", "enhanced", "maximum", "local_only"].map((mode) => {
+            const info = MODE_INFO[mode];
+            const isActive = privacy.mode === mode;
+            return (
+              <button
+                key={mode}
+                className={`mode-btn ${isActive ? "active" : ""}`}
+                onClick={() => handleModeClick(mode)}
+                disabled={settingMode}
+                title={info?.desc}
+              >
+                {info?.label || mode}
+                {isActive && <span className="active-dot" />}
+              </button>
+            );
+          })}
         </div>
+        {privacy.mode && MODE_INFO[privacy.mode] && (
+          <p className="mode-desc">{MODE_INFO[privacy.mode].desc}</p>
+        )}
       </div>
 
       <div className="status-section">

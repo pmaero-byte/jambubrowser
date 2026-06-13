@@ -17,6 +17,43 @@ from .events import emit_event
 
 log = logging.getLogger("jambu.agent.builtin")
 
+_browser = None
+_page = None
+
+
+async def _get_browser():
+    global _browser
+    if _browser is None:
+        try:
+            from playwright.async_api import async_playwright
+            pw = await async_playwright().start()
+            _browser = await pw.chromium.launch(headless=True)
+        except Exception:
+            return None
+    return _browser
+
+
+async def _get_page():
+    global _page, _browser
+    if _page is None or _page.is_closed():
+        b = await _get_browser()
+        if b is None:
+            return None
+        ctx = await b.new_context()
+        _page = await ctx.new_page()
+    return _page
+
+
+async def _teardown_browser():
+    global _browser, _page
+    _page = None
+    if _browser:
+        try:
+            await _browser.close()
+        except Exception:
+            pass
+        _browser = None
+
 
 # ---------------------------------------------------------------------------
 # Tool implementations
@@ -199,6 +236,104 @@ async def final_answer(
     }
 
 
+async def browser_navigate(
+    url: Annotated[str, "URL to navigate the browser to"],
+) -> dict:
+    """Navigate the browser to a URL using Playwright. Returns page title and visible text."""
+    try:
+        page = await _get_page()
+        if page is None:
+            return {"url": url, "error": "Playwright not available. Install: pip install playwright && python -m playwright install chromium"}
+        await page.goto(url, wait_until="domcontentloaded", timeout=15000)
+        title = await page.title()
+        text = await page.inner_text("body")
+        return {
+            "url": page.url,
+            "title": title,
+            "content": text[:8000] if text else "",
+            "truncated": len(text) > 8000 if text else False,
+        }
+    except Exception as e:
+        await _teardown_browser()
+        return {"url": url, "error": str(e)}
+
+
+async def browser_click(
+    selector: Annotated[str, "CSS selector or text to click (e.g., 'button.submit' or 'text=Login')"],
+) -> dict:
+    """Click an element in the current browser page. Returns updated page content."""
+    try:
+        page = await _get_page()
+        if page is None:
+            return {"selector": selector, "error": "Playwright not available"}
+        if selector.startswith("text="):
+            await page.get_by_text(selector[5:]).first.click(timeout=5000)
+        else:
+            await page.click(selector, timeout=5000)
+        await page.wait_for_load_state("domcontentloaded", timeout=10000)
+        title = await page.title()
+        text = await page.inner_text("body")
+        return {
+            "clicked": selector,
+            "url": page.url,
+            "title": title,
+            "content": text[:5000] if text else "",
+            "truncated": len(text) > 5000 if text else False,
+        }
+    except Exception as e:
+        return {"selector": selector, "error": str(e)}
+
+
+async def browser_extract(
+    selector: Annotated[Optional[str], "Optional CSS selector. If omitted, extracts full page text."] = None,
+) -> dict:
+    """Extract text content from the current browser page. Use after navigate/click."""
+    try:
+        page = await _get_page()
+        if page is None:
+            return {"error": "Playwright not available"}
+        if selector:
+            elements = await page.query_selector_all(selector)
+            texts = []
+            for el in elements:
+                t = await el.inner_text()
+                if t:
+                    texts.append(t)
+            return {
+                "url": page.url,
+                "selector": selector,
+                "matches": len(texts),
+                "content": "\n---\n".join(texts)[:8000],
+            }
+        text = await page.inner_text("body")
+        return {
+            "url": page.url,
+            "content": text[:8000] if text else "",
+            "truncated": len(text) > 8000 if text else False,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def browser_fill(
+    selector: Annotated[str, "CSS selector for the input field"],
+    value: Annotated[str, "Text to type into the field"],
+) -> dict:
+    """Type text into a form field on the current browser page."""
+    try:
+        page = await _get_page()
+        if page is None:
+            return {"selector": selector, "error": "Playwright not available"}
+        await page.fill(selector, value, timeout=10000)
+        return {
+            "selector": selector,
+            "filled": True,
+            "url": page.url,
+        }
+    except Exception as e:
+        return {"selector": selector, "error": str(e)}
+
+
 # ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
@@ -258,5 +393,28 @@ def register_builtin_tools(registry: Optional[ToolRegistry] = None) -> ToolRegis
         "final_answer", final_answer,
         description="Signal that the agent has produced its final answer. Stops the loop.",
         risk_level=RiskLevel.LOW,
+    )
+    r.register(
+        "browser_navigate", browser_navigate,
+        description="Navigate the browser to a URL using Playwright. Returns page title and visible text content.",
+        requires_network=True,
+        risk_level=RiskLevel.LOW,
+    )
+    r.register(
+        "browser_click", browser_click,
+        description="Click an element on the current page (CSS selector or 'text=...' for text matching). Returns updated page content.",
+        requires_network=True,
+        risk_level=RiskLevel.MEDIUM,
+    )
+    r.register(
+        "browser_extract", browser_extract,
+        description="Extract text from the current page. Use an optional CSS selector to target specific elements.",
+        risk_level=RiskLevel.LOW,
+    )
+    r.register(
+        "browser_fill", browser_fill,
+        description="Type text into a form field (CSS selector) on the current page.",
+        requires_network=True,
+        risk_level=RiskLevel.MEDIUM,
     )
     return r

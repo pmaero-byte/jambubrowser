@@ -47,6 +47,7 @@ from .events import (
 from .plan import Plan, PlanStep, StepStatus, decompose_goal, replan
 from .tools import ToolRegistry, get_registry as get_tool_registry
 from .verifier import StepVerdict, verify_step
+from .builtin_tools import _teardown_browser
 
 log = logging.getLogger("jambu.agent.loop")
 
@@ -274,6 +275,8 @@ class Agent:
             success=True,
         )
         self._run_history.append(result)
+
+        await _teardown_browser()
 
         yield answer_ready(run_id, answer_text, unique_sources, total_usage.__dict__)
         yield run_completed(run_id, duration, steps_executed, total_usage.total_tokens, total_usage.cost_usd)
