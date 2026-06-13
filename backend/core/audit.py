@@ -161,27 +161,37 @@ class AuditLogger:
                 return cursor.lastrowid
 
     def _redact_pii(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Redact PII from audit details."""
-        import re
+        """Redact PII from audit details.
 
-        redacted = {}
-        pii_patterns = {
-            "email": re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'),
-            "phone": re.compile(r'(?:\+1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}'),
-            "password": re.compile(r'password|passwd|pwd', re.I),
+        Uses the shared PIIDetector (sensitive keys + targeted masking of
+        matched substrings) so behaviour stays consistent with the privacy
+        module. Recurses into nested dicts and lists.
+        """
+        from backend.core.privacy import PIIDetector
+
+        SENSITIVE_KEYS = {
+            "password", "passwd", "pwd", "secret", "api_key", "apikey",
+            "token", "auth", "authorization", "credential",
         }
 
-        for key, value in data.items():
-            if isinstance(value, str):
-                for pii_type, pattern in pii_patterns.items():
-                    if pattern.search(value) or pattern.search(key.lower()):
-                        value = f"[REDACTED_{pii_type.upper()}]"
-                        break
-            elif isinstance(value, dict):
-                value = self._redact_pii(value)
-            redacted[key] = value
+        def _scrub_string(text: str) -> str:
+            masked = text
+            for pii_type in PIIDetector.PATTERNS:
+                masked = PIIDetector.mask_pii(masked, pii_type)
+            return masked
 
-        return redacted
+        def _scrub(value: Any, key_hint: str = "") -> Any:
+            if isinstance(value, str):
+                if key_hint.lower() in SENSITIVE_KEYS:
+                    return "[REDACTED_SECRET]"
+                return _scrub_string(value)
+            if isinstance(value, dict):
+                return {k: _scrub(v, k) for k, v in value.items()}
+            if isinstance(value, list):
+                return [_scrub(item, key_hint) for item in value]
+            return value
+
+        return {k: _scrub(v, k) for k, v in data.items()}
 
     def log_research(self, query: str, results_count: int, session_id: str = None):
         """Log a research action."""
