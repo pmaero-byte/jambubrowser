@@ -23,6 +23,10 @@ All endpoints accept and return JSON. WebSocket endpoints use `ws://localhost:80
 - [Computer Use](#computer-use)
 - [Multimodal](#multimodal)
 - [WebSocket](#websocket)
+- [Security Middleware](#security-middleware)
+- [V2: LLM Provider Layer](#v2-llm-provider-layer)
+- [V2: ReAct Agent Loop](#v2-react-agent-loop)
+- [V2: Memory & Personalization](#v2-memory--personalization)
 
 ---
 
@@ -30,7 +34,10 @@ All endpoints accept and return JSON. WebSocket endpoints use `ws://localhost:80
 
 ### GET /health
 
-System health with real-time metrics.
+System health with real-time metrics and dependency probes. The
+endpoint actively checks database, audit log, and credential vault
+availability. Returns `degraded` if any critical dependency is
+unreachable.
 
 **Response:**
 ```json
@@ -39,9 +46,19 @@ System health with real-time metrics.
   "message": "Jambubrowser v2.0 is ready.",
   "ram_used_gb": 16.5,
   "ram_total_gb": 48.0,
-  "cpu_percent": 27.4
+  "cpu_percent": 27.4,
+  "checks": {
+    "database": "ok",
+    "audit": "ok",
+    "audit_entries": 142,
+    "vault": "locked"
+  }
 }
 ```
+
+When a dependency fails, `status` is `degraded` and the failing
+check reports `error: <ExceptionType>`. Use this endpoint from load
+balancers or monitoring agents.
 
 ### GET /stats
 
@@ -133,6 +150,13 @@ Autonomous research with multi-engine search and LLM synthesis.
 }
 ```
 
+**Field validation** (v3.3.0+):
+- `query`: 1–10 000 characters, non-empty
+- `top_n`: 1–50
+- `domain`: one of `general`, `academic`, `coding`
+
+422 with a clear error message if any field is out of range.
+
 **Response:**
 ```json
 {
@@ -212,6 +236,23 @@ Execute browser actions (click, type, scroll).
 ```
 
 **Supported actions:** `click`, `type`, `scroll`, `click_xy`
+
+### POST /exec
+
+Execute Python code in a sandboxed subprocess.
+
+**Request:**
+```json
+{
+  "code": "print('hello, world')",
+  "timeout": 30,
+  "client_id": "default"
+}
+```
+
+**Field validation** (v3.3.0+):
+- `code`: 1–50 000 characters
+- `timeout`: 1–120 seconds
 
 ### POST /workflow/execute
 
@@ -871,6 +912,59 @@ Live audit log updates.
 ```
 
 **Client can send:** `ping` → receives `pong`
+
+**Connection limits** (v3.3.0+):
+- `client_id` must match `[A-Za-z0-9_\-:.]{1,64}` or the connection
+  is rejected with close code `1008`.
+- Per-IP cap: 8 simultaneous connections
+  (env: `WS_MAX_CONNECTIONS_PER_IP`).
+- Global cap: 256 simultaneous connections
+  (env: `WS_MAX_TOTAL_CONNECTIONS`).
+- Reconnecting the same `client_id` cleanly closes the prior socket.
+
+---
+
+## Security Middleware
+
+Every HTTP request passes through this middleware stack (outermost
+first). All middlewares are pure ASGI and live in `backend/core/`.
+
+| Middleware | Purpose | Config |
+|---|---|---|
+| `AccessLogMiddleware` | One structured log line per request | skip `/health`, `/favicon.ico`; slow threshold 1 s |
+| `RequestIDMiddleware` | 12-char hex correlation ID per request | reuses client `X-Request-ID` |
+| `TrustedHostMiddleware` | Reject untrusted `Host` headers (HTTP 421) | `ALLOWED_HOSTS` env var (comma-separated) |
+| `SecurityHeadersMiddleware` | Add CSP, X-Frame-Options, etc. to every response | add `Strict-Transport-Security` on HTTPS |
+| `RequestTimeoutMiddleware` | Cancel requests exceeding 30 s (HTTP 504) | exclude paths: `/research`, `/scrape`, `/v2/`, `/mlx/`, etc. |
+| `GZipMiddleware` | Compress responses ≥ 500 bytes | |
+| `BodySizeLimitMiddleware` | Reject bodies > 2 MB (HTTP 413) | |
+| `RateLimitMiddleware` | Per-IP + per-endpoint token-bucket rate limit | per-endpoint rates set in `engine.py` |
+
+**Request ID propagation**: every response carries `X-Request-ID`.
+Server-side log lines, error responses, security events, and audit
+entries all include the same correlation ID.
+
+**Error response shape**:
+```json
+{
+  "detail": "Request body too large",
+  "request_id": "a3f8c2d91b04"
+}
+```
+In production, `str(exc)` is hidden. Set `JAMBU_DEBUG=true` to expose
+exception text in 5xx responses (development only).
+
+**Security event audit**: every blocked request (rate limit, body too
+large, untrusted host, timeout) is recorded in the tamper-evident
+audit log under `category=network`. Query via `GET /audit/log?category=network`.
+
+**CORS**: `Access-Control-Max-Age: 3600` for preflight caching.
+Allowed origins: `http://localhost:{1420,3000,5173,5174}`, `tauri://localhost`.
+
+**HSTS**: `Strict-Transport-Security: max-age=31536000; includeSubDomains`
+is set on requests that arrive over HTTPS (direct TLS or via
+`X-Forwarded-Proto: https`). Not set on plain HTTP — adding it on
+HTTP would tell browsers to upgrade for 1 year.
 
 ---
 

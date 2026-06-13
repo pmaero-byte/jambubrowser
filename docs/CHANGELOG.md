@@ -2,6 +2,143 @@
 
 All notable changes to Jambubrowser.
 
+## [3.3.0] - 2026-06-13
+
+### Added — Security hardening & middleware stack
+
+A complete security middleware layer wrapping the FastAPI app, plus
+Pydantic field validation on the highest-impact endpoints. This
+release closes every P2 item from the most recent improvement audit.
+
+**Security middleware (`backend/core/`)**
+- `security.py` — input-validation primitives: `is_safe_url()` (SSRF
+  protection with private-IP blocking), `safe_filename()` (path
+  traversal), `is_safe_path()` (canonical-path containment check),
+  `sanitize_html()` (XSS-prevention regex), `validate_file_upload()`
+- `security_headers.py` — `SecurityHeadersMiddleware`. Adds
+  `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`,
+  `Permissions-Policy`, `Content-Security-Policy`, `Cross-Origin-Opener-Policy`,
+  `Cross-Origin-Resource-Policy` to every response. Adds
+  `Strict-Transport-Security` on HTTPS requests.
+- `body_size_limit.py` — `BodySizeLimitMiddleware`. Rejects requests
+  with bodies larger than 2 MB (HTTP 413). Checks `Content-Length` and
+  streams to enforce on chunked encoding.
+- `trusted_host.py` — `TrustedHostMiddleware`. Rejects requests with
+  untrusted `Host` headers (HTTP 421). Protects against DNS rebinding
+  and Host header injection. `ALLOWED_HOSTS` env var for configuration.
+- `request_id.py` — `RequestIDMiddleware`. 12-char hex correlation ID
+  per request, reusable from `X-Request-ID` header. Stored on
+  `scope["request_id"]` for downstream handlers.
+- `request_timeout.py` — `RequestTimeoutMiddleware`. Cancels requests
+  exceeding 30 s (HTTP 504). Excludes long-running endpoints via
+  `exclude_paths` (`/research`, `/scrape`, `/v2/`, `/mlx/`, etc.).
+- `access_log.py` — `AccessLogMiddleware`. One structured log line per
+  HTTP request: method, path, status, duration_ms, ip, rid, OK/SLOW.
+  Skips `/health` to keep logs clean.
+- `security_events.py` — `log_security_event()` helper. Wraps the
+  tamper-evident audit log; integrated into 4 middlewares
+  (rate_limiter, body_size_limit, trusted_host, request_timeout) so
+  blocked requests are recorded for forensic review.
+
+**SSRF protection**
+- `is_safe_url()` validators added to all URL-accepting Pydantic models
+  and query-param endpoints across 9 route files
+  (`research.py`, `browser.py`, `tools.py`, `missions.py`,
+  `harness.py`, `media.py`, `knowledge.py`, `vault.py`, `system.py`).
+- Default blocks localhost, RFC1918, link-local, loopback, ULA.
+  `allow_private=True` for dev/SSRF-into-self.
+
+**Command injection fix**
+- `/computer/keyboard` (`backend/routes/browser.py`) — escape
+  double quotes in the osascript `keystroke` argument so user-typed
+  text cannot break out of the AppleScript string.
+
+**Engine decomposition**
+- `backend/engine.py` reduced from ~4200 lines to 254 lines.
+- 176 route handlers extracted into 20 domain-specific modules under
+  `backend/routes/`: `research`, `browser`, `vault`, `knowledge`,
+  `memory`, `local`, `missions`, `tools`, `models`, `p2p`, `goals`,
+  `consensus`, `harness`, `v1`, `v2`, `multimodal`, `fingerprint`,
+  `media`, `system`, `ws`.
+- `backend/engine_runtime.py` — shared `ConnectionManager`, `safe_task`,
+  broadcast helpers, LLM config resolution.
+
+**WebSocket hardening**
+- `client_id` validation: regex `[A-Za-z0-9_\-:.]{1,64}` blocks
+  path-traversal, special chars, oversized strings.
+- Per-IP connection cap (default 8, env: `WS_MAX_CONNECTIONS_PER_IP`).
+- Global connection cap (default 256, env: `WS_MAX_TOTAL_CONNECTIONS`).
+- Reconnect cleanly closes stale sockets (HTTP 1008 close code).
+- `manager.get_stats()` for observability.
+
+**Error response sanitization**
+- `str(exc)` hidden in production (controlled by `JAMBU_DEBUG`).
+- `request_id` added to all error responses for correlation.
+- `runtime_check` on `JAMBU_DEBUG` so tests can toggle without
+  module reload.
+
+**CORS + compression**
+- `Access-Control-Max-Age=3600` for CORS preflight caching.
+- `GZipMiddleware(minimum_size=500)` for response compression.
+
+**Input validation**
+- `ExecRequest` — timeout clamped to `[1, 120]` s, code ≤ 50 000 chars.
+- `ResearchRequest` — query 1-10 000 chars, `top_n` ∈ `[1, 50]`,
+  `domain` ∈ `{general, academic, coding}`.
+
+**Audit PII redaction refactor**
+- `backend/core/audit.py._redact_pii` now uses the shared
+  `PIIDetector` (10 PII types vs 3), recurses into lists, and fully
+  redacts known secret keys (`password`, `api_key`, `token`, etc.)
+  instead of pattern-matching their values. Preserves surrounding
+  text rather than blanking the whole field.
+
+**Calculator hardening (`tools/calculator.py`)**
+- Reject booleans (`True`/`False` were sneaking through as `int`).
+- Catch `ZeroDivisionError` and `OverflowError` and return error dict.
+
+**/health dependency probes**
+- Endpoint now actively probes DB, audit log, and credential vault.
+  Returns `degraded` if any critical dependency is unreachable.
+  Includes a `checks` dict for monitoring tooling.
+
+**Logging & type safety**
+- 31 `print()` calls replaced with structured logging across 13 files.
+- Return type hints added to `ConnectionManager`, lifespan handlers,
+  `safe_task`.
+
+**MCP server (`tools/mcp/`)**
+- Exposes all Jambubrowser features as MCP tools for AI assistants.
+  stdio + HTTP/SSE transports.
+
+**Tests — 336 pass, 3 pre-existing vault failures**
+| File | Tests | Coverage |
+|---|---|---|
+| `test_core_security.py` | 41 | `is_safe_url`, `safe_filename`, etc. |
+| `test_engine_runtime.py` | 37 | `ConnectionManager` security (15 new) |
+| `test_security_headers.py` | 11 | incl. 4 HSTS |
+| `test_body_size_limit.py` | 9 | |
+| `test_trusted_host.py` | 17 | |
+| `test_request_id.py` | 11 | |
+| `test_error_sanitization.py` | 9 | |
+| `test_request_timeout.py` | 9 | |
+| `test_security_events.py` | 10 | |
+| `test_access_log.py` | 10 | |
+| `test_calculator.py` | 52 | arithmetic, security, edge cases |
+| `test_audit_redaction.py` | 15 | new PIIDetector integration |
+| `test_health_endpoint.py` | 4 | online/degraded paths |
+| `test_privacy.py` | 28 | `PIIDetector`, `NetworkIsolator`, etc. |
+| `test_supply_chain.py` | 14 | `SupplyChainVerifier` |
+| `test_exec_request.py` | 16 | `ExecRequest`, `ResearchRequest` |
+| **Total new this release** | **291** | |
+
+**Docker**
+- `Dockerfile` + `.dockerignore`
+- `docker-compose.yml` updated
+
+**Frontend**
+- `/v2` proxy added to `vite.config.ts`
+
 ## [3.2.0] - 2026-06-11
 
 ### Added — Evaluation harness

@@ -9,6 +9,27 @@ Frontend (React + Vite)  ←→  Backend (FastAPI)  ←→  Storage (SQLite + sq
          port 5173                    port 8001              rag_data.db
 ```
 
+### Security Middleware (v3.3.0+)
+
+Every HTTP request flows through this middleware stack (outermost
+first). Each middleware is pure ASGI and lives under `backend/core/`.
+
+| Middleware | Purpose |
+|---|---|
+| `AccessLogMiddleware` | One structured log line per request |
+| `RequestIDMiddleware` | 12-char hex correlation ID (reuses client `X-Request-ID`) |
+| `TrustedHostMiddleware` | Reject untrusted `Host` headers (DNS rebinding + Host injection) |
+| `SecurityHeadersMiddleware` | CSP, HSTS, X-Frame-Options, Permissions-Policy |
+| `RequestTimeoutMiddleware` | Cancel requests > 30 s (excludes long-running paths) |
+| `GZipMiddleware` | Compress responses ≥ 500 bytes |
+| `BodySizeLimitMiddleware` | Reject bodies > 2 MB |
+| `RateLimitMiddleware` | Per-IP + per-endpoint token bucket |
+
+SSRF protection runs at the Pydantic layer: every URL-accepting
+endpoint validates through `is_safe_url()` (blocks private IPs,
+localhost, link-local, non-HTTP schemes). See `SECURITY.md` for the
+full threat model.
+
 ### Three Pillars (v3.0.0)
 
 The backend was reorganized in v3.0.0 around three core modules that back the `/v2/*` endpoints:
@@ -18,6 +39,14 @@ The backend was reorganized in v3.0.0 around three core modules that back the `/
 - **`backend/memory/`** — Persistent identity + knowledge. Four sub-stores (user profile, session, semantic, procedural), hybrid retrieval.
 
 The legacy `engine.py` (60+ endpoints) is preserved and unchanged in behavior; new code routes through the three pillars via thin shims.
+
+In v3.3.0, the 176 route handlers were extracted from `engine.py`
+into 20 domain-specific modules under `backend/routes/` (research,
+browser, vault, knowledge, memory, missions, tools, etc.). Shared
+runtime state (`ConnectionManager`, `safe_task`, broadcast helpers,
+LLM config) lives in `backend/engine_runtime.py`. The application
+factory `backend/engine.py` is now ~250 lines and only handles
+middleware registration and router includes.
 
 ## Backend Architecture
 

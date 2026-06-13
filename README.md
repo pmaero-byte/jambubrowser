@@ -102,7 +102,15 @@ python3 -m pytest tests/test_e2e.py -v
 │  │          │ │   Bar    │ │  Panel   │ │    Bar       │   │
 │  └──────────┘ └──────────┘ └──────────┘ └──────────────┘   │
 └─────────────────────┬───────────────────────────────────────┘
-                      │ HTTP + WebSocket
+                      │ HTTP + WebSocket (with X-Request-ID)
+                      ▼
+┌─────────────────────────────────────────────────────────────┐
+│              Security Middleware Stack (v3.3+)               │
+│  AccessLog → RequestID → TrustedHost → SecurityHeaders      │
+│  → RequestTimeout → GZip → BodySizeLimit → RateLimit        │
+│  (every request gets a correlation ID, CSP/HSTS headers,    │
+│   request timeouts, body limits, per-IP rate limits)        │
+└─────────────────────┬───────────────────────────────────────┘
                       ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                  Python FastAPI Backend                      │
@@ -118,6 +126,10 @@ python3 -m pytest tests/test_e2e.py -v
 │  │ Audit    │ │ Vault    │ │ Sandbox  │ │  Supply Chain│   │
 │  │ Logger   │ │ (AES256) │ │ Executor │ │  Verifier    │   │
 │  └──────────┘ └──────────┘ └──────────┘ └──────────────┘   │
+│  ┌────────────────────────────────────────────────────┐    │
+│  │ URL Validation Layer: is_safe_url() on every       │    │
+│  │ URL-accepting endpoint (SSRF protection)           │    │
+│  └────────────────────────────────────────────────────┘    │
 └─────────────────────┬───────────────────────────────────────┘
                       │
                       ▼
@@ -126,6 +138,7 @@ python3 -m pytest tests/test_e2e.py -v
 │  documents | vec_documents | missions | credential_vault    │
 │  proposals | votes | browser_sessions | memory_entries      │
 │  task_metrics | tool_usage | provider_quota | sessions      │
+│  audit_log (tamper-evident, SHA-256 chain)                   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -140,13 +153,29 @@ python3 -m pytest tests/test_e2e.py -v
 
 ### Privacy & Security
 - **4 Privacy Modes**: Standard, Enhanced, Maximum, Local-Only
-- **PII Detection**: Auto-redacts emails, phones, SSNs, credit cards, IPs
+- **PII Detection**: Auto-redacts emails, phones, SSNs, credit cards, IPs, MACs, passports
 - **Tracking Protection**: Blocks Google Analytics, Facebook Pixel, Mixpanel, etc.
 - **Credential Vault**: AES-256-GCM encrypted with PBKDF2 (480k iterations)
 - **Tamper-Evident Audit Log**: SHA-256 hash chain of all actions
 - **Supply Chain Verification**: Hash verification for all Python dependencies
 - **Tor Routing**: SOCKS5 proxy support for anonymous research
 - **Browser Fingerprint Rotation**: Unique profiles per session
+- **SSRF Protection**: `is_safe_url()` blocks private IPs, DNS rebinding, and
+  unsafe schemes on every URL-accepting endpoint
+- **Security Middleware Stack** (v3.3.0+):
+  - Trusted host validation (rejects untrusted `Host` headers)
+  - Body size limit (2 MB cap with 413 on oversized requests)
+  - Request timeout (30 s default, exclusions for long-running paths)
+  - Rate limiting (per-IP + per-endpoint token bucket)
+  - Security headers (CSP, HSTS on HTTPS, X-Frame-Options, Permissions-Policy)
+  - Request ID propagation (correlation ID on every log/error)
+  - GZip compression
+  - Access logging (one structured line per request)
+- **WebSocket Hardening**: client_id validation, per-IP and global
+  connection caps, clean socket replacement on reconnect
+- **Error Sanitization**: `str(exc)` hidden in production (`JAMBU_DEBUG=false`)
+- **Input Validation**: Pydantic field bounds on `/exec` (timeout, code size),
+  `/research` (query, top_n, domain)
 
 ### Research & Intelligence
 - **Multi-Engine Search**: SearXNG → DuckDuckGo API → Google fallback
@@ -185,13 +214,14 @@ python3 -m pytest tests/test_e2e.py -v
 
 | Category | Endpoint | Method | Description |
 |----------|----------|--------|-------------|
-| System | `/health` | GET | Health check |
+| System | `/health` | GET | Health check (with DB/audit/vault probes) |
 | System | `/stats` | GET | Database statistics |
-| Research | `/research` | POST | Autonomous research |
+| Research | `/research` | POST | Autonomous research (validated: query, top_n, domain) |
 | Research | `/search` | GET | Raw metasearch |
-| Browser | `/scrape` | POST | Single page scraping |
+| Browser | `/scrape` | POST | Single page scraping (URL validated) |
 | Browser | `/act` | POST | Browser automation |
 | Browser | `/login` | POST | Credential vault login |
+| Browser | `/exec` | POST | Sandboxed code execution (validated: timeout, code size) |
 | Privacy | `/privacy/report` | GET | Privacy report |
 | Privacy | `/privacy/mode` | POST | Set privacy mode |
 | Privacy | `/privacy/check` | GET | Check URL allowance |
@@ -255,12 +285,24 @@ See [docs/API.md](docs/API.md) for complete API reference.
 
 | Module | File | Description |
 |--------|------|-------------|
-| Engine | `backend/engine.py` | FastAPI app + all endpoints |
+| Engine | `backend/engine.py` | FastAPI app + middleware wiring (254 lines) |
+| Engine Runtime | `backend/engine_runtime.py` | `ConnectionManager`, `safe_task`, broadcast helpers, LLM config |
+| Routes | `backend/routes/` | 20 domain-specific route modules |
 | Database | `backend/core/database.py` | SQLite + migrations |
 | Privacy | `backend/core/privacy.py` | PII detection + network isolation |
-| Audit | `backend/core/audit.py` | Tamper-evident logging |
+| Audit | `backend/core/audit.py` | Tamper-evident logging (uses shared PIIDetector) |
 | Vault | `backend/core/vault.py` | AES-256-GCM credential storage |
 | Vector Search | `backend/core/vector_search.py` | sqlite-vec / numpy fallback |
+| Security | `backend/core/security.py` | `is_safe_url`, `safe_filename`, `is_safe_path` |
+| Security Headers | `backend/core/security_headers.py` | CSP, HSTS, X-Frame-Options middleware |
+| Body Size Limit | `backend/core/body_size_limit.py` | 2 MB request body cap |
+| Trusted Host | `backend/core/trusted_host.py` | Host header validation |
+| Request ID | `backend/core/request_id.py` | 12-char correlation ID middleware |
+| Request Timeout | `backend/core/request_timeout.py` | 30 s request timeout |
+| Access Log | `backend/core/access_log.py` | Structured access log middleware |
+| Security Events | `backend/core/security_events.py` | Centralised blocked-request audit |
+| Rate Limiter | `backend/core/rate_limiter.py` | Token-bucket rate limiting |
+| Supply Chain | `backend/core/supply_chain.py` | Dependency integrity verification |
 | Search | `backend/modules/search.py` | Multi-engine search |
 | Browser | `backend/modules/browser.py` | Session isolation + privacy |
 | Fingerprint | `backend/modules/fingerprint_rotator.py` | Browser fingerprint rotation |
@@ -280,9 +322,17 @@ See [docs/API.md](docs/API.md) for complete API reference.
 ## Testing
 
 ```bash
-# Run all 183 tests
+# Run all 336 tests
 python3 -m pytest tests/test_backend.py tests/test_engine.py tests/test_e2e.py \
-                   tests/test_llm_layer.py tests/test_memory_system.py tests/test_agent_loop.py -v
+                   tests/test_llm_layer.py tests/test_memory_system.py tests/test_agent_loop.py \
+                   tests/test_core_security.py tests/test_engine_runtime.py \
+                   tests/test_security_headers.py tests/test_body_size_limit.py \
+                   tests/test_trusted_host.py tests/test_request_id.py \
+                   tests/test_error_sanitization.py tests/test_request_timeout.py \
+                   tests/test_security_events.py tests/test_access_log.py \
+                   tests/test_calculator.py tests/test_audit_redaction.py \
+                   tests/test_health_endpoint.py tests/test_privacy.py \
+                   tests/test_supply_chain.py tests/test_exec_request.py -v
 
 # Unit tests (22)
 python3 -m pytest tests/test_backend.py -v
@@ -295,6 +345,17 @@ python3 -m pytest tests/test_memory_system.py -v
 
 # Agent loop (25)
 python3 -m pytest tests/test_agent_loop.py -v
+
+# Security middleware (9 test files, ~120 tests)
+python3 -m pytest tests/test_security_headers.py tests/test_body_size_limit.py \
+                   tests/test_trusted_host.py tests/test_request_id.py \
+                   tests/test_error_sanitization.py tests/test_request_timeout.py \
+                   tests/test_security_events.py tests/test_access_log.py \
+                   tests/test_core_security.py -v
+
+# Security-focused modules (calculator, audit, privacy, supply chain)
+python3 -m pytest tests/test_calculator.py tests/test_audit_redaction.py \
+                   tests/test_privacy.py tests/test_supply_chain.py -v
 
 # E2E tests (30, requires running backend)
 python3 -m pytest tests/test_e2e.py -v
