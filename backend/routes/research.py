@@ -70,6 +70,20 @@ class ExecRequest(BaseModel):
     timeout: int = 30
     client_id: str = "default"
 
+    @validator("timeout")
+    def validate_timeout(cls, v):
+        if v < 1:
+            raise ValueError("timeout must be at least 1 second")
+        if v > 120:
+            raise ValueError("timeout cannot exceed 120 seconds")
+        return v
+
+    @validator("code")
+    def validate_code_length(cls, v):
+        if len(v) > 50000:
+            raise ValueError("code exceeds 50000 character limit")
+        return v
+
 
 class InterruptRequest(BaseModel):
     new_instruction: str = ""
