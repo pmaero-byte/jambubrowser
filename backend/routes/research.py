@@ -46,6 +46,29 @@ class ResearchRequest(BaseModel):
     llm_provider: Optional[str] = None
     llm_config: Optional[dict] = None
 
+    @validator("query")
+    def validate_query(cls, v):
+        if not v or not v.strip():
+            raise ValueError("query must not be empty")
+        if len(v) > 10000:
+            raise ValueError("query exceeds 10000 character limit")
+        return v
+
+    @validator("top_n")
+    def validate_top_n(cls, v):
+        if v < 1:
+            raise ValueError("top_n must be at least 1")
+        if v > 50:
+            raise ValueError("top_n cannot exceed 50")
+        return v
+
+    @validator("domain")
+    def validate_domain(cls, v):
+        allowed = {"general", "academic", "coding"}
+        if v not in allowed:
+            raise ValueError(f"domain must be one of {allowed}")
+        return v
+
 
 class SearchRequest(BaseModel):
     q: str = ""
