@@ -30,9 +30,11 @@
     {
       "identifier": "shell:allow-open",
       "allow": [
-        { "url": "https://*" },
+        { "url": "https://github.com/*" },
+        { "url": "https://jambu.ai/*" },
         { "url": "http://localhost:*" },
-        { "url": "http://127.0.0.1:*" }
+        { "url": "http://127.0.0.1:*" },
+        { "url": "jambubrowser://*" }
       ]
     }
   ]
