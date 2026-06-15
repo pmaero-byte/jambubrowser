@@ -278,6 +278,10 @@ async def perform_login(req: LoginRequest):
 
     try:
         vault = get_vault()
+        # Unlock key-file-only vaults automatically; production must set JAMBU_MASTER_PASSWORD.
+        if vault.is_locked and not os.environ.get("JAMBU_MASTER_PASSWORD"):
+            vault.unlock("")
+
         from urllib.parse import urlparse
         parsed = urlparse(req.url)
         domain = parsed.hostname or req.url

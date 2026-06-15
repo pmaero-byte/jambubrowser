@@ -7,10 +7,17 @@ from backend.core.vault import get_vault
 router = APIRouter(tags=["vault"])
 
 
+def _ensure_vault_unlocked(vault) -> None:
+    # Key-file-only deployments (no master password) auto-unlock for reads.
+    if vault.is_locked and not os.environ.get("JAMBU_MASTER_PASSWORD"):
+        vault.unlock("")
+
+
 @router.get("/vault/domains")
 async def list_vault_domains():
     """List all domains with stored credentials."""
     vault = get_vault()
+    _ensure_vault_unlocked(vault)
     return {"domains": vault.list_domains()}
 
 
@@ -20,6 +27,7 @@ async def get_vault_credential(url: str):
     if not is_safe_url(url):
         raise HTTPException(status_code=400, detail="Invalid or blocked URL")
     vault = get_vault()
+    _ensure_vault_unlocked(vault)
     cred = vault.find_best_credential(url)
     if cred:
         return {"found": True, "domain": cred["domain"], "username": cred["username"]}

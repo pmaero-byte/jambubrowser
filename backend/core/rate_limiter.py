@@ -63,7 +63,12 @@ class RateLimiter:
         self.default_burst = default_burst
         self._buckets: Dict[str, TokenBucket] = {}
         self._endpoint_limits: Dict[str, Tuple[float, int]] = {}
-        self._lock = asyncio.Lock()
+        self._lock: Optional[asyncio.Lock] = None
+
+    def _get_lock(self) -> asyncio.Lock:
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
 
     def set_endpoint_limit(self, path: str, rate: float, burst: int):
         """Set a custom rate limit for a specific endpoint path."""
@@ -104,7 +109,7 @@ class RateLimiter:
         Returns:
             (allowed, remaining_tokens, reset_time_seconds)
         """
-        async with self._lock:
+        async with self._get_lock():
             # Check for endpoint-specific limit (path prefix match)
             for ep_path, (rate, burst) in self._endpoint_limits.items():
                 if path.startswith(ep_path):
