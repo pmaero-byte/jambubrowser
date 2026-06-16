@@ -123,9 +123,21 @@ async def decompose_goal(
     available_tools: list[str],
     user_context: str = "",
     max_steps: int = 8,
+    prompt_template: Optional[str] = None,
 ) -> Plan:
-    """Use the LLM to decompose a user goal into a Plan."""
-    prompt = DECOMPOSE_PROMPT.format(
+    """Use the LLM to decompose a user goal into a Plan.
+
+    Args:
+        query: The user's goal/question.
+        available_tools: Tool names the agent can use.
+        user_context: Additional context (memories, profile).
+        max_steps: Maximum number of plan steps.
+        prompt_template: Optional override for DECOMPOSE_PROMPT. When provided,
+                         must include {tool_descriptions}, {query}, {user_context},
+                         {max_steps} format placeholders. Used by config-driven agents.
+    """
+    template = prompt_template or DECOMPOSE_PROMPT
+    prompt = template.format(
         tool_descriptions=_describe_tools(available_tools),
         query=query,
         user_context=("User context:\n" + user_context) if user_context else "",
@@ -217,9 +229,17 @@ async def replan(
     *,
     available_tools: list[str],
     max_steps: int = 8,
+    prompt_template: Optional[str] = None,
 ) -> Plan:
-    """Ask the LLM to revise the plan after a step failure."""
-    prompt = REPLAN_PROMPT.format(
+    """Ask the LLM to revise the plan after a step failure.
+
+    Args:
+        prompt_template: Optional override for REPLAN_PROMPT. When provided,
+                         must include {query}, {failed_step}, {verdict},
+                         {tool_descriptions} format placeholders.
+    """
+    template = prompt_template or REPLAN_PROMPT
+    prompt = template.format(
         query=query,
         failed_step=failed_step.to_dict(),
         verdict=verdict,

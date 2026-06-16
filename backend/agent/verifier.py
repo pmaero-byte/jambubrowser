@@ -58,8 +58,16 @@ async def verify_step(
     step: PlanStep,
     result: dict,
     remaining_steps: list[PlanStep],
+    *,
+    prompt_template: Optional[str] = None,
 ) -> StepVerdict:
-    """Use the LLM to judge whether a step advanced the goal."""
+    """Use the LLM to judge whether a step advanced the goal.
+
+    Args:
+        prompt_template: Optional override for VERIFY_PROMPT. When provided,
+                         must include {goal}, {step}, {result}, {remaining}
+                         format placeholders.
+    """
     # Quick heuristics first — avoid an LLM call when obvious
     if not result.get("success", True):
         return StepVerdict(
@@ -72,7 +80,8 @@ async def verify_step(
         return StepVerdict(advanced=True, confidence=1.0, feedback="Final answer delivered")
 
     # LLM-based verification
-    prompt = VERIFY_PROMPT.format(
+    template = prompt_template or VERIFY_PROMPT
+    prompt = template.format(
         goal=goal,
         step=step.to_dict(),
         result=result if isinstance(result, dict) else {"data": str(result)[:2000]},

@@ -15,6 +15,12 @@ for step in plan:
 Streams events as it runs so the frontend gets a live view. The loop is
 budget-aware (max_steps, max_tokens, max_seconds) and supports tool use via
 the LLM's native tool-use API (Anthropic or OpenAI).
+
+The Agent now accepts an optional HarnessConfig for dependency-injected
+harness configuration. When provided, all loop parameters (budget, prompts,
+memory policy, LLM routing, verification) are driven from the config rather
+than hardcoded defaults. This enables the AEGIS evolution pipeline to
+produce config variants and run them through the agent without code changes.
 """
 
 from __future__ import annotations
@@ -48,6 +54,12 @@ from .plan import Plan, PlanStep, StepStatus, decompose_goal, replan
 from .tools import ToolRegistry, get_registry as get_tool_registry
 from .verifier import StepVerdict, verify_step
 from .builtin_tools import _teardown_browser
+
+# Optional harness config import — only used when config-driven mode is active
+try:
+    from .harness import HarnessConfig, MemoryPolicy, ControlFlowSpec, LLMRoutingSpec, PromptConfig  # noqa: F401
+except ImportError:
+    HarnessConfig = None  # type: ignore
 
 log = logging.getLogger("jambu.agent.loop")
 
@@ -87,7 +99,16 @@ class AgentRunResult:
 
 
 class Agent:
-    """The ReAct/Plan-Execute loop."""
+    """The ReAct/Plan-Execute loop.
+
+    Supports two modes:
+    1. **Explicit params** — max_steps, max_tokens, max_seconds passed directly
+       (backward compatible with existing callers).
+    2. **HarnessConfig-driven** — all parameters read from an injected
+       HarnessConfig (enables AEGIS evolution pipeline).
+
+    When a HarnessConfig is provided, it takes precedence over explicit params.
+    """
 
     def __init__(
         self,
@@ -97,15 +118,44 @@ class Agent:
         max_tokens: int = 30000,
         max_seconds: float = 120.0,
         auto_register_builtins: bool = True,
+        harness_config: Optional["HarnessConfig"] = None,  # type: ignore
     ):
         self.tools = tool_registry or get_tool_registry()
         if auto_register_builtins:
             from .builtin_tools import register_builtin_tools
             register_builtin_tools(self.tools)
-        self.max_steps = max_steps
-        self.max_tokens = max_tokens
-        self.max_seconds = max_seconds
+
+        # Store the harness config for AEGIS trace correlation
+        self.harness_config = harness_config
+
+        # Resolve parameters: config-driven if available, otherwise explicit
+        if harness_config is not None:
+            cf = harness_config.control_flow
+            self.max_steps = cf.max_steps
+            self.max_tokens = cf.max_tokens
+            self.max_seconds = cf.max_seconds
+            self._prompts = harness_config.prompts
+            self._memory_policy = harness_config.memory_policy
+            self._llm_routing = harness_config.llm_routing
+        else:
+            self.max_steps = max_steps
+            self.max_tokens = max_tokens
+            self.max_seconds = max_seconds
+            self._prompts = None
+            self._memory_policy = None
+            self._llm_routing = None
+
         self._run_history: list[AgentRunResult] = []
+
+    @property
+    def config_id(self) -> str:
+        """Return the harness config ID if config-driven, else empty string."""
+        return self.harness_config.config_id if self.harness_config else ""
+
+    @property
+    def is_config_driven(self) -> bool:
+        """True if the agent is using an injected HarnessConfig."""
+        return self.harness_config is not None
 
     # -----------------------------------------------------------------------
     # Public API
@@ -137,6 +187,9 @@ class Agent:
                 available_tools=self.tools.list_names(),
                 user_context=context,
                 max_steps=self.max_steps,
+                prompt_template=(
+                    self._prompts.planner_user_template if self._prompts else None
+                ),
             )
             yield plan_created(run_id, plan.to_dict())
         except Exception as e:
@@ -184,6 +237,9 @@ class Agent:
                     {"error": str(e)},
                     available_tools=self.tools.list_names(),
                     max_steps=self.max_steps - steps_executed,
+                    prompt_template=(
+                        self._prompts.replanner_user_template if self._prompts else None
+                    ),
                 )
                 plan = new_plan
                 yield replanned(run_id, f"step_failed: {e}", plan.to_dict())
@@ -200,6 +256,9 @@ class Agent:
                     {"error": tool_result.error},
                     available_tools=self.tools.list_names(),
                     max_steps=self.max_steps - steps_executed,
+                    prompt_template=(
+                        self._prompts.replanner_user_template if self._prompts else None
+                    ),
                 )
                 plan = new_plan
                 yield replanned(run_id, f"step_failed: {tool_result.error}", plan.to_dict())
@@ -225,16 +284,36 @@ class Agent:
 
             # Verify
             remaining = [s for s in plan.steps[step_idx + 1:] if s.status == StepStatus.PENDING]
-            verdict = await verify_step(query, step, tool_result.to_dict(), remaining)
+            verdict = await verify_step(
+                query, step, tool_result.to_dict(), remaining,
+                prompt_template=(
+                    self._prompts.verifier_user_template if self._prompts else None
+                ),
+            )
             step.verification = verdict.to_dict()
             yield step_verified(run_id, step.to_dict(), verdict.to_dict())
 
-            if not verdict.advanced and verdict.confidence >= 0.7:
+            # Use config-driven replan threshold if available
+            cf_threshold = (
+                self.harness_config.control_flow.replan_confidence_threshold
+                if self.harness_config
+                else 0.7
+            )
+            auto_replan = (
+                self.harness_config.control_flow.replan_on_weak_progress
+                if self.harness_config
+                else True
+            )
+
+            if not verdict.advanced and verdict.confidence >= cf_threshold and auto_replan:
                 # LLM said the step didn't advance — replan
                 new_plan = await replan(
                     query, step, verdict.to_dict(),
                     available_tools=self.tools.list_names(),
                     max_steps=self.max_steps - steps_executed,
+                    prompt_template=(
+                        self._prompts.replanner_user_template if self._prompts else None
+                    ),
                 )
                 plan = new_plan
                 yield replanned(run_id, verdict.feedback or "verification_rejected", plan.to_dict())
@@ -324,18 +403,39 @@ class Agent:
                 else:
                     obs_parts.append(str(data)[:1500])
         observations = "\n\n".join(obs_parts) or "(no tool observations)"
-        prompt = (
-            f"User asked: {query}\n\n"
-            f"Tool observations:\n{observations}\n\n"
-            "Based on the observations, write a clear final answer to the user. "
-            "Cite specific sources if any URLs were collected. Be concise."
+
+        # Use config-driven synthesis prompt if available, else hardcoded default
+        if self._prompts and self._prompts.synthesis_user_template:
+            prompt = self._prompts.synthesis_user_template.format(
+                query=query,
+                observations=observations,
+            )
+        else:
+            prompt = (
+                f"User asked: {query}\n\n"
+                f"Tool observations:\n{observations}\n\n"
+                "Based on the observations, write a clear final answer to the user. "
+                "Cite specific sources if any URLs were collected. Be concise."
+            )
+
+        # Use config-driven synthesis max_tokens if available
+        synth_max_tokens = (
+            self.harness_config.control_flow.synthesis_max_tokens
+            if self.harness_config
+            else 800
         )
+        synth_temp = (
+            self.harness_config.control_flow.synthesis_temperature
+            if self.harness_config
+            else 0.3
+        )
+
         try:
             llm = get_default()
             resp = await llm.chat(
                 [ChatMessage(role=Role.USER, content=prompt)],
-                temperature=0.3,
-                max_tokens=800,
+                temperature=synth_temp,
+                max_tokens=synth_max_tokens,
             )
             self._last_synth_usage = resp.usage
             return resp.content or "(synthesis produced no text)"
