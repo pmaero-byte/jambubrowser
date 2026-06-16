@@ -36,14 +36,17 @@ mlx-venv/bin/python3 backend/scripts/mlx_vlm_server.py \
 
 Then send research requests with `"llm_provider": "mlx"`.
 
-### Frontend
+### Frontend (single canonical UI)
 ```bash
-cd frontend/jambubrowser-ui
+cd browser-app
 npm install
-npm run dev
+npm run dev     # Vite dev server (port 1420)
+# or for the desktop shell:
+npm run tauri dev
 ```
 
-Open `http://localhost:5173` in your browser.
+The old `frontend/jambubrowser-ui/` React 18 app has been removed. The Tauri app
+(`browser-app/`) now serves as both the desktop and web target.
 
 ### LLM Provider Configuration (v3)
 Configure providers via env vars (all optional, sensible defaults):
@@ -194,10 +197,10 @@ python3 -m pytest tests/test_e2e.py -v
 - **Vision Grounding**: OCR, UI element detection, screen verification
 
 ### Frontend
-- **Split-View Layout**: Chat sidebar (30%) + Browser workspace (70%)
-- **Real-Time Agent Status**: WebSocket-powered live state visualization
-- **Keyboard Shortcuts**: Cmd+K focus, Cmd+P privacy, Cmd+L audit, Cmd+T new tab
-- **Error Boundary**: Crash protection for the entire app
+- **4-Pane Agent Shell**: TopBar, Sidebar (collapsible ⌘B), Main Canvas, Inspector, StatusBar
+- **Real-Time Agent Status**: WebSocket-powered live state + telemetry in status bar
+- **Keyboard Shortcuts**: ⌘K command palette, ⌘B sidebar, ⌘L logs, ⌘⇧M memory, ⌘T new tab, ⌘⇧P privacy, ⌘? help
+- **Unified Codebase**: Single React 19 app for desktop (Tauri) and web builds
 - **Browser History**: Track visited URLs with timestamps
 
 ### Infrastructure
@@ -263,21 +266,27 @@ See [docs/API.md](docs/API.md) for complete API reference.
 
 ## Frontend Components
 
+All components live in `browser-app/src/` and are shared between the desktop (Tauri) and web builds.
+
 | Component | File | Description |
 |-----------|------|-------------|
-| App | `src/App.tsx` | Main layout, state, handlers |
-| Header | `src/components/Header.tsx` | Navigation tabs + Full Power toggle |
-| CommandBar | `src/components/CommandBar.tsx` | Input with domain selector |
-| MessageList | `src/components/MessageList.tsx` | Chat messages with source chips |
-| BrowserPane | `src/components/BrowserPane.tsx` | Web view with URL bar |
-| TabSystem | `src/components/TabSystem.tsx` | Multi-tab management |
-| MetricsPanel | `src/components/MetricsPanel.tsx` | Live performance metrics |
-| AgentStatusBar | `src/components/AgentStatusBar.tsx` | WebSocket agent state |
-| PrivacyControls | `src/components/PrivacyControls.tsx` | Privacy mode selector |
-| AuditLogViewer | `src/components/AuditLogViewer.tsx` | Live audit log display |
-| VaultUnlock | `src/components/VaultUnlock.tsx` | Vault unlock interface |
-| Welcome | `src/components/Welcome.tsx` | Welcome screen |
-| ErrorBoundary | `src/components/ErrorBoundary.tsx` | Crash protection |
+| App | `src/App.tsx` | Main layout orchestration + agent SSE handling |
+| AppShell | `src/components/layout/AppShell.tsx` | 4-pane shell: TopBar, Sidebar, Canvas, Inspector, StatusBar |
+| TopBar | `src/components/layout/TopBar.tsx` | Workspace/model/privacy/command palette header |
+| Sidebar | `src/components/layout/Sidebar.tsx` | Collapsible navigation (⌘B) |
+| StatusBar | `src/components/layout/StatusBar.tsx` | Live WS telemetry + privacy/cost footer |
+| ChatPane | `src/components/chat/ChatPane.tsx` | Research chat with streaming messages |
+| MessageCard | `src/components/chat/MessageCard.tsx` | User/assistant message with source chips |
+| AgentTimeline | `src/components/chat/AgentTimeline.tsx` | Live plan → execute → verify steps |
+| BrowserPane | `src/components/browser/BrowserPane.tsx` | iframe sandbox with tabs + URL bar |
+| KnowledgeMini | `src/components/knowledge/KnowledgeMini.tsx` | Lightweight 2D knowledge graph |
+| InspectorPanel | `src/components/inspector/InspectorPanel.tsx` | Context-aware right panel |
+| PrivacyControls | `src/components/privacy/PrivacyControls.tsx` | 4-mode selector + report |
+| AuditLogViewer | `src/components/audit/AuditLogViewer.tsx` | Live audit stream |
+| VaultUnlock | `src/components/vault/VaultUnlock.tsx` | Vault unlock form |
+| MemoryPanel | `src/components/memory/MemoryPanel.tsx` | Profile/recall/sessions/store |
+| CommandPalette | `src/components/command/CommandPalette.tsx` | ⌘K cmdk palette |
+| OnboardingWizard | `src/components/onboarding/OnboardingWizard.tsx` | First-run + help reopen |
 
 ---
 
@@ -360,8 +369,8 @@ python3 -m pytest tests/test_calculator.py tests/test_audit_redaction.py \
 # E2E tests (30, requires running backend)
 python3 -m pytest tests/test_e2e.py -v
 
-# Frontend build
-cd frontend/jambubrowser-ui && npm run build
+# Frontend build + typecheck + lint + test
+cd browser-app && npm run build && npm run typecheck && npm run lint && npm test
 ```
 
 ---

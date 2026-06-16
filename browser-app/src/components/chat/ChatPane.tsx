@@ -1,64 +1,111 @@
-import { useState } from "react";
+import { useRef, useEffect } from "react";
 import { Button } from "../ui/button";
-import { Card, CardContent } from "../ui/card";
-import { Send, Paperclip, Mic } from "lucide-react";
+import { ArrowUp, Paperclip, Mic, StopCircle } from "lucide-react";
+import { MessageCard } from "./MessageCard";
+import { AgentTimeline } from "./AgentTimeline";
+import { useAppStore } from "../../store/appStore";
+import type { AgentEvent } from "../../utils/types";
 
 interface ChatPaneProps {
-  messages: Array<{ role: "user" | "assistant"; content: string }>;
+  agentEvents: AgentEvent[];
   onSend: (text: string) => void;
-  isLoading?: boolean;
+  onStop?: () => void;
 }
 
-export function ChatPane({ messages, onSend, isLoading }: ChatPaneProps) {
-  const [input, setInput] = useState("");
+export function ChatPane({ agentEvents, onSend, onStop }: ChatPaneProps) {
+  const { messages, input, setInput, isLoading, setActiveTab, addBrowserTab, updateBrowserTab } = useAppStore();
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, agentEvents]);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!input.trim() || isLoading) return;
+    onSend(input.trim());
+    setInput("");
+  };
+
+  const handleSourceClick = (url: string) => {
+    addBrowserTab();
+    const newId = useAppStore.getState().activeBrowserTabId;
+    updateBrowserTab(newId, { url, title: url });
+    setActiveTab("browser");
+  };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
-        {messages.map((m, i) => (
-          <Card key={i} className={m.role === "user" ? "ml-8 bg-secondary" : "mr-8"}>
-            <CardContent className="p-3">
-              <div className="text-xs font-medium text-muted-foreground mb-1">
-                {m.role === "user" ? "You" : "Jambu"}
+    <div className="flex h-full flex-col">
+      <div className="flex-1 overflow-y-auto px-4 py-2">
+        {messages.length === 0 ? (
+          <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
+            <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+              </svg>
+            </div>
+            <p className="text-sm font-medium">What would you like to research?</p>
+            <p className="mt-1 max-w-sm text-center text-xs">
+              Ask a question, run an agent, or open the browser to gather sources.
+            </p>
+          </div>
+        ) : (
+          <>
+            {messages.map((msg, i) => (
+              <MessageCard
+                key={msg.id}
+                message={msg}
+                isLast={i === messages.length - 1}
+                isStreaming={isLoading}
+                onSourceClick={handleSourceClick}
+              />
+            ))}
+            {(isLoading || agentEvents.length > 0) && (
+              <div className="my-3">
+                <AgentTimeline
+                  events={agentEvents}
+                  isActive={isLoading}
+                  onDismiss={!isLoading ? () => {} : undefined}
+                />
               </div>
-              <div className="whitespace-pre-wrap text-sm">{m.content}</div>
-            </CardContent>
-          </Card>
-        ))}
-        {isLoading && (
-          <Card className="mr-8">
-            <CardContent className="p-3">
-              <div className="h-4 w-32 animate-pulse rounded bg-muted" />
-            </CardContent>
-          </Card>
+            )}
+            <div ref={bottomRef} />
+          </>
         )}
       </div>
 
-      <form
-        className="flex items-center gap-2 border-t border-border p-3"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (!input.trim()) return;
-          onSend(input);
-          setInput("");
-        }}
-      >
-        <Button type="button" variant="ghost" size="icon" aria-label="Attach">
-          <Paperclip className="h-5 w-5" />
-        </Button>
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask Jambu to research, browse, or remember..."
-          className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
-        />
-        <Button type="button" variant="ghost" size="icon" aria-label="Voice">
-          <Mic className="h-5 w-5" />
-        </Button>
-        <Button type="submit" size="icon" disabled={isLoading || !input.trim()}>
-          <Send className="h-5 w-5" />
-        </Button>
-      </form>
+      <div className="border-t border-border bg-card/50 p-3">
+        <form onSubmit={handleSubmit} className="flex items-end gap-2 rounded-xl border border-border bg-background p-2">
+          <Button type="button" variant="ghost" size="icon" className="h-8 w-8 shrink-0">
+            <Paperclip size={16} />
+          </Button>
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                handleSubmit(e);
+              }
+            }}
+            placeholder="Send a command or research query..."
+            rows={1}
+            className="max-h-32 min-h-[36px] flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none placeholder:text-muted-foreground"
+          />
+          <Button type="button" variant="ghost" size="icon" className="h-8 w-8 shrink-0">
+            <Mic size={16} />
+          </Button>
+          {isLoading ? (
+            <Button type="button" variant="secondary" size="icon" className="h-8 w-8 shrink-0" onClick={onStop}>
+              <StopCircle size={16} />
+            </Button>
+          ) : (
+            <Button type="submit" size="icon" className="h-8 w-8 shrink-0" disabled={!input.trim()}>
+              <ArrowUp size={16} />
+            </Button>
+          )}
+        </form>
+      </div>
     </div>
   );
 }

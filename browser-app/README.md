@@ -7,9 +7,12 @@ linking.
 ## Stack
 
 - **Tauri 2** — native shell, ~10MB binary, Rust orchestration
-- **React 19** + TypeScript + Vite — frontend (built from `frontend/jambubrowser-ui`)
-- **Rust** — orchestration layer (swarm, debate, intent services)
-- **Three.js** — 3D brain visualization (optional)
+- **React 19** + TypeScript + Vite — canonical frontend (no longer built from `frontend/jambubrowser-ui`)
+- **Tailwind CSS v4** + shadcn-style primitives — design system
+- **Motion / Framer Motion** — shared layout animations
+- **cmdk** — command palette
+- **react-force-graph-2d** — lightweight knowledge-graph mini-view
+- **Rust** — orchestration layer
 
 ## Architecture
 
@@ -17,18 +20,21 @@ linking.
 ┌────────────────────────────────────────────────────────┐
 │  Tauri Webview                                          │
 │  ┌──────────────────────────────────────────────────┐  │
-│  │  React UI (jambubrowser-ui)                       │  │
-│  │  - Agent Timeline                                 │  │
-│  │  - Memory Panel                                   │  │
-│  │  - Browser Pane (iframe for local content)        │  │
+│  │  React UI (browser-app/src)                        │
+│  │  - 4-pane AppShell: TopBar / Sidebar / Canvas      │
+│  │    / Inspector / StatusBar                         │
+│  │  - Research Chat + Agent Timeline (SSE)            │
+│  │  - Browser Pane (iframe sandbox)                   │
+│  │  - Privacy / Audit / Vault / Memory panels         │
+│  │  - KnowledgeMini 2D graph                          │
 │  └────────────────────┬─────────────────────────────┘  │
-│                       │ HTTP                            │
+│                       │ proxy_localhost (Tauri command) │
 └───────────────────────┼──────────────────────────────────┘
                         │ 127.0.0.1:8001
 ┌───────────────────────▼──────────────────────────────────┐
 │  Rust Orchestrator (this app)                            │
 │  - Spawns the Python backend (uvicorn) on first launch   │
-│  - Spawns llama-server sidecar for offline LLM           │
+│  - proxy_localhost forwards HTTP from WebView to backend │
 │  - Manages the app lifecycle + deep links                │
 └──────────────────────────────────────────────────────────┘
 ```
@@ -55,7 +61,8 @@ Or directly:
 ```bash
 cd browser-app
 npm install
-npm run tauri dev
+npm run dev        # Vite web dev on port 1420
+npm run tauri dev  # Tauri dev
 ```
 
 ### Production build

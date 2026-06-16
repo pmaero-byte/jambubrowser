@@ -19,6 +19,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::proxy::proxy_localhost,
             commands::system::get_local_ip
         ])
         .run(tauri::generate_context!())
