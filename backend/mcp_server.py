@@ -5,24 +5,27 @@ FastMCP server exposing the full Jambubrowser engine as MCP tools.
 External agents (Claude, Cursor, etc.) can use these tools to perform
 autonomous research, browser automation, and knowledge management.
 
-20 MCP tools covering:
+21 MCP tools covering:
 - Research & Search (5 tools)
 - Browser Actions (5 tools)
 - Vision & Perception (2 tools)
 - Memory & Knowledge (3 tools)
 - Tools & Skills (2 tools)
-- System (3 tools)
+- System (4 tools: check_engine_health, get_system_stats, start_mission, stop_mission)
 """
 
 import asyncio
 import json
+import os
 import httpx
 from mcp.server.fastmcp import FastMCP
 
 # Initialize FastMCP server for Jambubrowser
 mcp = FastMCP("Jambubrowser Sovereign Engine v2.0")
 
-ENGINE_URL = "http://localhost:8001"
+# Engine URL is overridable via JAMBU_ENGINE_URL (useful for tests that spawn
+# the engine on a free port). Default matches the conventional dev port.
+ENGINE_URL = os.environ.get("JAMBU_ENGINE_URL", "http://localhost:8001")
 DEFAULT_TIMEOUT = 60.0
 
 
