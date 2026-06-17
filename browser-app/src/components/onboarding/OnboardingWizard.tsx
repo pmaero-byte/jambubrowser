@@ -5,7 +5,7 @@ import {
   Dialog,
   DialogContent,
 } from "../ui/dialog";
-import { ChevronRight, ChevronLeft, Shield, Bot, Brain, Lock, X } from "lucide-react";
+import { ChevronRight, ChevronLeft, Shield, Bot, Brain, Lock, X, Sparkles } from "lucide-react";
 
 interface OnboardingWizardProps {
   forceOpen?: boolean;
@@ -63,9 +63,16 @@ export function OnboardingWizard({ forceOpen, onClose }: OnboardingWizardProps) 
       <DialogContent className="max-w-md p-0 overflow-hidden border-border">
         <div className="p-6">
           <div className="mb-4 flex items-center justify-between">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+            {/* Icon badge: scale-bounce on step change via key={step} */}
+            <motion.div
+              key={`icon-${step}`}
+              initial={{ scale: 0.5, rotate: -90, opacity: 0 }}
+              animate={{ scale: 1, rotate: 0, opacity: 1 }}
+              transition={{ type: "spring", stiffness: 280, damping: 16 }}
+              className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary"
+            >
               <StepIcon size={20} />
-            </div>
+            </motion.div>
             <button onClick={close} className="rounded p-1 text-muted-foreground hover:bg-muted">
               <X size={16} />
             </button>
@@ -89,9 +96,19 @@ export function OnboardingWizard({ forceOpen, onClose }: OnboardingWizardProps) 
           <div className="mt-6 flex items-center justify-between">
             <div className="flex gap-1">
               {steps.map((_, i) => (
-                <div
+                <motion.div
                   key={i}
-                  className={`h-1.5 w-4 rounded-full ${i === step ? "bg-primary" : "bg-muted"}`}
+                  className="h-1.5 rounded-full"
+                  animate={{
+                    width: i === step ? 24 : 12,
+                    backgroundColor:
+                      i === step
+                        ? "rgba(99,102,241,1)"
+                        : i < step
+                          ? "rgba(99,102,241,0.5)"
+                          : "rgba(255,255,255,0.15)",
+                  }}
+                  transition={{ type: "spring", stiffness: 320, damping: 24 }}
                 />
               ))}
             </div>
@@ -106,9 +123,20 @@ export function OnboardingWizard({ forceOpen, onClose }: OnboardingWizardProps) 
                   Next <ChevronRight size={14} className="ml-1" />
                 </Button>
               ) : (
-                <Button size="sm" onClick={close}>
-                  Get Started
-                </Button>
+                <motion.div
+                  animate={{
+                    boxShadow: [
+                      "0 0 0 0 rgba(99,102,241,0.4)",
+                      "0 0 0 8px rgba(99,102,241,0)",
+                    ],
+                  }}
+                  transition={{ duration: 1.4, repeat: Infinity, ease: "easeOut" }}
+                  className="rounded-md"
+                >
+                  <Button size="sm" onClick={close} className="gap-1.5">
+                    <Sparkles size={13} /> Get Started
+                  </Button>
+                </motion.div>
               )}
             </div>
           </div>

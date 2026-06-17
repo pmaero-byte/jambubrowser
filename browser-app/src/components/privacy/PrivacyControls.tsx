@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { motion, AnimatePresence } from "motion/react";
 import { Shield, AlertTriangle, Check } from "lucide-react";
 import { Button } from "../ui/button";
 import { localFetch } from "../../utils/api";
@@ -140,22 +141,51 @@ export function PrivacyControls() {
             const info = MODE_INFO[mode];
             const isActive = privacy.mode === mode;
             return (
-              <button
+              <motion.button
                 key={mode}
+                layout
                 onClick={() => handleModeClick(mode)}
                 disabled={settingMode}
-                className={`rounded-lg border p-3 text-left text-xs transition-colors ${
+                whileHover={{ y: -2 }}
+                whileTap={{ scale: 0.97 }}
+                animate={{
+                  borderColor: isActive ? "rgba(99,102,241,0.6)" : "rgba(255,255,255,0.1)",
+                  backgroundColor: isActive ? "rgba(99,102,241,0.10)" : "rgba(255,255,255,0.02)",
+                }}
+                transition={{ type: "spring", stiffness: 380, damping: 28 }}
+                className={`relative overflow-hidden rounded-lg border p-3 text-left text-xs ${
                   isActive
-                    ? "border-accent bg-accent/10 text-foreground"
-                    : "border-border bg-card text-muted-foreground hover:bg-muted"
+                    ? "text-foreground"
+                    : "text-muted-foreground"
                 }`}
               >
-                <div className="flex items-center justify-between">
+                {/* Active ring pulse: subtle continuous glow on the selected card. */}
+                {isActive && (
+                  <motion.span
+                    aria-hidden
+                    className="pointer-events-none absolute inset-0 rounded-lg ring-1 ring-accent/50"
+                    animate={{ opacity: [0.5, 1, 0.5] }}
+                    transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+                  />
+                )}
+                <div className="relative flex items-center justify-between">
                   <span className="font-medium">{info.label}</span>
-                  {isActive && <Check size={12} className="text-accent" />}
+                  <AnimatePresence>
+                    {isActive && (
+                      <motion.span
+                        key="check"
+                        initial={{ scale: 0, rotate: -90 }}
+                        animate={{ scale: 1, rotate: 0 }}
+                        exit={{ scale: 0, rotate: 90 }}
+                        transition={{ type: "spring", stiffness: 380, damping: 18 }}
+                      >
+                        <Check size={12} className="text-accent" />
+                      </motion.span>
+                    )}
+                  </AnimatePresence>
                 </div>
-                <p className="mt-1 text-[10px] leading-snug opacity-80">{info.desc}</p>
-              </button>
+                <p className="relative mt-1 text-[10px] leading-snug opacity-80">{info.desc}</p>
+              </motion.button>
             );
           })}
         </div>
