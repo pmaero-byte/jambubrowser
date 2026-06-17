@@ -30,4 +30,50 @@ export default defineConfig(async () => ({
       ignored: ["**/src-tauri/**"],
     },
   },
+
+  // Vendor / panel chunk splitting. Without this, every dependency — including
+  // heavy ones like react-force-graph-2d (force-directed graph layout) and
+  // framer-motion — get bundled into a single 634 KB index.js. Splitting them
+  // into named chunks:
+  //   1. Cuts the initial bundle so the desktop shell loads faster
+  //   2. Lets the browser cache each vendor chunk independently (only re-fetch
+  //      what actually changed across deploys)
+  //   3. Surfaces which dependencies are the heavy hitters via the build report
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: (id) => {
+          if (!id.includes("node_modules")) return undefined;
+          // The order matters: check specific patterns first so the catch-all
+          // "vendor" chunk only contains things we haven't categorized.
+          if (id.includes("react-force-graph") || id.includes("d3-force") || id.includes("three") || id.includes("d3-")) {
+            return "vendor-force-graph";
+          }
+          if (id.includes("framer-motion") || id.includes("/motion/")) {
+            return "vendor-motion";
+          }
+          if (id.includes("@radix-ui")) {
+            return "vendor-radix";
+          }
+          if (id.includes("tailwind-merge") || id.includes("class-variance-authority") || id.includes("clsx")) {
+            return "vendor-tw-utils";
+          }
+          if (id.includes("@tauri-apps")) {
+            return "vendor-tauri";
+          }
+          if (id.includes("/react/") || id.includes("/react-dom/") || id.includes("/scheduler/")) {
+            return "vendor-react";
+          }
+          if (id.includes("zustand") || id.includes("cmdk") || id.includes("lucide-react") || id.includes("tw-animate-css")) {
+            return "vendor-misc";
+          }
+          return "vendor";
+        },
+      },
+    },
+    // Bump the warning threshold so we don't get a noisy 500 KB warning on
+    // the force-graph chunk specifically (it's a known heavy dep, lazy-loaded
+    // by the Knowledge panel).
+    chunkSizeWarningLimit: 700,
+  },
 }));

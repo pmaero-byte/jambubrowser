@@ -1,21 +1,49 @@
-import { useCallback, useState } from "react";
+import { useCallback, useState, Suspense, lazy } from "react";
 import { AppShell } from "./components/layout/AppShell";
 import { ChatPane } from "./components/chat/ChatPane";
-import { BrowserPane } from "./components/browser/BrowserPane";
-import { PrivacyControls } from "./components/privacy/PrivacyControls";
-import { AuditLogViewer } from "./components/audit/AuditLogViewer";
-import { VaultUnlock } from "./components/vault/VaultUnlock";
-import { MemoryPanel } from "./components/memory/MemoryPanel";
-import { InspectorPanel } from "./components/inspector/InspectorPanel";
-import { CommandPalette } from "./components/command/CommandPalette";
-import { OnboardingWizard } from "./components/onboarding/OnboardingWizard";
 import { useAppStore } from "./store/appStore";
 import { useAgentWebSocket } from "./utils/useAgentWebSocket";
 import { runAgentStream } from "./utils/agent";
 import { localFetch } from "./utils/api";
 import type { AgentEvent } from "./utils/types";
 
+// Lazy-loaded panels: each is its own JS chunk and only fetched on first
+// navigation. The eager ChatPane stays in the main bundle because it's the
+// default landing tab and we want the chat ready immediately.
+const BrowserPane = lazy(() =>
+  import("./components/browser/BrowserPane").then((m) => ({ default: m.BrowserPane }))
+);
+const PrivacyControls = lazy(() =>
+  import("./components/privacy/PrivacyControls").then((m) => ({ default: m.PrivacyControls }))
+);
+const AuditLogViewer = lazy(() =>
+  import("./components/audit/AuditLogViewer").then((m) => ({ default: m.AuditLogViewer }))
+);
+const VaultUnlock = lazy(() =>
+  import("./components/vault/VaultUnlock").then((m) => ({ default: m.VaultUnlock }))
+);
+const MemoryPanel = lazy(() =>
+  import("./components/memory/MemoryPanel").then((m) => ({ default: m.MemoryPanel }))
+);
+const InspectorPanel = lazy(() =>
+  import("./components/inspector/InspectorPanel").then((m) => ({ default: m.InspectorPanel }))
+);
+const CommandPalette = lazy(() =>
+  import("./components/command/CommandPalette").then((m) => ({ default: m.CommandPalette }))
+);
+const OnboardingWizard = lazy(() =>
+  import("./components/onboarding/OnboardingWizard").then((m) => ({ default: m.OnboardingWizard }))
+);
+
 const USER_ID = "default";
+
+function PanelFallback() {
+  return (
+    <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+      Loading…
+    </div>
+  );
+}
 
 export default function App() {
   const {
@@ -145,11 +173,26 @@ export default function App() {
 
   return (
     <>
-      <AppShell inspector={<InspectorPanel />}>
-        <div className="flex h-full flex-col overflow-hidden">{renderCanvas()}</div>
+      <AppShell
+        inspector={
+          <Suspense fallback={<PanelFallback />}>
+            <InspectorPanel />
+          </Suspense>
+        }
+      >
+        <div className="flex h-full flex-col overflow-hidden">
+          <Suspense fallback={<PanelFallback />}>{renderCanvas()}</Suspense>
+        </div>
       </AppShell>
-      <CommandPalette />
-      <OnboardingWizard forceOpen={onboardingOpen} onClose={() => setOnboardingOpen(false)} />
+      <Suspense fallback={null}>
+        <CommandPalette />
+      </Suspense>
+      <Suspense fallback={null}>
+        <OnboardingWizard
+          forceOpen={onboardingOpen}
+          onClose={() => setOnboardingOpen(false)}
+        />
+      </Suspense>
     </>
   );
 }

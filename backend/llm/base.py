@@ -241,3 +241,48 @@ async def collect_stream(stream: AsyncIterator[StreamChunk]) -> ChatResponse:
         tool_calls=tool_calls,
         latency_ms=(time.monotonic() - started) * 1000,
     )
+
+
+# ---------------------------------------------------------------------------
+# Response normalization — strip model-specific preambles so JSON parsers
+# downstream don't choke on the first character.
+# ---------------------------------------------------------------------------
+
+def normalize_llm_response(content: str) -> str:
+    """Normalize an LLM response by stripping model-specific preambles.
+
+    Some reasoning models (e.g. minimax M3, DeepSeek R1) emit a
+    ``<think>...</think>`` block before their actual answer. If the caller
+    expects JSON, ``json.loads()`` will throw on the first character of the
+    think block. This helper strips the preamble so the caller's parser sees
+    only the actual answer.
+
+    Currently handles:
+      - ``<think>...</think>`` blocks (M3, R1, Qwen3-thinking, etc.)
+      - ```json ... ``` fenced JSON blocks
+      - ``` ... ``` fenced blocks (any language)
+      - leading/trailing whitespace
+    """
+    text = content.strip()
+
+    # Strip <think>...</think> preambles. Some models emit a single block;
+    # others emit multiple — take everything after the *last* close tag so we
+    # never leave an unclosed think block in the result.
+    if "</think>" in text:
+        text = text.rsplit("</think>", 1)[1].strip()
+
+    # Strip ```json ... ``` or ``` ... ``` fenced blocks (keep inner content).
+    if text.startswith("```"):
+        # Find the end of the opening fence (e.g. ```json)
+        first_newline = text.find("\n")
+        if first_newline == -1:
+            # Single-line fenced — just drop fences
+            text = text.strip("`").strip()
+        else:
+            body = text[first_newline + 1 :]
+            if body.endswith("```"):
+                body = body[:-3]
+            text = body.strip()
+
+    return text
+

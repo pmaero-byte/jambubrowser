@@ -21,8 +21,19 @@ from . import tasks as _tasks  # noqa: F401
 
 def _cmd_run(args) -> int:
     from .harness import Harness
+    from .harness import list_suites, list_tasks
     from .store import get_store
     from .report import generate_report
+
+    # Validate suite name up-front so the user gets a clean error rather than
+    # a Python traceback if they typo the suite.
+    if args.suite not in list_suites():
+        available = ", ".join(sorted(list_suites())) or "(none registered)"
+        print(
+            f"Error: unknown suite {args.suite!r}. Available suites: {available}",
+            file=sys.stderr,
+        )
+        return 2
 
     harness = Harness(provider=args.provider, model=args.model)
     sr = asyncio.run(harness.run_suite(args.suite, task_ids=args.tasks))

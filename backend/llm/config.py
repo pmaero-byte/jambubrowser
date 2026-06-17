@@ -91,7 +91,7 @@ class LLMConfig:
             default_provider=_env("JAMBU_LLM_PROVIDER", "auto"),
             default_model=_env("JAMBU_LLM_MODEL", ""),
             fallback_chain=chain or ["ollama"],
-            request_timeout=_env_float("JAMBU_LLM_TIMEOUT", 30.0),
+            request_timeout=_env_float("JAMBU_LLM_TIMEOUT", 90.0),
             health_timeout=_env_float("JAMBU_LLM_HEALTH_TIMEOUT", 3.0),
             max_tokens=_env_int("JAMBU_LLM_MAX_TOKENS", 1024),
             temperature=_env_float("JAMBU_LLM_TEMPERATURE", 0.3),

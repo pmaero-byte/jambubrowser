@@ -232,21 +232,14 @@ async def _extract_failure_pattern(
         examples=examples_text,
     )
     try:
-        from backend.llm import ChatMessage, Role, get_default
+        from backend.llm import ChatMessage, Role, get_default, normalize_llm_response
         llm = get_default()
         resp = await llm.chat(
             [ChatMessage(role=Role.USER, content=prompt)],
             temperature=0.2,
             max_tokens=300,
         )
-        content = resp.content.strip()
-        # Strip <think>...</think> preambles (M3 / R1-style models).
-        if "</think>" in content:
-            content = content.split("</think>", 1)[1].strip()
-        if content.startswith("```"):
-            content = content.split("```")[1]
-            if content.startswith("json"):
-                content = content[4:]
+        content = normalize_llm_response(resp.content)
         data = json.loads(content)
         return (
             data.get("failure_pattern", f"Recurring {tool} failures in category {category}"),

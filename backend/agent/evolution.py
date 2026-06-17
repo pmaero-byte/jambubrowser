@@ -40,9 +40,59 @@ from backend.agent.harness import (
     apply_edit,
     get_config_store,
 )
-from backend.llm import ChatMessage, Role, Usage, get_default
+from backend.llm import ChatMessage, Role, Usage, get_default, normalize_llm_response
 
 log = logging.getLogger("jambu.agent.evolution")
+
+
+# ---------------------------------------------------------------------------
+# JSON-safe LLM call helper — wraps a chat call with one retry on parse fail
+# ---------------------------------------------------------------------------
+
+async def _call_llm_json(
+    messages: list,
+    *,
+    temperature: float = 0.2,
+    max_tokens: int = 800,
+    retry_hint: str = "Respond with ONLY valid JSON. No prose, no markdown fencing, no thinking blocks.",
+    max_retries: int = 1,
+):
+    """Call the LLM and return the parsed JSON.
+
+    On JSONDecodeError, re-call once with a hint appended to the user message
+    asking for valid JSON. If the second call also fails, raises the original
+    exception so the caller can fall back to a heuristic / default-accept.
+
+    Args:
+        messages: list of ChatMessage
+        temperature, max_tokens: forwarded to llm.chat
+        retry_hint: appended to the last user message on retry
+        max_retries: 1 by default (single retry before raising)
+    """
+    import json as _json
+
+    llm = get_default()
+    last_err: Exception | None = None
+    msgs = list(messages)
+    for attempt in range(max_retries + 1):
+        try:
+            resp = await llm.chat(msgs, temperature=temperature, max_tokens=max_tokens)
+            content = normalize_llm_response(resp.content)
+            return _json.loads(content), resp
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            log.warning("LLM JSON call failed (attempt %d/%d): %s", attempt + 1, max_retries + 1, e)
+            if attempt >= max_retries:
+                break
+            # Retry: append a hint to the last user message
+            hint = retry_hint
+            if msgs and msgs[-1].role == Role.USER:
+                msgs[-1] = ChatMessage(role=Role.USER, content=msgs[-1].content + "\n\n" + hint)
+            else:
+                msgs = msgs + [ChatMessage(role=Role.USER, content=hint)]
+    # All retries exhausted
+    assert last_err is not None
+    raise last_err
 
 
 # ---------------------------------------------------------------------------
@@ -128,19 +178,24 @@ class Planner:
         )
 
         try:
-            llm = get_default()
-            resp = await llm.chat(
+            data, _resp = await _call_llm_json(
                 [
                     ChatMessage(role=Role.SYSTEM, content=_PLANNER_SYSTEM),
                     ChatMessage(role=Role.USER, content=prompt),
                 ],
                 temperature=0.2,
                 max_tokens=2000,
+                retry_hint=(
+                    "Respond with ONLY a JSON array of edits, no prose. Each edit: "
+                    '{"dimension": "prompt|memory|control_flow|llm_routing|tool", '
+                    '"field_path": "...", "operation": "replace|set|adjust|append|remove|merge", '
+                    '"new_value": ..., "rationale": "..."}'
+                ),
             )
-            edits = self._parse_edits(resp.content, config.config_id)
+            edits = self._parse_edits_from_json(data, config.config_id)
             return edits[:max_edits]
         except Exception as e:
-            log.warning("Planner LLM call failed: %s", e)
+            log.warning("Planner LLM call failed (using heuristic fallback): %s", e)
             return self._heuristic_edits(config, clusters, max_edits)
 
     def _summarise_config(self, config: HarnessConfig) -> str:
@@ -194,20 +249,7 @@ class Planner:
 
     def _parse_edits(self, content: str, config_id: str) -> list[HarnessEdit]:
         """Parse the LLM's JSON response into HarnessEdit objects."""
-        content = content.strip()
-        if content.startswith("```"):
-            lines = content.split("\n")
-            if lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines and lines[-1].strip() == "```":
-                lines = lines[:-1]
-            content = "\n".join(lines)
-
-        # Strip <think>...</think> preambles (M3 / R1-style models always emit these
-        # before their actual answer; if left in place, json.loads() throws on the
-        # first character of the think block and the LLM call appears to "fail").
-        if "</think>" in content:
-            content = content.split("</think>", 1)[1].strip()
+        content = normalize_llm_response(content)
 
         try:
             raw_edits = json.loads(content)
@@ -223,6 +265,14 @@ class Planner:
                     return []
             else:
                 return []
+        return self._parse_edits_from_json(raw_edits, config_id)
+
+    def _parse_edits_from_json(self, raw_edits, config_id: str) -> list[HarnessEdit]:
+        """Convert already-parsed JSON (list or single dict) into HarnessEdit objects."""
+        if isinstance(raw_edits, dict):
+            raw_edits = [raw_edits]
+        if not isinstance(raw_edits, list):
+            return []
 
         edits: list[HarnessEdit] = []
         for re in raw_edits:
@@ -363,31 +413,27 @@ class Critic:
             rationale=edit.rationale,
         )
         try:
-            llm = get_default()
-            resp = await llm.chat(
+            result, _resp = await _call_llm_json(
                 [
                     ChatMessage(role=Role.SYSTEM, content=_CRITIC_SYSTEM),
                     ChatMessage(role=Role.USER, content=prompt),
                 ],
                 temperature=0.1,
                 max_tokens=300,
+                retry_hint=(
+                    "Respond with ONLY valid JSON: "
+                    '{"verdict": "accepted"|"rejected", "confidence": 0.0-1.0, "feedback": "..."}'
+                ),
             )
-            content = resp.content.strip()
-            # Strip <think>...</think> preambles (M3 / R1-style models).
-            if "</think>" in content:
-                content = content.split("</think>", 1)[1].strip()
-            if content.startswith("```"):
-                content = content.split("```")[1]
-                if content.startswith("json"):
-                    content = content[4:]
-            result = json.loads(content)
+            if not isinstance(result, dict):
+                raise ValueError(f"Critic returned non-dict JSON: {type(result).__name__}")
             return {
                 "verdict": result.get("verdict", "rejected"),
                 "confidence": float(result.get("confidence", 0.5)),
                 "feedback": result.get("feedback", ""),
             }
         except Exception as e:
-            log.warning("Critic LLM call failed: %s", e)
+            log.warning("Critic LLM call failed (defaulting to accept): %s", e)
             return {
                 "verdict": "accepted",
                 "confidence": 0.5,

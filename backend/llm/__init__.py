@@ -39,6 +39,7 @@ from .base import (
     ProviderAuthError,
     ProviderRateLimit,
     estimate_cost_for_model,
+    normalize_llm_response,
 )
 from .registry import (
     ProviderRegistry,
@@ -66,6 +67,7 @@ __all__ = [
     "ProviderAuthError",
     "ProviderRateLimit",
     "estimate_cost_for_model",
+    "normalize_llm_response",
     # Registry
     "ProviderRegistry",
     "get_registry",
