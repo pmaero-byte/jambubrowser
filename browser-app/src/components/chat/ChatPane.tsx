@@ -1,8 +1,10 @@
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useState } from "react";
 import { Button } from "../ui/button";
+import { motion } from "motion/react";
 import { ArrowUp, Paperclip, Mic, StopCircle } from "lucide-react";
 import { MessageCard } from "./MessageCard";
 import { AgentTimeline } from "./AgentTimeline";
+import { AgentWorking } from "./AgentWorking";
 import { useAppStore } from "../../store/appStore";
 import type { AgentEvent } from "../../utils/types";
 
@@ -15,6 +17,8 @@ interface ChatPaneProps {
 export function ChatPane({ agentEvents, onSend, onStop }: ChatPaneProps) {
   const { messages, input, setInput, isLoading, setActiveTab, addBrowserTab, updateBrowserTab } = useAppStore();
   const bottomRef = useRef<HTMLDivElement>(null);
+  // Bump this counter on submit so the send button can "punch" via key change.
+  const [sendTick, setSendTick] = useState(0);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -23,6 +27,7 @@ export function ChatPane({ agentEvents, onSend, onStop }: ChatPaneProps) {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
+    setSendTick((t) => t + 1);
     onSend(input.trim());
     setInput("");
   };
@@ -61,7 +66,8 @@ export function ChatPane({ agentEvents, onSend, onStop }: ChatPaneProps) {
               />
             ))}
             {(isLoading || agentEvents.length > 0) && (
-              <div className="my-3">
+              <div className="my-3 space-y-3">
+                <AgentWorking events={agentEvents} isActive={isLoading} />
                 <AgentTimeline
                   events={agentEvents}
                   isActive={isLoading}
@@ -100,9 +106,17 @@ export function ChatPane({ agentEvents, onSend, onStop }: ChatPaneProps) {
               <StopCircle size={16} />
             </Button>
           ) : (
-            <Button type="submit" size="icon" className="h-8 w-8 shrink-0" disabled={!input.trim()}>
-              <ArrowUp size={16} />
-            </Button>
+            <motion.div
+              key={sendTick} // remount on each submit -> the punch animation restarts
+              initial={{ scale: 0.6, rotate: -90 }}
+              animate={{ scale: [0.6, 1.15, 1], rotate: [-90, 10, 0] }}
+              transition={{ duration: 0.32, ease: "easeOut" }}
+              className="shrink-0"
+            >
+              <Button type="submit" size="icon" className="h-8 w-8" disabled={!input.trim()}>
+                <ArrowUp size={16} />
+              </Button>
+            </motion.div>
           )}
         </form>
       </div>

@@ -18,6 +18,35 @@ function shortHost(url: string): string {
   }
 }
 
+/**
+ * RevealText — splits content into characters and fades each one in. Only
+ * used while streaming the latest assistant message. We use a tiny per-char
+ * delay (capped) so the effect is felt at any text length.
+ */
+function RevealText({ text }: { text: string }) {
+  // Cap visible length to avoid remounting hundreds of motion spans on a
+  // long final answer. For typical chat (<2k chars) this is a no-op.
+  const chars = Array.from(text);
+  const cap = 600;
+  const truncated = chars.length > cap;
+  const visible = chars.slice(0, cap);
+  return (
+    <>
+      {visible.map((c, i) => (
+        <motion.span
+          key={i}
+          initial={{ opacity: 0, y: 1 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.18, delay: Math.min(i * 0.004, 1.4) }}
+        >
+          {c}
+        </motion.span>
+      ))}
+      {truncated && <span>{chars.slice(cap).join("")}</span>}
+    </>
+  );
+}
+
 export function MessageCard({
   message,
   isStreaming,
@@ -26,6 +55,8 @@ export function MessageCard({
 }: MessageCardProps) {
   const isAssistant = message.role === "assistant";
   const showCursor = isStreaming && isLast && isAssistant && message.content === "";
+  // Per-character reveal only on the actively-streaming final assistant msg.
+  const reveal = isStreaming && isLast && isAssistant && message.content.length > 0;
 
   return (
     <motion.div
@@ -45,7 +76,7 @@ export function MessageCard({
       </div>
       <div className="min-w-0 flex-1">
         <div className="prose prose-sm max-w-none text-sm leading-relaxed whitespace-pre-wrap">
-          {message.content}
+          {reveal ? <RevealText text={message.content} /> : message.content}
           {showCursor && <TypingCursor />}
           {!message.content && isAssistant && !isStreaming && (
             <span className="text-muted-foreground italic">…</span>
