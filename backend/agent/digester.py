@@ -240,6 +240,9 @@ async def _extract_failure_pattern(
             max_tokens=300,
         )
         content = resp.content.strip()
+        # Strip <think>...</think> preambles (M3 / R1-style models).
+        if "</think>" in content:
+            content = content.split("</think>", 1)[1].strip()
         if content.startswith("```"):
             content = content.split("```")[1]
             if content.startswith("json"):

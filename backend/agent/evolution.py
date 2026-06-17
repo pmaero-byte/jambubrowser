@@ -203,6 +203,12 @@ class Planner:
                 lines = lines[:-1]
             content = "\n".join(lines)
 
+        # Strip <think>...</think> preambles (M3 / R1-style models always emit these
+        # before their actual answer; if left in place, json.loads() throws on the
+        # first character of the think block and the LLM call appears to "fail").
+        if "</think>" in content:
+            content = content.split("</think>", 1)[1].strip()
+
         try:
             raw_edits = json.loads(content)
             if not isinstance(raw_edits, list):
@@ -367,6 +373,9 @@ class Critic:
                 max_tokens=300,
             )
             content = resp.content.strip()
+            # Strip <think>...</think> preambles (M3 / R1-style models).
+            if "</think>" in content:
+                content = content.split("</think>", 1)[1].strip()
             if content.startswith("```"):
                 content = content.split("```")[1]
                 if content.startswith("json"):

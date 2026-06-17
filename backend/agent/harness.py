@@ -463,6 +463,20 @@ def apply_edit(config: HarnessConfig, edit: HarnessEdit) -> HarnessConfig:
     if not hasattr(obj, field):
         raise ValueError(f"Field {field!r} not found on {type(obj).__name__} (path: {edit.field_path})")
 
+    # Capture the pre-edit value so revert_edit has the right restore target
+    # even when the caller constructed the edit in flight (e.g. heuristic
+    # planner) without first reading the field. Only safe for non-list fields;
+    # APPEND/REMOVE/ADJUST capture their own state via old_value or new_value.
+    if edit.old_value is None and edit.operation in (
+        EditOperation.REPLACE,
+        EditOperation.SET,
+        EditOperation.MERGE,
+    ):
+        try:
+            edit.old_value = getattr(obj, field)
+        except Exception:
+            pass
+
     _apply_field_edit(obj, field, edit)
     # Recompute config_id so it reflects the edited content. clone() above hashed
     # the *pre-edit* state; without this recompute, every edit derived from the
