@@ -115,6 +115,117 @@ async def _search_google_scrape(query: str, max_results: int = 10) -> List[Dict]
     return results
 
 
+async def _search_bing_scrape(query: str, max_results: int = 10) -> List[Dict]:
+    """Bing search via HTML scrape. Bing's results page is server-rendered
+    and more scraper-friendly than Google's, so this is a more reliable
+    second-fallback than the Google regex.
+    """
+    results: List[Dict] = []
+    try:
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            resp = await client.get(
+                "https://www.bing.com/search",
+                params={"q": query, "count": max_results},
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/120.0.0.0 Safari/537.36"
+                    ),
+                    "Accept": "text/html,application/xhtml+xml",
+                    "Accept-Language": "en-US,en;q=0.9",
+                },
+                timeout=15.0,
+            )
+            if resp.status_code != 200:
+                log.warning("Bing returned HTTP %s", resp.status_code)
+                return results
+            html = resp.text
+            # Bing result items are <li class="b_algo"> with <h2><a> + a snippet.
+            item_pattern = re.compile(
+                r'<li[^>]*class="[^"]*\bb_algo\b[^"]*"[^>]*>(.*?)</li>',
+                re.DOTALL,
+            )
+            for item_match in item_pattern.finditer(html):
+                item_html = item_match.group(1)
+                # Extract the URL from the <h2><a href="..."> tag
+                url_match = re.search(r'<h2>\s*<a[^>]+href="(https?://[^"]+)"', item_html)
+                if not url_match:
+                    continue
+                url = url_match.group(1)
+                # Title is the link text inside the <h2><a>
+                title_match = re.search(r'<h2>\s*<a[^>]+>(.*?)</a>', item_html, re.DOTALL)
+                title = re.sub(r'<[^>]+>', '', title_match.group(1)).strip() if title_match else ""
+                # Snippet is in <p class="b_paractl"> or <p class="b_lineclamp3 ...">
+                snippet_match = re.search(
+                    r'<p[^>]*class="[^"]*\b(?:b_paractl|b_lineclamp|b_snippet)[^"]*"[^>]*>(.*?)</p>',
+                    item_html, re.DOTALL,
+                )
+                snippet = re.sub(r'<[^>]+>', '', snippet_match.group(1)).strip() if snippet_match else ""
+                if url.startswith("http") and title:
+                    results.append({
+                        "url": url,
+                        "title": title[:200],
+                        "content": snippet[:300],
+                        "engine": "bing",
+                    })
+                if len(results) >= max_results:
+                    break
+    except Exception as e:
+        log.warning("Bing search error: %s", e)
+    return results
+
+
+async def _search_duckduckgo_html(query: str, max_results: int = 10) -> List[Dict]:
+    """DuckDuckGo HTML-lite scrape. The official API mostly returns nothing
+    for real queries, but the HTML search page works.
+    """
+    results: List[Dict] = []
+    try:
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            resp = await client.get(
+                "https://html.duckduckgo.com/html/",
+                params={"q": query},
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/120.0.0.0 Safari/537.36"
+                    ),
+                },
+                timeout=15.0,
+            )
+            if resp.status_code != 200:
+                return results
+            html = resp.text
+            # DDG HTML: <a class="result__a" href="...">TITLE</a>
+            # + <a class="result__snippet" ...>SNIPPET</a>
+            item_pattern = re.compile(
+                r'<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>(.*?)</a>',
+                re.DOTALL,
+            )
+            for url_match in item_pattern.finditer(html):
+                url = url_match.group(1)
+                # DDG wraps URLs in /l/?uddg=... — extract the real one
+                uddg = re.search(r'uddg=([^&]+)', url)
+                if uddg:
+                    from urllib.parse import unquote
+                    url = unquote(uddg.group(1))
+                title = re.sub(r'<[^>]+>', '', url_match.group(2)).strip()
+                if url.startswith("http") and title:
+                    results.append({
+                        "url": url,
+                        "title": title[:200],
+                        "content": "",
+                        "engine": "duckduckgo_html",
+                    })
+                if len(results) >= max_results:
+                    break
+    except Exception as e:
+        log.warning("DDG HTML search error: %s", e)
+    return results
+
+
 async def multi_engine_search(query: str, engines: str = "google,bing,duckduckgo") -> List[dict]:
     """
     Asks many search engines at once for information about a topic.
@@ -141,17 +252,20 @@ async def multi_engine_search(query: str, engines: str = "google,bing,duckduckgo
     except Exception as e:
         log.warning("SearXNG not available: %s", e)
 
-    # Fallback to DuckDuckGo API
-    log.info("Using DuckDuckGo API fallback...")
-    ddg_results = await _search_duckduckgo(query)
+    # Fallback chain: DuckDuckGo HTML → Bing HTML → Google regex
+    # (each is more aggressive; we stop as soon as one returns >= 1 result).
+    log.info("Using DuckDuckGo HTML fallback...")
+    ddg_html = await _search_duckduckgo_html(query)
+    if ddg_html:
+        return ddg_html
 
-    if ddg_results:
-        return ddg_results
+    log.info("Using Bing HTML fallback...")
+    bing_results = await _search_bing_scrape(query)
+    if bing_results:
+        return bing_results
 
-    # Last resort: Google scraping (may be blocked)
     log.info("Using Google scraping fallback...")
-    google_results = await _search_google_scrape(query)
-    return google_results
+    return await _search_google_scrape(query)
 
 
 def filter_trusted_results(results: List[dict], top_n: int = 5) -> List[dict]:

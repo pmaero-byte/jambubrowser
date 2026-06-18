@@ -28,6 +28,8 @@ class RiskLevel(str, Enum):
     MEDIUM = "medium"     # side effects within scope (e.g., save file to vault)
     HIGH = "high"         # cross-system side effects (e.g., post to social)
 
+log = logging.getLogger("jambu.agent.tools")
+
 
 @dataclass
 class ToolSpec:
@@ -155,6 +157,23 @@ class ToolRegistry:
     async def execute(self, name: str, **kwargs) -> ToolResult:
         if name not in self._tools:
             return ToolResult(success=False, error=f"Unknown tool: {name}")
+        # Drop kwargs the tool's signature doesn't accept. LLMs sometimes
+        # add "helpful" parameters (recency, region, ...) that the tool
+        # doesn't declare. Rejecting them crashed the whole tool call;
+        # silently dropping them lets the tool run with what it has and
+        # we log a debug line so unexpected drift is visible.
+        sig = inspect.signature(self._tools[name].handler)
+        accepted = set(sig.parameters.keys())
+        # VAR_KEYWORD (**kwargs) accepts everything — don't filter.
+        has_var_keyword = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD
+            for p in sig.parameters.values()
+        )
+        if not has_var_keyword:
+            unknown = set(kwargs) - accepted
+            if unknown:
+                log.debug("dropping unknown kwargs for tool %s: %s", name, sorted(unknown))
+                kwargs = {k: v for k, v in kwargs.items() if k in accepted}
         return await self._tools[name](**kwargs)
 
     # -- serialization for LLM tool-use -------------------------------------

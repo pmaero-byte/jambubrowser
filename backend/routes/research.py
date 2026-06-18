@@ -216,7 +216,9 @@ async def _assess_url_risk(url: str, client_id: str, llm_config: dict) -> bool:
 
 
 async def _fetch_arxiv(query: str) -> list:
-    url = f"http://export.arxiv.org/api/query?search_query=all:{query}&max_results=3"
+    # arXiv redirects http->https; use https directly to avoid the
+    # 301 round-trip and a transient empty response on the first call.
+    url = f"https://export.arxiv.org/api/query?search_query=all:{query}&max_results=3"
     async with httpx.AsyncClient() as client:
         resp = await client.get(url, timeout=15.0)
         root = ET.fromstring(resp.text)

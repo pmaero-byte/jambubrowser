@@ -39,6 +39,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Modern lifespan context manager — replaces deprecated on_event."""
     from backend.core.database import init_db
     init_db()
+    _warn_missing_runtime_deps()
     log.info("Jambubrowser Engine v2.0 started on port 8001")
 
     from backend.engine_runtime import safe_task, manager
@@ -80,7 +81,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     yield  # Application runs here
 
-    # Shutdown cleanup
+    # Shutdown cleanup. Inlined in the post-yield for-loop because
+    # @asynccontextmanager wraps this async generator and Python's parser
+    # accepts `await` only inside try/loop bodies in that context.
     for task in tasks:
         task.cancel()
     for mod_name in ["browser", "missions", "shadow_browser", "risk_shield"]:
@@ -96,6 +99,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 await mod.get_shield().close()
         except Exception:
             pass
+
+
+# (The previous _shutdown_modules helper was removed because the bare
+# `await _shutdown_modules(tasks)` line at module-asyncgen level was
+# rejected by Python's parser. The awaits must live inside the for-body
+# above, which is what the original code did.)
 
 
 # ---------------------------------------------------------------------------
@@ -254,3 +263,27 @@ app.include_router(media_router)
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8001)
+
+
+# ---------------------------------------------------------------------------
+# Runtime dep check (called from lifespan on startup)
+# ---------------------------------------------------------------------------
+
+def _warn_missing_runtime_deps() -> None:
+    """Warn loudly (but don't crash) for missing optional deps that would
+    otherwise 500 the first time a user calls the endpoint.
+
+    Currently checked:
+    - markdownify : required by /scrape and /act (returns 500 if missing)
+    """
+    for mod_name, import_path, what in (
+        ("markdownify", "markdownify", "scrape + act (returns 500 if missing)"),
+    ):
+        try:
+            __import__(import_path)
+        except ImportError:
+            log.warning(
+                "MISSING DEP '%s' — required for: %s. "
+                "Run: pip install %s",
+                mod_name, what, mod_name,
+            )
