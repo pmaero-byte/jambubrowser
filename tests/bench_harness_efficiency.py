@@ -699,12 +699,86 @@ async def sub_g_grpo_advantage() -> None:
 
 
 # ---------------------------------------------------------------------------
+# SUB-H: Real-LLM integration smoke (only when not mock)
+# ---------------------------------------------------------------------------
+#
+# This sub-report runs *only* when JAMBU_LLM_PROVIDER points at a real
+# provider. It calls Planner.propose + Critic.evaluate end-to-end and
+# asserts the responses are parseable JSON, the edits have the right
+# shape, and the verdicts include the expected fields. When run under
+# mock (the default), it skips with a clear message — the same harness
+# can serve both unit-style benchmarks and full integration tests.
+#
+# Why this matters: the existing SUB-D and SUB-E exercise the
+# heuristic-fallback path (mock LLM returns non-JSON). SUB-H is the
+# integration test that catches LLM-shape bugs the mock hides —
+# exactly the class of bug that surfaced with the minimax M3
+# `` blocks.
+
+async def sub_h_real_llm_smoke() -> None:
+    _section("SUB-H: real-LLM integration smoke (Planner + Critic)")
+    if not _is_real_llm():
+        _record("H", "status", "skipped (mock mode)")
+        _record("H", "skipped_reason", "JAMBU_LLM_PROVIDER=mock")
+        _ok("skipped — set JAMBU_LLM_PROVIDER (e.g. minimax/anthropic/openai) to enable")
+        return
+
+    provider = os.environ.get("JAMBU_LLM_PROVIDER", "?")
+    t0 = time.time()
+
+    # Build a small, realistic failure cluster and call Planner.propose.
+    cluster_dict = {
+        "failure_pattern": "web_search tool times out after 30 seconds",
+        "common_tool": "web_search",
+        "common_error_category": "timeout",
+        "count": 5,
+        "severity": "high",
+        "suggested_dimension": "control_flow",
+        "suggested_fix": "Increase max_seconds on the control_flow",
+        "examples": [{"error": "Request timeout: timed out after 30s", "tool": "web_search"}],
+    }
+    cfg = get_preset("research")
+
+    # 1) Planner.propose — must return a list of HarnessEdits with the right shape
+    planner = Planner()
+    edits = await planner.propose(cfg, [cluster_dict], max_edits=5)
+    n_edits = len(edits)
+    _record("H", "planner_provider", provider)
+    _record("H", "planner_edits_returned", n_edits)
+    if n_edits == 0:
+        _record("H", "planner_status", "empty — heuristic fallback may have triggered")
+    else:
+        # Assert edit shape
+        for e in edits:
+            assert e.dimension is not None, f"edit missing dimension: {e}"
+            assert e.field_path, f"edit missing field_path: {e}"
+            assert e.operation is not None, f"edit missing operation: {e}"
+        _record("H", "planner_status", "ok — parseable HarnessEdits")
+    _ok(f"Planner returned {n_edits} edit(s) for a real '{provider}' LLM")
+
+    # 2) Critic.evaluate — must return a verdict dict
+    if n_edits > 0:
+        critic = Critic(acceptance_threshold=0.4)
+        verdict = await critic.evaluate(edits[0], cluster_dict, cfg)
+        v = verdict.get("verdict") if isinstance(verdict, dict) else None
+        conf = verdict.get("confidence") if isinstance(verdict, dict) else None
+        _record("H", "critic_verdict", str(v))
+        _record("H", "critic_confidence", f"{conf:.2f}" if isinstance(conf, (int, float)) else "n/a")
+        assert v in ("accepted", "rejected"), f"critic returned unexpected verdict: {verdict!r}"
+        _ok(f"Critic returned verdict={v!r} confidence={conf!r}")
+
+    elapsed = time.time() - t0
+    _record("H", "time_seconds", f"{elapsed:.3f}")
+    _ok(f"real-LLM smoke complete in {elapsed:.2f}s")
+
+
+# ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 
 async def _run_all() -> int:
     print("=" * 70)
-    print("HarnessX Efficiency Benchmark — 7 sub-reports")
+    print("HarnessX Efficiency Benchmark — 8 sub-reports (7 + 1 real-LLM)")
     print("=" * 70)
 
     subs = [
@@ -715,6 +789,7 @@ async def _run_all() -> int:
         ("SUB-E evolution", lambda: sub_e_evolution_loop()),
         ("SUB-F buffer bias", lambda: sub_f_buffer_bias()),
         ("SUB-G GRPO advantage", lambda: sub_g_grpo_advantage()),
+        ("SUB-H real-LLM smoke", lambda: sub_h_real_llm_smoke()),
     ]
     failed = 0
     for name, fn in subs:

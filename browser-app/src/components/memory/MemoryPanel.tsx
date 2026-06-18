@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { motion, AnimatePresence, LayoutGroup } from "motion/react";
 import { Brain, Plus, RefreshCw, Search } from "lucide-react";
 import { Button } from "../ui/button";
 import {
@@ -64,7 +65,7 @@ export function MemoryPanel() {
           <Brain size={18} className="text-accent" />
           <span className="font-semibold">Memory</span>
         </div>
-        <div className="flex gap-1">
+        <div className="relative flex gap-1">
           {[
             { id: "profile", label: "Profile" },
             { id: "recall", label: "Recall" },
@@ -74,25 +75,42 @@ export function MemoryPanel() {
             <button
               key={t.id}
               onClick={() => setActiveTab(t.id as any)}
-              className={`rounded-md px-2 py-1 text-xs ${
+              className={`relative rounded-md px-2 py-1 text-xs transition-colors ${
                 activeTab === t.id
-                  ? "bg-muted font-medium text-foreground"
+                  ? "text-foreground"
                   : "text-muted-foreground hover:bg-muted/50"
               }`}
             >
-              {t.label}
+              {activeTab === t.id && (
+                <motion.span
+                  layoutId="mem-tab-indicator"
+                  className="absolute inset-0 rounded-md bg-muted"
+                  transition={{ type: "spring", stiffness: 380, damping: 30 }}
+                />
+              )}
+              <span className="relative font-medium">{t.label}</span>
             </button>
           ))}
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto p-3">
-        {activeTab === "profile" && (
-          <ProfileTab profile={profile} onSave={saveProfile} loading={loading} />
-        )}
-        {activeTab === "recall" && <RecallTab />}
-        {activeTab === "sessions" && <SessionsTab sessions={sessions} />}
-        {activeTab === "store" && <StoreTab onStore={loadAll} />}
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={activeTab}
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.18 }}
+          >
+            {activeTab === "profile" && (
+              <ProfileTab profile={profile} onSave={saveProfile} loading={loading} />
+            )}
+            {activeTab === "recall" && <RecallTab />}
+            {activeTab === "sessions" && <SessionsTab sessions={sessions} />}
+            {activeTab === "store" && <StoreTab onStore={loadAll} />}
+          </motion.div>
+        </AnimatePresence>
       </div>
 
       <div className="border-t border-border p-3">
@@ -202,43 +220,77 @@ function RecallTab() {
         </Button>
       </div>
 
-      <div className="space-y-2">
-        {hits.map((hit) => (
-          <div key={hit.id} className="rounded-md border border-border bg-card p-2 text-xs">
-            <div className="flex items-center justify-between">
-              <span className="rounded bg-muted px-1.5 py-0.5">{hit.category}</span>
-              <span className="text-muted-foreground">{(hit.score * 100).toFixed(0)}%</span>
-            </div>
-            <p className="mt-1">{hit.content}</p>
-            <div className="mt-1 text-[10px] text-muted-foreground">
-              matched by {hit.matched_by}
-            </div>
-          </div>
-        ))}
-        {!loading && hits.length === 0 && (
-          <p className="text-center text-xs text-muted-foreground">No results.</p>
-        )}
-      </div>
+      <LayoutGroup>
+        <div className="space-y-2">
+          <AnimatePresence initial={false}>
+            {hits.map((hit, i) => (
+              <motion.div
+                key={hit.id}
+                layout
+                initial={{ opacity: 0, y: 4, scale: 0.97 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -4, scale: 0.97 }}
+                transition={{ duration: 0.18, delay: Math.min(i * 0.04, 0.4) }}
+                whileHover={{ y: -1, borderColor: "rgba(99,102,241,0.4)" }}
+                className="rounded-md border border-border bg-card p-2 text-xs"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="rounded bg-muted px-1.5 py-0.5">{hit.category}</span>
+                  <motion.span
+                    key={hit.score}
+                    initial={{ scale: 0.85 }}
+                    animate={{ scale: 1 }}
+                    transition={{ type: "spring", stiffness: 380, damping: 20 }}
+                    className="text-muted-foreground"
+                  >
+                    {(hit.score * 100).toFixed(0)}%
+                  </motion.span>
+                </div>
+                <p className="mt-1">{hit.content}</p>
+                <div className="mt-1 text-[10px] text-muted-foreground">
+                  matched by {hit.matched_by}
+                </div>
+              </motion.div>
+            ))}
+          </AnimatePresence>
+          {!loading && hits.length === 0 && (
+            <p className="text-center text-xs text-muted-foreground">No results.</p>
+          )}
+        </div>
+      </LayoutGroup>
     </div>
   );
 }
 
 function SessionsTab({ sessions }: { sessions: SessionMemory[] }) {
   return (
-    <div className="space-y-2">
-      {sessions.map((s) => (
-        <div key={s.session_id} className="rounded-md border border-border bg-card p-2 text-xs">
-          <div className="font-medium">{s.topic || s.session_id.slice(0, 8)}</div>
-          <p className="mt-1 text-muted-foreground">{s.summary}</p>
-          <div className="mt-1 text-[10px]">
-            {new Date(s.last_active * 1000).toLocaleDateString()}
-          </div>
-        </div>
-      ))}
-      {sessions.length === 0 && (
-        <p className="text-center text-xs text-muted-foreground">No sessions yet.</p>
-      )}
-    </div>
+    <LayoutGroup>
+      <div className="space-y-2">
+        <AnimatePresence initial={false}>
+          {sessions.map((s, i) => (
+            <motion.div
+              key={s.session_id}
+              layout
+              initial={{ opacity: 0, y: 4, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -4, scale: 0.97 }}
+              transition={{ duration: 0.18, delay: Math.min(i * 0.04, 0.4) }}
+              whileHover={{ y: -1, borderColor: "rgba(99,102,241,0.4)" }}
+              className="rounded-md border border-border bg-card p-2 text-xs"
+            >
+              <div className="font-medium">{s.topic || s.session_id.slice(0, 8)}</div>
+              <p className="mt-1 text-muted-foreground">{s.summary}</p>
+              <div className="mt-1 text-[10px]">
+                {new Date(s.last_active * 1000).toLocaleDateString()}
+              </div>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+        {sessions.length === 0 && (
+          <p className="text-center text-xs text-muted-foreground">No sessions yet.</p>
+        )}
+      </div>
+    </LayoutGroup>
   );
 }
 
