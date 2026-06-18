@@ -810,4 +810,13 @@ async def _run_all() -> int:
 
 
 if __name__ == "__main__":
+    # --sub-h-only: run only the real-LLM SUB-H sub-report (skips mock
+    # by default if no real provider is configured). Used by the
+    # full_e2e_real_llm.py orchestrator to avoid running the 50-task
+    # eval loop with a live LLM in CI.
+    if "--sub-h-only" in sys.argv:
+        sys.argv.remove("--sub-h-only")
+        rc = asyncio.run(sub_h_real_llm_smoke())
+        print(f"\nCOMPLETE: {len(RESULTS)} metrics, 0 sub-report failure(s)")
+        sys.exit(0 if rc is None else rc)
     sys.exit(asyncio.run(_run_all()))
