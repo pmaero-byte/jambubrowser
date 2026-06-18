@@ -54,3 +54,4 @@ staged_repo/
 # Secrets (if any)
 *.key
 .env
+tests/.artifacts/
