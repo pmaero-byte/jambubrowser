@@ -74,22 +74,44 @@ async def _call_llm_json(
     llm = get_default()
     last_err: Exception | None = None
     msgs = list(messages)
+    last_resp = None  # for diagnostics on retry
     for attempt in range(max_retries + 1):
         try:
             resp = await llm.chat(msgs, temperature=temperature, max_tokens=max_tokens)
+            last_resp = resp
             content = normalize_llm_response(resp.content)
             return _json.loads(content), resp
         except Exception as e:  # noqa: BLE001
             last_err = e
-            log.warning("LLM JSON call failed (attempt %d/%d): %s", attempt + 1, max_retries + 1, e)
+            # If the response was truncated by max_tokens (finish_reason='length')
+            # and the after-think content is empty, the retry needs a stronger
+            # hint: ask the model to drop its thinking and emit JSON only.
+            truncated = (
+                last_resp is not None
+                and getattr(last_resp, "finish_reason", None) == "length"
+            )
+            log.warning(
+                "LLM JSON call failed (attempt %d/%d, truncated=%s): %s",
+                attempt + 1, max_retries + 1, truncated, e,
+            )
             if attempt >= max_retries:
                 break
-            # Retry: append a hint to the last user message
-            hint = retry_hint
+            # Compose a more aggressive hint when the response was truncated
+            # (the model burned all tokens on a think block and never emitted
+            # the actual JSON).
+            if truncated:
+                hint = (
+                    "Your previous response was cut off — you spent the token "
+                    "budget on a thinking block and never produced the JSON. "
+                    "Skip the thinking this time. Reply with ONLY the JSON "
+                    "object, no prose, no markdown, no tags."
+                )
+            else:
+                hint = retry_hint
             if msgs and msgs[-1].role == Role.USER:
                 msgs[-1] = ChatMessage(role=Role.USER, content=msgs[-1].content + "\n\n" + hint)
             else:
-                msgs = msgs + [ChatMessage(role=Role.USER, content=hint)]
+                msgs = msgs + [ChatMessage(role=Role.USER, content=finish_reason + "\n\n" + hint)]
     # All retries exhausted
     assert last_err is not None
     raise last_err
@@ -419,7 +441,11 @@ class Critic:
                     ChatMessage(role=Role.USER, content=prompt),
                 ],
                 temperature=0.1,
-                max_tokens=300,
+                # Generous budget so reasoning models (M3, R1, Qwen-thinking)
+                # can fit both their internal think block AND the JSON
+                # verdict. 300 was too tight — the model burned all tokens
+                # on a think block and the JSON was truncated.
+                max_tokens=800,
                 retry_hint=(
                     "Respond with ONLY valid JSON: "
                     '{"verdict": "accepted"|"rejected", "confidence": 0.0-1.0, "feedback": "..."}'
