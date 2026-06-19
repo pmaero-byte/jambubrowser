@@ -58,13 +58,68 @@ _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 
 def _resolve_llm_config(cfg: dict) -> dict:
-    """Merge caller config with the matching cloud preset if provider is set."""
-    merged = dict(LATEST_LLM_CONFIG)
+    """Merge caller config with the matching cloud preset if provider is set.
+
+    Layered resolution:
+      1. Caller-supplied config (highest priority)
+      2. backend.llm.config (env-driven: JAMBU_LLM_PROVIDER, JAMBU_LLM_*_MODEL, etc.)
+      3. LATEST_LLM_CONFIG (legacy hardcoded default, kept as a last-resort fallback)
+
+    This is what /research and other engine_runtime callers use. Without
+    step 2, callers would always get the hardcoded ollama config even
+    when JAMBU_LLM_PROVIDER=minimax is set in the env.
+    """
+    merged: dict = {}
+    # 1. Caller config (highest priority)
     if cfg:
-        merged.update({k: v for k, v in cfg.items() if v})
+        for k, v in cfg.items():
+            if v:
+                merged[k] = v
+    # 2. Env-driven config (only if caller didn't supply a value)
+    try:
+        from backend.llm.config import get_config
+        env_cfg = get_config()
+        env_payload = {
+            "provider": env_cfg.default_provider,
+            "modelId": env_cfg.model_for(env_cfg.default_provider) if env_cfg.default_provider else None,
+            "baseUrl": (
+                env_cfg.anthropic_base_url
+                if env_cfg.default_provider == "anthropic" else
+                env_cfg.openai_base_url
+                if env_cfg.default_provider == "openai" else
+                env_cfg.ollama_base_url
+                if env_cfg.default_provider == "ollama" else
+                env_cfg.mlx_base_url
+                if env_cfg.default_provider == "mlx" else
+                env_cfg.minimax_base_url
+                if env_cfg.default_provider == "minimax" else
+                None
+            ),
+            "apiKey": (
+                env_cfg.anthropic_api_key
+                if env_cfg.default_provider == "anthropic" else
+                env_cfg.openai_api_key
+                if env_cfg.default_provider == "openai" else
+                env_cfg.minimax_api_key
+                if env_cfg.default_provider == "minimax" else
+                ""
+            ),
+        }
+        for k, v in env_payload.items():
+            if v and k not in merged:
+                merged[k] = v
+    except Exception:
+        pass
+    # 3. Legacy hardcoded default as last resort
+    for k, v in LATEST_LLM_CONFIG.items():
+        if k not in merged:
+            merged[k] = v
+    # Cloud preset overlay (so modelId/baseUrl match the chosen provider)
     provider = merged.get("provider", "ollama")
     if provider in CLOUD_PROVIDERS:
-        merged.update(CLOUD_PROVIDERS[provider])
+        for k, v in CLOUD_PROVIDERS[provider].items():
+            if v:
+                merged[k] = v
     return merged
 
 

@@ -195,10 +195,13 @@ async def _expand_query(query: str, client_id: str, llm_config: dict) -> list:
             return [query]
 
 
-async def _assess_url_risk(url: str, client_id: str, llm_config: dict) -> bool:
-    base_url = llm_config.get("baseUrl", "http://localhost:8080/v1")
-    model_id = llm_config.get("modelId", "gemma-4-12b")
-    api_key = llm_config.get("apiKey", "")
+async def _assess_url_risk(url: str, client_id: str, llm_config: dict | None) -> bool:
+    # llm_config may be None if the caller didn't supply it — default to
+    # an empty dict so the .get() chain doesn't crash on the first call.
+    cfg = llm_config or {}
+    base_url = cfg.get("baseUrl", "http://localhost:8080/v1")
+    model_id = cfg.get("modelId", "gemma-4-12b")
+    api_key = cfg.get("apiKey", "")
 
     prompt = f"Analyze this URL for security risks: '{url}'. Respond 'SAFE' or 'RISKY' with reason."
     async with httpx.AsyncClient() as client:
@@ -504,19 +507,36 @@ async def research(req: ResearchRequest):
 
 
 async def _scrape_source(url: str) -> Optional[str]:
-    """Scrape a single URL for research context."""
+    """Scrape a single URL for research context. Returns the text or None.
+
+    Note: backend.modules.scraper.scrape_url actually returns a dict (with
+    'content' / 'markdown' / etc.), not a string as the type hint suggested.
+    We coerce here so the caller can safely "\n\n".join() the results.
+    """
     try:
         from backend.modules.scraper import scrape_url
-        return await scrape_url(url, "")
-    except Exception:
-        try:
-            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as cl:
-                resp = await cl.get(url, headers={"User-Agent": "Mozilla/5.0"})
-                if resp.status_code == 200:
-                    text = resp.text[:10000]
-                    return re.sub(r"<[^>]+>", "", text)[:5000]
-        except Exception:
+        result = await scrape_url(url, "")
+        if result is None:
             return None
+        if isinstance(result, str):
+            return result
+        if isinstance(result, dict):
+            # Prefer markdown if available, fall back to text content
+            for key in ("markdown", "content", "text", "body"):
+                if key in result and result[key]:
+                    return str(result[key])[:10000]
+            # Last resort: stringify the dict
+            return str(result)[:10000]
+    except Exception:
+        pass
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as cl:
+            resp = await cl.get(url, headers={"User-Agent": "Mozilla/5.0"})
+            if resp.status_code == 200:
+                text = resp.text[:10000]
+                return re.sub(r"<[^>]+>", "", text)[:5000]
+    except Exception:
+        return None
 
 
 # ── Search ──
