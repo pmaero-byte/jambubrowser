@@ -483,7 +483,10 @@ async def research(req: ResearchRequest):
             prompt=synthesis_prompt,
             max_tokens=2000,
             temperature=0.3,
-            timeout=60.0,
+            # 60s was too tight when the LLM is slow under load (we saw
+            # 'MiniMax timeout' errors with the 8K-char synthesis prompt).
+            # Bump to 120s for the synthesis step specifically.
+            timeout=120.0,
         )
 
         if is_cancelled(task_id):
