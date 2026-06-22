@@ -13,12 +13,19 @@ import logging
 import os
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncGenerator
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
+
+# Load .env before any environment-dependent import or config read.
+# This ensures JAMBU_LLM_PROVIDER, MINIMAX_API_KEY, etc. are available
+# when the engine is started directly (e.g. `python3 -m uvicorn ...`).
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 logging.basicConfig(
     level=logging.INFO,

@@ -18,6 +18,9 @@ requests>=2.31.0
 # is set, all engine.search / scraper / arxiv requests go through it.
 httpx-socks[asyncio]>=0.7.7
 
+# Configuration
+python-dotenv>=1.0.0
+
 # System / process
 psutil>=5.9.0
 

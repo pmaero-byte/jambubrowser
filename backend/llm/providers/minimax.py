@@ -12,6 +12,11 @@ from typing import Any, AsyncIterator, Optional
 
 import httpx
 
+try:
+    from backend.core.socks import make_async_client
+except ImportError:
+    make_async_client = httpx.AsyncClient
+
 from ..base import (
     ChatMessage,
     ChatResponse,
@@ -58,7 +63,7 @@ class MiniMaxProvider:
         if not self.api_key:
             return False
         try:
-            async with httpx.AsyncClient() as client:
+            async with make_async_client() as client:
                 r = await client.get(
                     f"{self.base_url}/models",
                     headers=self._headers(),
@@ -91,7 +96,7 @@ class MiniMaxProvider:
             payload["tools"] = [{"type": "function", "function": t} for t in tools]
         started = time.monotonic()
         try:
-            async with httpx.AsyncClient() as client:
+            async with make_async_client() as client:
                 r = await client.post(
                     f"{self.base_url}/chat/completions",
                     headers=self._headers(),

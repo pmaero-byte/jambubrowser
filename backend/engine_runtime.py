@@ -114,11 +114,11 @@ def _resolve_llm_config(cfg: dict) -> dict:
     for k, v in LATEST_LLM_CONFIG.items():
         if k not in merged:
             merged[k] = v
-    # Cloud preset overlay (so modelId/baseUrl match the chosen provider)
+    # Cloud preset fallback (only for keys not already set by caller/env)
     provider = merged.get("provider", "ollama")
     if provider in CLOUD_PROVIDERS:
         for k, v in CLOUD_PROVIDERS[provider].items():
-            if v:
+            if v and k not in merged:
                 merged[k] = v
     return merged
 
