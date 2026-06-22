@@ -18,6 +18,11 @@ from dataclasses import dataclass, field
 
 import httpx
 
+try:
+    from backend.core.socks import make_async_client
+except ImportError:
+    make_async_client = httpx.AsyncClient
+
 
 @dataclass
 class UIElement:
@@ -57,7 +62,7 @@ class VisionModel:
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._http_client is None:
-            self._http_client = httpx.AsyncClient(timeout=60.0)
+            self._http_client = make_async_client(timeout=60.0)
         return self._http_client
 
     def _encode_image(self, image_data: bytes) -> str:

@@ -18,6 +18,11 @@ from collections import deque
 
 import httpx
 
+try:
+    from backend.core.socks import make_async_client
+except ImportError:
+    make_async_client = httpx.AsyncClient
+
 from backend.core.database import get_db_cursor
 
 
@@ -106,7 +111,7 @@ class ShadowBrowser:
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._http_client is None:
-            self._http_client = httpx.AsyncClient(
+            self._http_client = make_async_client(
                 headers={"User-Agent": self.USER_AGENT},
                 timeout=15.0, follow_redirects=True, max_redirects=3)
         return self._http_client

@@ -20,6 +20,12 @@ log = logging.getLogger("jambu.research")
 from backend.core.privacy import sanitize_content_for_storage
 from backend.core.sandbox import execute_sandboxed
 from backend.core.database import get_db_cursor
+
+try:
+    from backend.core.socks import make_async_client
+except ImportError:
+    make_async_client = httpx.AsyncClient
+
 from backend.engine_runtime import (
     LATEST_LLM_CONFIG, CLOUD_PROVIDERS, active_tasks, _task_token_counts,
     _task_token_starts, cancel_flags,
@@ -195,7 +201,7 @@ async def _expand_query(query: str, client_id: str, llm_config: dict) -> list:
             return [query]
 
 
-async def _assess_url_risk(url: str, client_id: str, llm_config: dict | None) -> bool:
+async def _assess_url_risk(url: str, client_id: str, llm_config: Optional[dict]) -> bool:
     # llm_config may be None if the caller didn't supply it — default to
     # an empty dict so the .get() chain doesn't crash on the first call.
     cfg = llm_config or {}
@@ -222,7 +228,7 @@ async def _fetch_arxiv(query: str) -> list:
     # arXiv redirects http->https; use https directly to avoid the
     # 301 round-trip and a transient empty response on the first call.
     url = f"https://export.arxiv.org/api/query?search_query=all:{query}&max_results=3"
-    async with httpx.AsyncClient() as client:
+    async with make_async_client() as client:
         resp = await client.get(url, timeout=15.0)
         root = ET.fromstring(resp.text)
         ns = "{http://www.w3.org/2005/Atom}"
@@ -237,7 +243,7 @@ async def _fetch_arxiv(query: str) -> list:
 
 async def _fetch_github(query: str) -> list:
     url = f"https://api.github.com/search/repositories?q={query}&per_page=3"
-    async with httpx.AsyncClient() as client:
+    async with make_async_client() as client:
         resp = await client.get(url, headers={"Accept": "application/vnd.github.v3+json"}, timeout=15.0)
         return [
             {"url": i["html_url"], "markdown": i.get("description", "")}
@@ -533,7 +539,7 @@ async def _scrape_source(url: str) -> Optional[str]:
     except Exception:
         pass
     try:
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as cl:
+        async with make_async_client(timeout=15.0, follow_redirects=True) as cl:
             resp = await cl.get(url, headers={"User-Agent": "Mozilla/5.0"})
             if resp.status_code == 200:
                 text = resp.text[:10000]

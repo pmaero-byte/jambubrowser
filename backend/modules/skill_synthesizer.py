@@ -26,6 +26,11 @@ from dataclasses import dataclass, field
 
 import httpx
 
+try:
+    from backend.core.socks import make_async_client
+except ImportError:
+    make_async_client = httpx.AsyncClient
+
 from backend.core.sandbox import execute_sandboxed
 from backend.core.database import get_db_cursor
 
@@ -85,7 +90,7 @@ class SkillSynthesizer:
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._http_client is None:
-            self._http_client = httpx.AsyncClient(timeout=30.0)
+            self._http_client = make_async_client(timeout=30.0)
         return self._http_client
 
     def classify_failure(self, error_message: str, 

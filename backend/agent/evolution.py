@@ -72,7 +72,7 @@ async def _call_llm_json(
     import json as _json
 
     llm = get_default()
-    last_err: Exception | None = None
+    last_err: Optional[Exception] = None
     msgs = list(messages)
     last_resp = None  # for diagnostics on retry
     for attempt in range(max_retries + 1):

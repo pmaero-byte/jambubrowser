@@ -20,6 +20,11 @@ from typing import Optional, Dict, List, Tuple, AsyncGenerator
 
 import httpx
 
+try:
+    from backend.core.socks import make_async_client
+except ImportError:
+    make_async_client = httpx.AsyncClient
+
 # ---------------------------------------------------------------------------
 # MLX Model Registry
 # ---------------------------------------------------------------------------
@@ -241,7 +246,7 @@ async def mlx_start_server(
                 }
             if is_mlx_server_running(port):
                 try:
-                    async with httpx.AsyncClient() as client:
+                    async with make_async_client() as client:
                         r = await client.get(f"http://{host}:{port}/health", timeout=3.0)
                         if r.status_code == 200:
                             data = r.json()
@@ -442,7 +447,7 @@ async def mlx_server_chat(
         "temperature": temperature,
     }
     
-    async with httpx.AsyncClient() as client:
+    async with make_async_client() as client:
         resp = await client.post(url, json=payload, timeout=timeout)
         if resp.status_code != 200:
             raise RuntimeError(f"MLX server error {resp.status_code}: {resp.text[:200]}")

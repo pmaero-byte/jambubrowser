@@ -9,6 +9,11 @@ answers. It can talk to both local models (Gemma) and cloud models (OpenAI).
 import httpx
 from typing import List, Dict
 
+try:
+    from backend.core.socks import make_async_client
+except ImportError:
+    make_async_client = httpx.AsyncClient
+
 async def ask_ai(prompt: str, config: Dict, system_msg: str = "You are a helpful assistant.") -> str:
     """
     Sends a message to the AI and returns the text response.
@@ -32,7 +37,7 @@ async def ask_ai(prompt: str, config: Dict, system_msg: str = "You are a helpful
         "temperature": config.get("temperature", 0.7)
     }
     
-    async with httpx.AsyncClient() as client:
+    async with make_async_client() as client:
         try:
             resp = await client.post(endpoint, headers=headers, json=payload, timeout=30.0)
             if resp.status_code == 200:

@@ -14,6 +14,17 @@ log = logging.getLogger("jambu.search")
 from typing import List, Dict
 from urllib.parse import quote_plus
 
+# Tor support: when JAMBU_TOR_SOCKS_URL is set, every outbound HTTP in
+# this module goes through the SOCKS5 proxy. Without it, behavior is
+# unchanged.
+try:
+    from backend.core.socks import make_async_client, is_tor_enabled
+except ImportError:
+    # Defensive: don't break if backend.core.socks is unavailable
+    # (e.g. when this module is imported standalone in a test).
+    make_async_client = httpx.AsyncClient
+    is_tor_enabled = lambda: False
+
 SEARXNG_URL = "http://localhost:8888/search"
 
 # Fallback search providers
@@ -36,7 +47,7 @@ async def _search_duckduckgo(query: str, max_results: int = 10) -> List[Dict]:
     except ImportError:
         # Fallback to instant answer API if library not installed
         try:
-            async with httpx.AsyncClient() as client:
+            async with make_async_client() as client:
                 resp = await client.get(
                     DUCKDUCKGO_API,
                     params={"q": query, "format": "json"},
@@ -79,7 +90,7 @@ async def _search_google_scrape(query: str, max_results: int = 10) -> List[Dict]
     """Direct Google search scraping as fallback (may be blocked)."""
     results = []
     try:
-        async with httpx.AsyncClient() as client:
+        async with make_async_client() as client:
             resp = await client.get(
                 "https://www.google.com/search",
                 params={"q": query, "num": max_results},
@@ -122,7 +133,7 @@ async def _search_bing_scrape(query: str, max_results: int = 10) -> List[Dict]:
     """
     results: List[Dict] = []
     try:
-        async with httpx.AsyncClient(follow_redirects=True) as client:
+        async with make_async_client(follow_redirects=True) as client:
             resp = await client.get(
                 "https://www.bing.com/search",
                 params={"q": query, "count": max_results},
@@ -182,7 +193,7 @@ async def _search_duckduckgo_html(query: str, max_results: int = 10) -> List[Dic
     """
     results: List[Dict] = []
     try:
-        async with httpx.AsyncClient(follow_redirects=True) as client:
+        async with make_async_client(follow_redirects=True) as client:
             resp = await client.get(
                 "https://html.duckduckgo.com/html/",
                 params={"q": query},
@@ -238,7 +249,7 @@ async def multi_engine_search(query: str, engines: str = "google,bing,duckduckgo
     """
     # Try SearXNG first
     try:
-        async with httpx.AsyncClient() as client:
+        async with make_async_client() as client:
             resp = await client.get(
                 SEARXNG_URL, 
                 params={"q": query, "format": "json", "engines": engines}, 

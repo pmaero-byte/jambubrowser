@@ -17,6 +17,12 @@ from backend.core.audit import get_audit_logger, ActionCategory
 from backend.core.privacy import sanitize_content_for_storage
 from backend.core.security import is_safe_url
 from backend.core.vault import get_vault
+
+try:
+    from backend.core.socks import make_async_client
+except ImportError:
+    make_async_client = httpx.AsyncClient
+
 from backend.engine_runtime import LATEST_LLM_CONFIG, manager
 
 router = APIRouter(tags=["browser"])
@@ -352,7 +358,7 @@ async def vision_grounding(req: VisionGroundRequest):
     model_id = LATEST_LLM_CONFIG.get("modelId", "gemma-4-12b")
 
     try:
-        async with httpx.AsyncClient() as cl:
+        async with make_async_client() as cl:
             resp = await cl.get(req.url, timeout=10.0, follow_redirects=True)
             page_text = resp.text[:5000] if resp.status_code == 200 else ""
 

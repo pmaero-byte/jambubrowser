@@ -18,6 +18,11 @@ from urllib.parse import urlparse
 
 import httpx
 
+try:
+    from backend.core.socks import make_async_client
+except ImportError:
+    make_async_client = httpx.AsyncClient
+
 from backend.modules.notifications import get_notifier, Urgency
 
 
@@ -83,7 +88,7 @@ class RiskShield:
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._http_client is None:
-            self._http_client = httpx.AsyncClient(timeout=10.0)
+            self._http_client = make_async_client(timeout=10.0)
         return self._http_client
 
     def _get_notifier(self):

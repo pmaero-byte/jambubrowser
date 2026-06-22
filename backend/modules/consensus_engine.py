@@ -30,6 +30,11 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+try:
+    from backend.core.socks import make_async_client
+except ImportError:
+    make_async_client = httpx.AsyncClient
+
 
 DEFAULT_STORE_PATH = Path.home() / ".jambubrowser" / "consensus.json"
 DEFAULT_TIMEOUT = 10.0
@@ -458,7 +463,7 @@ class ConsensusEngine:
             # Nothing to broadcast to — still success.
             return {"success": True, "broadcast_to": 0, "note": "no peers discovered"}
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with make_async_client(timeout=self.timeout) as client:
             results = []
             for url in peer_urls:
                 try:

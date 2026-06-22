@@ -27,6 +27,11 @@ from dataclasses import dataclass, field
 
 import httpx
 
+try:
+    from backend.core.socks import make_async_client
+except ImportError:
+    make_async_client = httpx.AsyncClient
+
 from backend.core.database import get_db_cursor
 
 
@@ -63,7 +68,7 @@ class HarnessBridge:
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._http_client is None:
-            self._http_client = httpx.AsyncClient(timeout=60.0)
+            self._http_client = make_async_client(timeout=60.0)
         return self._http_client
 
     async def is_available(self) -> bool:
