@@ -13,6 +13,7 @@ import {
   Wallet,
   Activity,
   Sparkles,
+  Users,
   FileText,
 } from "lucide-react";
 import { useAppStore, type CanvasTab } from "../../store/appStore";
@@ -32,6 +33,7 @@ const workspaceNav: { id: CanvasTab; label: string; icon: React.ElementType }[] 
 const systemNav: { id: CanvasTab; label: string; icon: React.ElementType }[] = [
   { id: "privacy", label: "Privacy", icon: Shield },
   { id: "audit", label: "Audit", icon: ScrollText },
+  { id: "team", label: "Team", icon: Users },
   { id: "vault", label: "Vault", icon: Wallet },
   { id: "settings", label: "Settings", icon: Settings },
 ];

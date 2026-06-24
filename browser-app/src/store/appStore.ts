@@ -12,7 +12,8 @@ export type CanvasTab =
   | "privacy"
   | "audit"
   | "vault"
-  | "settings";
+  | "settings"
+  | "team";
 
 export interface BrowserTab {
   id: string;

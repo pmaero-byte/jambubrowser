@@ -46,6 +46,9 @@ const SettingsPanel = lazy(() =>
 const AuditPanel = lazy(() =>
   import("./components/audit/AuditPanel").then((m) => ({ default: m.AuditPanel }))
 );
+const TeamPanel = lazy(() =>
+  import("./components/team/TeamPanel").then((m) => ({ default: m.TeamPanel }))
+);
 
 const USER_ID = "default";
 
@@ -175,6 +178,8 @@ export default function App() {
         return <AuditPanel />;
       case "vault":
         return <VaultUnlock />;
+      case "team":
+        return <TeamPanel />;
       case "settings":
         return <SettingsPanel />;
       default:
