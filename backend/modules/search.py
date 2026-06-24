@@ -210,24 +210,32 @@ async def _search_duckduckgo_html(query: str, max_results: int = 10) -> List[Dic
                 return results
             html = resp.text
             # DDG HTML: <a class="result__a" href="...">TITLE</a>
-            # + <a class="result__snippet" ...>SNIPPET</a>
-            item_pattern = re.compile(
+            # followed by <a class="result__snippet">SNIPPET</a>
+            title_pattern = re.compile(
                 r'<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>(.*?)</a>',
                 re.DOTALL,
             )
-            for url_match in item_pattern.finditer(html):
+            snippet_pattern = re.compile(
+                r'<a[^>]+class="result__snippet"[^>]*>(.*?)</a>',
+                re.DOTALL,
+            )
+            title_matches = list(title_pattern.finditer(html))
+            snippet_matches = list(snippet_pattern.finditer(html))
+            for i, url_match in enumerate(title_matches):
                 url = url_match.group(1)
-                # DDG wraps URLs in /l/?uddg=... — extract the real one
                 uddg = re.search(r'uddg=([^&]+)', url)
                 if uddg:
                     from urllib.parse import unquote
                     url = unquote(uddg.group(1))
                 title = re.sub(r'<[^>]+>', '', url_match.group(2)).strip()
+                snippet = ""
+                if i < len(snippet_matches):
+                    snippet = re.sub(r'<[^>]+>', '', snippet_matches[i].group(1)).strip()
                 if url.startswith("http") and title:
                     results.append({
                         "url": url,
                         "title": title[:200],
-                        "content": "",
+                        "content": snippet[:300],
                         "engine": "duckduckgo_html",
                     })
                 if len(results) >= max_results:
