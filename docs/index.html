@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jambubrowser — AI-Powered Webapp Auditor</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0a0a; color: #e0e0e0; line-height: 1.6; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 0 2rem; }
+        nav { padding: 1.5rem 0; border-bottom: 1px solid #222; }
+        nav .container { display: flex; justify-content: space-between; align-items: center; }
+        .logo { font-size: 1.5rem; font-weight: 700; color: #fff; }
+        .logo span { color: #6366f1; }
+        .nav-links a { color: #888; text-decoration: none; margin-left: 2rem; font-size: 0.9rem; }
+        .nav-links a:hover { color: #fff; }
+        .hero { text-align: center; padding: 6rem 0 4rem; }
+        .hero h1 { font-size: 3.5rem; font-weight: 800; line-height: 1.1; margin-bottom: 1.5rem; }
+        .hero h1 span { background: linear-gradient(135deg, #6366f1, #8b5cf6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .hero p { font-size: 1.25rem; color: #888; max-width: 600px; margin: 0 auto 2.5rem; }
+        .cta-group { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+        .btn { padding: 0.875rem 2rem; border-radius: 0.5rem; font-size: 1rem; font-weight: 600; cursor: pointer; text-decoration: none; transition: all 0.2s; }
+        .btn-primary { background: #6366f1; color: #fff; border: none; }
+        .btn-primary:hover { background: #5558e6; transform: translateY(-1px); }
+        .btn-secondary { background: transparent; color: #e0e0e0; border: 1px solid #333; }
+        .btn-secondary:hover { border-color: #6366f1; color: #fff; }
+        .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2rem; padding: 4rem 0; border-top: 1px solid #222; border-bottom: 1px solid #222; }
+        .stat { text-align: center; }
+        .stat .number { font-size: 2.5rem; font-weight: 800; color: #6366f1; }
+        .stat .label { color: #888; font-size: 0.9rem; margin-top: 0.5rem; }
+        .features { padding: 4rem 0; }
+        .features h2 { text-align: center; font-size: 2rem; margin-bottom: 3rem; }
+        .feature-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2rem; }
+        .feature { background: #111; border: 1px solid #222; border-radius: 1rem; padding: 2rem; transition: border-color 0.2s; }
+        .feature:hover { border-color: #6366f1; }
+        .feature .icon { font-size: 2rem; margin-bottom: 1rem; }
+        .feature h3 { font-size: 1.1rem; margin-bottom: 0.75rem; }
+        .feature p { color: #888; font-size: 0.9rem; }
+        .employees { padding: 4rem 0; background: #0f0f0f; }
+        .employees h2 { text-align: center; font-size: 2rem; margin-bottom: 1rem; }
+        .employees .subtitle { text-align: center; color: #888; margin-bottom: 3rem; }
+        .employee-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.5rem; }
+        .employee { background: #111; border: 1px solid #222; border-radius: 0.75rem; padding: 1.5rem; text-align: center; }
+        .employee .emoji { font-size: 2.5rem; margin-bottom: 0.75rem; }
+        .employee h4 { margin-bottom: 0.5rem; }
+        .employee p { color: #888; font-size: 0.85rem; }
+        .pricing { padding: 4rem 0; }
+        .pricing h2 { text-align: center; font-size: 2rem; margin-bottom: 3rem; }
+        .pricing-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.5rem; }
+        .tier { background: #111; border: 1px solid #222; border-radius: 1rem; padding: 2rem; text-align: center; }
+        .tier.popular { border-color: #6366f1; position: relative; }
+        .tier.popular::before { content: 'Most Popular'; position: absolute; top: -12px; left: 50%; transform: translateX(-50%); background: #6366f1; color: #fff; padding: 0.25rem 1rem; border-radius: 1rem; font-size: 0.75rem; font-weight: 600; }
+        .tier h3 { margin-bottom: 0.5rem; }
+        .tier .price { font-size: 2rem; font-weight: 800; color: #fff; margin: 1rem 0; }
+        .tier .price span { font-size: 1rem; color: #888; font-weight: 400; }
+        .tier ul { list-style: none; text-align: left; margin: 1.5rem 0; }
+        .tier li { padding: 0.5rem 0; color: #888; font-size: 0.9rem; }
+        .tier li::before { content: '✓ '; color: #6366f1; }
+        .tier .btn { width: 100%; }
+        .code-section { padding: 4rem 0; background: #0f0f0f; }
+        .code-section h2 { text-align: center; font-size: 2rem; margin-bottom: 2rem; }
+        .code-block { background: #111; border: 1px solid #222; border-radius: 0.75rem; padding: 2rem; max-width: 700px; margin: 0 auto; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.9rem; line-height: 1.8; }
+        .code-block .comment { color: #666; }
+        .code-block .cmd { color: #6366f1; }
+        .code-block .output { color: #888; }
+        footer { padding: 3rem 0; border-top: 1px solid #222; text-align: center; color: #666; font-size: 0.85rem; }
+        footer a { color: #888; text-decoration: none; }
+        footer a:hover { color: #fff; }
+        @media (max-width: 768px) {
+            .hero h1 { font-size: 2.5rem; }
+            .stats { grid-template-columns: repeat(2, 1fr); }
+            .feature-grid, .employee-grid { grid-template-columns: 1fr; }
+            .pricing-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <nav>
+        <div class="container">
+            <div class="logo">jambu<span>browser</span></div>
+            <div class="nav-links">
+                <a href="#features">Features</a>
+                <a href="#pricing">Pricing</a>
+                <a href="#docs">Docs</a>
+                <a href="https://github.com/pmaero-byte/jambubrowser">GitHub</a>
+            </div>
+        </div>
+    </nav>
+
+    <section class="hero">
+        <div class="container">
+            <h1>Your webapp has bugs.<br><span>6 AI employees find them.</span></h1>
+            <p>Enter any URL. Get security, performance, UX, SEO, accessibility, and code quality findings — with actionable fix suggestions — in 90 seconds.</p>
+            <div class="cta-group">
+                <a href="#pricing" class="btn btn-primary">Start Free</a>
+                <a href="#demo" class="btn btn-secondary">See Demo</a>
+            </div>
+        </div>
+    </section>
+
+    <section class="stats">
+        <div class="container">
+            <div class="stat"><div class="number">6</div><div class="label">AI Employees</div></div>
+            <div class="stat"><div class="number">90s</div><div class="label">Quick Scan</div></div>
+            <div class="stat"><div class="number">20+</div><div class="label">Findings per page</div></div>
+            <div class="stat"><div class="number">100%</div><div class="label">Local & Private</div></div>
+        </div>
+    </section>
+
+    <section class="employees" id="demo">
+        <div class="container">
+            <h2>Meet Your Audit Team</h2>
+            <p class="subtitle">6 specialist AI employees analyze your webapp in parallel</p>
+            <div class="employee-grid">
+                <div class="employee"><div class="emoji">🔒</div><h4>Security Auditor</h4><p>CSP, HSTS, cookies, secrets, CORS, TLS, forms</p></div>
+                <div class="employee"><div class="emoji">⚡</div><h4>Performance Inspector</h4><p>LCP, CLS, TBT, render-blocking, caching, images</p></div>
+                <div class="employee"><div class="emoji">🎨</div><h4>UX/UI Reviewer</h4><p>Contrast, touch targets, focus states, forms, responsiveness</p></div>
+                <div class="employee"><div class="emoji">🔍</div><h4>SEO Analyzer</h4><p>Meta tags, headings, alt text, canonical, structured data</p></div>
+                <div class="employee"><div class="emoji">♿</div><h4>Accessibility Auditor</h4><p>WCAG 2.1 AA — all 4 principles with criterion references</p></div>
+                <div class="employee"><div class="emoji">🧹</div><h4>Code Quality Scout</h4><p>Console errors, deprecated APIs, anti-patterns, error handling</p></div>
+            </div>
+        </div>
+    </section>
+
+    <section class="features" id="features">
+        <div class="container">
+            <h2>Why Developers Choose Jambubrowser</h2>
+            <div class="feature-grid">
+                <div class="feature"><div class="icon">🤖</div><h3>AI-Powered Analysis</h3><p>Not just metrics — each finding includes a description, impact assessment, and concrete fix suggestion with code examples.</p></div>
+                <div class="feature"><div class="icon">🔒</div><h3>100% Private</h3><p>Everything runs locally. No data leaves your machine unless you choose a cloud LLM. Tor routing available.</p></div>
+                <div class="feature"><div class="icon">⚡</div><h3>Parallel Execution</h3><p>All 6 employees run simultaneously. Results stream in real-time via SSE. No waiting for sequential analysis.</p></div>
+                <div class="feature"><div class="icon">📊</div><h3>Exportable Reports</h3><p>Generate Markdown reports with severity breakdown, employee findings, and fix suggestions. Attach to PRs.</p></div>
+                <div class="feature"><div class="icon">🔗</div><h3>CI/CD Integration</h3><p>GitHub Action audits every PR. Fail pipeline on critical findings. Comment results on pull requests.</p></div>
+                <div class="feature"><div class="icon">🛠️</div><h3>CLI First</h3><p>Terminal-native workflow. <code>jambu audit https://yoursite.com</code> — that's it.</p></div>
+            </div>
+        </div>
+    </section>
+
+    <section class="code-section">
+        <div class="container">
+            <h2>Audit in 3 Commands</h2>
+            <div class="code-block">
+                <span class="comment"># Install and authenticate</span><br>
+                <span class="cmd">$ pip install jambubrowser</span><br>
+                <span class="cmd">$ jambu auth jambu_your_api_key_here</span><br><br>
+                <span class="comment"># Quick scan (3 employees, ~90s)</span><br>
+                <span class="cmd">$ jambu quick https://yoursite.com</span><br><br>
+                <span class="comment"># Full audit (6 employees, ~3min)</span><br>
+                <span class="cmd">$ jambu audit https://yoursite.com</span><br><br>
+                <span class="output">🔍 Jambubrowser Full Audit</span><br>
+                <span class="output">   URL: https://yoursite.com</span><br><br>
+                <span class="output">   🔒 Security Auditor — 5 findings</span><br>
+                <span class="output">      🟠 [HIGH] CSP allows unsafe-inline — XSS risk</span><br>
+                <span class="output">      🟡 [MEDIUM] HSTS max-age too short</span><br><br>
+                <span class="output">   ⚡ Performance Inspector — 8 findings</span><br>
+                <span class="output">      🟡 [MEDIUM] 24 JS chunks — excessive HTTP requests</span><br><br>
+                <span class="output">   🎨 UX/UI Reviewer — 7 findings</span><br>
+                <span class="output">      🟠 [HIGH] All form inputs lack accessible labels</span><br><br>
+                <span class="output">   ────────────────────────────────────</span><br>
+                <span class="output">   📋 TOTAL: 20 findings</span><br>
+                <span class="output">   🟠 high: 3 | 🟡 medium: 7 | 🔵 low: 4 | ⚪ info: 6</span>
+            </div>
+        </div>
+    </section>
+
+    <section class="pricing" id="pricing">
+        <div class="container">
+            <h2>Simple, Transparent Pricing</h2>
+            <div class="pricing-grid">
+                <div class="tier">
+                    <h3>Free</h3>
+                    <div class="price">$0 <span>/month</span></div>
+                    <ul>
+                        <li>5 Quick Scans / month</li>
+                        <li>1 Full Audit / month</li>
+                        <li>Basic findings</li>
+                        <li>No report export</li>
+                    </ul>
+                    <a href="#" class="btn btn-secondary">Get Started</a>
+                </div>
+                <div class="tier popular">
+                    <h3>Pro</h3>
+                    <div class="price">$29 <span>/month</span></div>
+                    <ul>
+                        <li>Unlimited Quick Scans</li>
+                        <li>50 Full Audits / month</li>
+                        <li>Full findings + fixes</li>
+                        <li>Markdown/PDF export</li>
+                        <li>Audit history (30 days)</li>
+                        <li>GitHub Action</li>
+                    </ul>
+                    <a href="#" class="btn btn-primary">Start Free Trial</a>
+                </div>
+                <div class="tier">
+                    <h3>Team</h3>
+                    <div class="price">$99 <span>/month</span></div>
+                    <ul>
+                        <li>Everything in Pro</li>
+                        <li>Unlimited Full Audits</li>
+                        <li>Team dashboard</li>
+                        <li>Jira/Linear integration</li>
+                        <li>Custom audit rules</li>
+                        <li>Priority support</li>
+                    </ul>
+                    <a href="#" class="btn btn-secondary">Contact Sales</a>
+                </div>
+                <div class="tier">
+                    <h3>Enterprise</h3>
+                    <div class="price">Custom</div>
+                    <ul>
+                        <li>Self-hosted deployment</li>
+                        <li>Air-gapped LLM</li>
+                        <li>SSO/SAML</li>
+                        <li>Custom employees</li>
+                        <li>SLA + dedicated support</li>
+                        <li>SOC 2 compliance</li>
+                    </ul>
+                    <a href="#" class="btn btn-secondary">Contact Sales</a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <footer>
+        <div class="container">
+            <p>Built by <a href="https://github.com/pmaero-byte">pmaero-byte</a> · <a href="https://github.com/pmaero-byte/jambubrowser">GitHub</a> · <a href="/docs/API.md">API Docs</a></p>
+            <p style="margin-top: 0.5rem;">MIT License · Sovereign AI for developers</p>
+        </div>
+    </footer>
+</body>
+</html>

@@ -384,8 +384,26 @@ export function AuditPanel() {
       {/* Findings */}
       <div className="flex-1 overflow-y-auto p-4">
         {!summary && !running && (
-          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-            Enter a URL and run an audit to see findings.
+          <div className="flex h-full flex-col items-center justify-center gap-6">
+            <div className="text-5xl">🔍</div>
+            <div className="text-center">
+              <h3 className="text-lg font-medium mb-2">Audit any webapp</h3>
+              <p className="text-sm text-muted-foreground max-w-md">
+                Enter a URL above and run Quick Scan (3 employees, ~90s) or Full Audit
+                (6 employees, ~3min) to find security, performance, and UX issues.
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <div className="flex items-center gap-1.5 rounded-full bg-white/5 px-3 py-1.5 text-xs">
+                <span>🔒</span> Security
+              </div>
+              <div className="flex items-center gap-1.5 rounded-full bg-white/5 px-3 py-1.5 text-xs">
+                <span>⚡</span> Performance
+              </div>
+              <div className="flex items-center gap-1.5 rounded-full bg-white/5 px-3 py-1.5 text-xs">
+                <span>🎨</span> UX/UI
+              </div>
+            </div>
           </div>
         )}
 

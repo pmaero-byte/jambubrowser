@@ -417,6 +417,109 @@ Verify the integrity of the audit log chain.
 }
 ```
 
+### POST /audit/collect
+
+Collect page data without running LLM analysis.
+
+```bash
+curl -X POST http://localhost:8001/audit/collect \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com", "timeout_ms": 15000}'
+```
+
+**Request:**
+```json
+{
+  "url": "https://example.com",
+  "width": 1440,
+  "height": 900,
+  "timeout_ms": 15000,
+  "capture_screenshot": true
+}
+```
+
+### POST /audit/run
+
+Full audit — 6 employees analyze the page in parallel. Returns SSE stream.
+
+```bash
+curl -X POST http://localhost:8001/audit/run \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com", "mode": "full"}'
+```
+
+### POST /audit/quick
+
+Quick scan — 3 employees (Security, Performance, UX).
+
+```bash
+curl -X POST http://localhost:8001/audit/quick \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com"}'
+```
+
+### GET /audit/history
+
+List past audits.
+
+```bash
+curl http://localhost:8001/audit/history?limit=10
+```
+
+### GET /audit/history/{id}
+
+Get full audit details with findings.
+
+### POST /audit/history/{id}/share
+
+Generate a public shareable link.
+
+### GET /audit/shared/{token}
+
+View a shared audit (no auth required).
+
+---
+
+## API Keys
+
+### POST /api-keys/create
+
+Create a new API key.
+
+```bash
+curl -X POST http://localhost:8001/api-keys/create \
+  -H "Content-Type: application/json" \
+  -d '{"name": "CI Pipeline", "tier": "pro"}'
+```
+
+### GET /api-keys/list
+
+List all API keys for an owner.
+
+### DELETE /api-keys/{id}
+
+Deactivate an API key.
+
+### GET /api-keys/validate
+
+Validate an API key (pass via X-API-Key header).
+
+---
+
+## Billing
+
+### GET /billing/tiers
+
+List pricing tiers and features.
+
+### GET /billing/status
+
+Get current billing status for an API key.
+
+### POST /billing/checkout
+
+Create a Stripe checkout session.
+
 ---
 
 ## Vault
