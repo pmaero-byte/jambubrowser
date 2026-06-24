@@ -150,7 +150,7 @@ async def collect_page_data(req: AuditCollectRequest) -> AuditData:
             "status": response.status,
             "status_text": response.status_text,
             "resource_type": req.resource_type,
-            "transfer_size": response.headers.get("content-length", 0),
+            "transfer_size": int(response.headers.get("content-length", 0) or 0),
             "timing": timing,
         })
 
