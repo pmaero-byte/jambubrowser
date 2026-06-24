@@ -328,6 +328,53 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
         )
     """)
 
+    # ── API Keys & Billing ─────────────────────────────────────────────
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS api_keys (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            key_prefix TEXT NOT NULL,
+            key_hash TEXT UNIQUE NOT NULL,
+            name TEXT NOT NULL,
+            tier TEXT NOT NULL DEFAULT 'free',
+            owner TEXT NOT NULL DEFAULT 'default',
+            created_at REAL DEFAULT (julianday('now')),
+            last_used REAL,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            monthly_audit_limit INTEGER NOT NULL DEFAULT 6
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS audit_usage (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            key_id INTEGER NOT NULL,
+            audit_mode TEXT NOT NULL,
+            url TEXT NOT NULL,
+            findings_count INTEGER DEFAULT 0,
+            duration_ms REAL DEFAULT 0.0,
+            created_at REAL DEFAULT (julianday('now')),
+            FOREIGN KEY (key_id) REFERENCES api_keys(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS audit_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            url TEXT NOT NULL,
+            title TEXT,
+            mode TEXT NOT NULL,
+            total_findings INTEGER DEFAULT 0,
+            critical_count INTEGER DEFAULT 0,
+            high_count INTEGER DEFAULT 0,
+            medium_count INTEGER DEFAULT 0,
+            low_count INTEGER DEFAULT 0,
+            info_count INTEGER DEFAULT 0,
+            findings_json TEXT,
+            share_token TEXT UNIQUE,
+            created_at REAL DEFAULT (julianday('now'))
+        )
+    """)
+
     conn.commit()
     return conn
 

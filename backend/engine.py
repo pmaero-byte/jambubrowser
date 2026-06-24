@@ -242,6 +242,8 @@ from backend.routes.multimodal import router as multimodal_router
 from backend.routes.fingerprint import router as fingerprint_router
 from backend.routes.media import router as media_router
 from backend.routes.audit import router as audit_router
+from backend.routes.api_keys import router as api_keys_router
+from backend.routes.billing import router as billing_router
 
 app.include_router(system_router)
 app.include_router(ws_router)
@@ -264,6 +266,8 @@ app.include_router(multimodal_router)
 app.include_router(fingerprint_router)
 app.include_router(media_router)
 app.include_router(audit_router)
+app.include_router(api_keys_router)
+app.include_router(billing_router)
 
 
 # ---------------------------------------------------------------------------
