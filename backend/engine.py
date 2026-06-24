@@ -244,6 +244,7 @@ from backend.routes.media import router as media_router
 from backend.routes.audit import router as audit_router
 from backend.routes.api_keys import router as api_keys_router
 from backend.routes.billing import router as billing_router
+from backend.routes.teams import router as teams_router
 
 app.include_router(system_router)
 app.include_router(ws_router)
@@ -268,6 +269,7 @@ app.include_router(media_router)
 app.include_router(audit_router)
 app.include_router(api_keys_router)
 app.include_router(billing_router)
+app.include_router(teams_router)
 
 
 # ---------------------------------------------------------------------------

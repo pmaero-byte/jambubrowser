@@ -375,6 +375,61 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS teams (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            slug TEXT UNIQUE NOT NULL,
+            owner TEXT NOT NULL DEFAULT 'default',
+            plan TEXT NOT NULL DEFAULT 'team',
+            created_at REAL DEFAULT (julianday('now'))
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS team_members (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            team_id INTEGER NOT NULL,
+            email TEXT NOT NULL,
+            name TEXT,
+            role TEXT NOT NULL DEFAULT 'member',
+            invited_at REAL DEFAULT (julianday('now')),
+            joined_at REAL,
+            FOREIGN KEY (team_id) REFERENCES teams(id),
+            UNIQUE(team_id, email)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS finding_assignments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            audit_id INTEGER NOT NULL,
+            finding_id TEXT NOT NULL,
+            team_id INTEGER NOT NULL,
+            assigned_to TEXT NOT NULL,
+            assigned_by TEXT NOT NULL DEFAULT 'default',
+            status TEXT NOT NULL DEFAULT 'open',
+            notes TEXT,
+            created_at REAL DEFAULT (julianday('now')),
+            resolved_at REAL,
+            FOREIGN KEY (audit_id) REFERENCES audit_history(id),
+            FOREIGN KEY (team_id) REFERENCES teams(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS team_activity (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            team_id INTEGER NOT NULL,
+            actor TEXT NOT NULL,
+            action TEXT NOT NULL,
+            target TEXT,
+            details TEXT,
+            created_at REAL DEFAULT (julianday('now')),
+            FOREIGN KEY (team_id) REFERENCES teams(id)
+        )
+    """)
+
     conn.commit()
     return conn
 
