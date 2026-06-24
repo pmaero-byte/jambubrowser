@@ -43,6 +43,9 @@ const HistoryPanel = lazy(() =>
 const SettingsPanel = lazy(() =>
   import("./components/settings/SettingsPanel").then((m) => ({ default: m.SettingsPanel }))
 );
+const AuditPanel = lazy(() =>
+  import("./components/audit/AuditPanel").then((m) => ({ default: m.AuditPanel }))
+);
 
 const USER_ID = "default";
 
@@ -169,7 +172,7 @@ export default function App() {
       case "privacy":
         return <PrivacyControls />;
       case "audit":
-        return <AuditLogViewer />;
+        return <AuditPanel />;
       case "vault":
         return <VaultUnlock />;
       case "settings":
