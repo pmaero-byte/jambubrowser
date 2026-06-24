@@ -1,0 +1,110 @@
+name: Jambubrowser Audit
+
+on:
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      url:
+        description: URL to audit
+        required: true
+      mode:
+        description: Audit mode
+        default: quick
+        type: choice
+        options: [quick, full]
+
+env:
+  JAMBU_ENGINE_URL: ${{ secrets.JAMBU_ENGINE_URL || 'http://localhost:8001' }}
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium
+
+      - name: Start engine
+        run: |
+          python3 -m uvicorn backend.engine:app --host 127.0.0.1 --port 8001 &
+          sleep 5
+          curl -sf http://127.0.0.1:8001/health || exit 1
+
+      - name: Determine URL
+        id: url
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "url=${{ github.event.inputs.url }}" >> $GITHUB_OUTPUT
+            echo "mode=${{ github.event.inputs.mode }}" >> $GITHUB_OUTPUT
+          else
+            echo "url=${{ github.event.pull_request.html_url }}" >> $GITHUB_OUTPUT
+            echo "mode=quick" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run audit
+        id: audit
+        run: |
+          RESULT=$(curl -sf -X POST http://127.0.0.1:8001/audit/${{ steps.url.outputs.mode }} \
+            -H "Content-Type: application/json" \
+            -d '{"url": "${{ steps.url.outputs.url }}", "mode": "${{ steps.url.outputs.mode }}"}' \
+            --max-time 300 2>&1)
+
+          # Parse SSE output
+          TOTAL=$(echo "$RESULT" | grep '"total_findings"' | tail -1 | python3 -c "import sys,json; print(json.loads(sys.stdin.read().split('data: ')[1]).get('total_findings', 0))" 2>/dev/null || echo "0")
+          CRITICAL=$(echo "$RESULT" | grep '"critical"' | tail -1 | python3 -c "import sys,json; d=json.loads(sys.stdin.read().split('data: ')[1]); print(d.get('by_severity',{}).get('critical',0))" 2>/dev/null || echo "0")
+          HIGH=$(echo "$RESULT" | grep '"high"' | tail -1 | python3 -c "import sys,json; d=json.loads(sys.stdin.read().split('data: ')[1]); print(d.get('by_severity',{}).get('high',0))" 2>/dev/null || echo "0")
+
+          echo "total=$TOTAL" >> $GITHUB_OUTPUT
+          echo "critical=$CRITICAL" >> $GITHUB_OUTPUT
+          echo "high=$HIGH" >> $GITHUB_OUTPUT
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const total = '${{ steps.audit.outputs.total }}';
+            const critical = '${{ steps.audit.outputs.critical }}';
+            const high = '${{ steps.audit.outputs.high }}';
+
+            const body = `## 🔍 Jambubrowser Audit Results
+
+            | Metric | Count |
+            |--------|-------|
+            | Total findings | ${total} |
+            | Critical | ${critical} |
+            | High | ${high} |
+
+            ${parseInt(critical) > 0 ? '❌ **Critical issues found — please fix before merging.**' : ''}
+            ${parseInt(high) > 0 ? '⚠️ **High severity issues found — review recommended.**' : ''}
+            ${parseInt(critical) === 0 && parseInt(high) === 0 ? '✅ No critical or high severity issues found.' : ''}
+
+            <details>
+            <summary>View full audit</summary>
+
+            Run \`jambu audit <url>\` locally for detailed findings with fix suggestions.
+            </details>
+            `;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+      - name: Fail on critical findings
+        if: steps.audit.outputs.critical > 0
+        run: |
+          echo "❌ Critical findings detected: ${{ steps.audit.outputs.critical }}"
+          exit 1
