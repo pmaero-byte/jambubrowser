@@ -227,6 +227,41 @@ async def collect_page_data(req: AuditCollectRequest) -> AuditData:
     except Exception as e:
         log.warning("Accessibility snapshot failed: %s", e)
 
+    # Fallback: extract basic DOM structure if accessibility tree is empty
+    if not data.dom_snapshot:
+        try:
+            dom_info = await page.evaluate("""() => {
+                const headings = Array.from(document.querySelectorAll('h1,h2,h3,h4,h5,h6')).map(
+                    h => h.tagName + ': ' + (h.textContent || '').trim().substring(0, 80)
+                );
+                const links = Array.from(document.querySelectorAll('a[href]')).map(
+                    a => a.textContent.trim().substring(0, 60) + ' → ' + a.href.substring(0, 100)
+                );
+                const buttons = Array.from(document.querySelectorAll('button,input[type=submit],input[type=button]')).map(
+                    b => (b.textContent || b.value || b.id || 'unnamed').trim().substring(0, 50)
+                );
+                const inputs = Array.from(document.querySelectorAll('input,textarea,select')).map(
+                    i => `${i.tagName}[type=${i.type || 'text'}] name=${i.name || '?'} id=${i.id || '?'}`.substring(0, 80)
+                );
+                const images = Array.from(document.querySelectorAll('img')).map(
+                    img => `src=${img.src.substring(0, 60)} alt=\"${(img.alt || '').substring(0, 40)}\"`
+                );
+                const forms = Array.from(document.querySelectorAll('form')).map(
+                    f => `action=${f.action.substring(0, 60)} method=${f.method}`
+                );
+                const meta = Array.from(document.querySelectorAll('meta[name],meta[property]')).map(
+                    m => (m.name || m.getAttribute('property')) + '=' + m.content.substring(0, 80)
+                );
+                return {
+                    headings, links, buttons, inputs, images, forms, meta,
+                    totalNodes: document.querySelectorAll('*').length,
+                    lang: document.documentElement.lang || 'not set',
+                };
+            }""")
+            data.dom_snapshot = _format_dom_fallback(dom_info)
+        except Exception as e:
+            log.warning("DOM fallback failed: %s", e)
+
     # ── Page Source ────────────────────────────────────────────────────
 
     try:
@@ -387,6 +422,29 @@ def _format_accessibility_tree(node, depth: int = 0) -> str:
     return "\n".join(lines)
 
 
+def _format_dom_fallback(dom_info: dict) -> str:
+    """Format basic DOM structure when accessibility tree is unavailable."""
+    lines = [f"DOM nodes: {dom_info.get('totalNodes', '?')}, lang={dom_info.get('lang', '?')}\n"]
+
+    sections = [
+        ("HEADINGS", "headings"),
+        ("LINKS", "links"),
+        ("BUTTONS", "buttons"),
+        ("INPUTS", "inputs"),
+        ("IMAGES", "images"),
+        ("FORMS", "forms"),
+        ("META TAGS", "meta"),
+    ]
+    for label, key in sections:
+        items = dom_info.get(key, [])
+        if items:
+            lines.append(f"--- {label} ({len(items)}) ---")
+            for item in items[:15]:
+                lines.append(f"  {item}")
+
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # POST /audit/collect
 # ---------------------------------------------------------------------------
@@ -410,7 +468,6 @@ async def audit_collect(req: AuditCollectRequest):
             "console_logs": len(data.console_logs),
             "cookies": len(data.cookies),
             "lighthouse": data.lighthouse_report is not None,
-            "data": data,  # Full data for follow-up /audit/run
         }
     except Exception as e:
         log.exception("audit/collect failed for %s", req.url)

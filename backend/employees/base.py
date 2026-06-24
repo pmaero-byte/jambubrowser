@@ -266,5 +266,7 @@ def _coerce_to_findings(parsed, employee_name: str) -> list[Finding]:
     for item in parsed:
         if not isinstance(item, dict):
             continue
-        findings.append(Finding.from_dict(item))
+        f = Finding.from_dict(item)
+        f.employee = employee_name
+        findings.append(f)
     return findings
