@@ -14,6 +14,7 @@ export interface AgentTelemetry {
   tokens_generated?: number;
   tokens_per_sec?: number;
   context_size?: number;
+  cost_usd?: number;
   timestamp: number;
 }
 
@@ -39,7 +40,10 @@ export interface TaskEnd {
   timestamp: number;
 }
 
-const WS_URL = "ws://localhost:8001/ws/default";
+function wsUrl(): string {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${location.hostname}:8001/ws/default`;
+}
 
 export function useAgentWebSocket() {
   const wsRef = useRef<WebSocket | null>(null);
@@ -56,7 +60,7 @@ export function useAgentWebSocket() {
 
     function connect() {
       if (closed) return;
-      const ws = new WebSocket(WS_URL);
+      const ws = new WebSocket(wsUrl());
       wsRef.current = ws;
 
       ws.onopen = () => setConnected(true);

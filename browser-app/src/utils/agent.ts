@@ -1,8 +1,6 @@
 // Agent API helpers — wraps the /v2/agent/* endpoints and parses SSE streams
-import { localFetch } from "./api";
+import { localFetch, isTauri } from "./api";
 import type { AgentEvent, Plan, ToolSpec } from "./types";
-
-const BACKEND_URL = import.meta.env.DEV ? "" : "http://localhost:8001";
 
 export async function listAgentTools(): Promise<{ tools: ToolSpec[]; stats: any[] }> {
   const r = await localFetch("/v2/agent/tools");
@@ -30,19 +28,37 @@ export async function* runAgentStream(opts: {
   max_tokens?: number;
   max_seconds?: number;
 }): AsyncGenerator<AgentEvent> {
-  const url = `${BACKEND_URL}/v2/agent/run`;
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      query: opts.query,
-      user_id: opts.user_id || "default",
-      max_steps: opts.max_steps ?? 10,
-      max_tokens: opts.max_tokens ?? 30000,
-      max_seconds: opts.max_seconds ?? 120,
-      stream: true,
-    }),
+  const body = JSON.stringify({
+    query: opts.query,
+    user_id: opts.user_id || "default",
+    max_steps: opts.max_steps ?? 10,
+    max_tokens: opts.max_tokens ?? 30000,
+    max_seconds: opts.max_seconds ?? 120,
+    stream: true,
   });
+
+  let resp: Response;
+
+  if (isTauri()) {
+    resp = await localFetch("/v2/agent/run", {
+      method: "POST",
+      body,
+    });
+  } else {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 180_000);
+    try {
+      resp = await fetch("/v2/agent/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   if (!resp.ok || !resp.body) {
     yield {
       type: "run_failed",

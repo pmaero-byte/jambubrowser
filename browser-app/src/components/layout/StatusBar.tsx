@@ -92,7 +92,7 @@ export function StatusBar() {
         </div>
         <div className="hidden sm:flex items-center gap-1.5">
           <DollarSign className="h-3 w-3" />
-          <span>$0.00</span>
+          <span>${(telemetry?.cost_usd ?? 0).toFixed(4)}</span>
         </div>
         <div className="hidden md:flex items-center gap-1.5 capitalize">
           <span className="text-accent">{agentState?.state || "idle"}</span>

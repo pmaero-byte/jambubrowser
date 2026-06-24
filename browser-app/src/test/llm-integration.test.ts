@@ -62,7 +62,7 @@ describe("real-LLM integration", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: [{ role: "user", content: "Reply with the single word 'pong'." }],
-          max_tokens: 30,
+          max_tokens: 200,
           temperature: 0,
         }),
         signal: AbortSignal.timeout(20_000),

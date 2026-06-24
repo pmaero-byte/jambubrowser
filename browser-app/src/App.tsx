@@ -1,4 +1,4 @@
-import { useCallback, useState, Suspense, lazy } from "react";
+import { useCallback, useState, useRef, Suspense, lazy } from "react";
 import { AppShell } from "./components/layout/AppShell";
 import { ChatPane } from "./components/chat/ChatPane";
 import { useAppStore } from "./store/appStore";
@@ -58,6 +58,7 @@ export default function App() {
 
   const { clearReasoning } = useAgentWebSocket();
   const [agentEvents, setAgentEvents] = useState<AgentEvent[]>([]);
+  const abortRef = useRef<AbortController | null>(null);
 
   const handleSend = useCallback(
     async (text: string) => {
@@ -78,12 +79,15 @@ export default function App() {
 
       try {
         if (activeModel === "legacy") {
+          const ac = new AbortController();
+          abortRef.current = ac;
           const res = await localFetch("/research", {
             method: "POST",
             body: JSON.stringify({
               query: text,
               brain_only: true,
             }),
+            signal: ac.signal,
           });
           const data = await res.json();
           updateLastMessage({
@@ -100,6 +104,7 @@ export default function App() {
             user_id: USER_ID,
             max_steps: 10,
           })) {
+            if (abortRef.current?.signal.aborted) break;
             setAgentEvents((prev) => [...prev, ev]);
             if (ev.type === "answer_ready") {
               answer = ev.data.answer || "";
@@ -130,11 +135,17 @@ export default function App() {
     [activeModel, addMessage, updateLastMessage, setIsLoading, clearReasoning]
   );
 
+  const handleStop = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setIsLoading(false);
+  }, [setIsLoading]);
+
   const renderCanvas = () => {
     switch (activeTab) {
       case "chat":
       case "plan":
-        return <ChatPane agentEvents={agentEvents} onSend={handleSend} onStop={() => {}} />;
+        return <ChatPane agentEvents={agentEvents} onSend={handleSend} onStop={handleStop} />;
       case "browser":
         return <BrowserPane />;
       case "logs":
