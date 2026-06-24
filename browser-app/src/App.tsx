@@ -34,6 +34,15 @@ const CommandPalette = lazy(() =>
 const OnboardingWizard = lazy(() =>
   import("./components/onboarding/OnboardingWizard").then((m) => ({ default: m.OnboardingWizard }))
 );
+const MissionsPanel = lazy(() =>
+  import("./components/missions/MissionsPanel").then((m) => ({ default: m.MissionsPanel }))
+);
+const HistoryPanel = lazy(() =>
+  import("./components/history/HistoryPanel").then((m) => ({ default: m.HistoryPanel }))
+);
+const SettingsPanel = lazy(() =>
+  import("./components/settings/SettingsPanel").then((m) => ({ default: m.SettingsPanel }))
+);
 
 const USER_ID = "default";
 
@@ -154,17 +163,9 @@ export default function App() {
       case "knowledge":
         return <MemoryPanel />;
       case "missions":
-        return (
-          <div className="flex h-full items-center justify-center text-muted-foreground">
-            Missions scheduler coming soon.
-          </div>
-        );
+        return <MissionsPanel />;
       case "history":
-        return (
-          <div className="flex h-full items-center justify-center text-muted-foreground">
-            Session history coming soon.
-          </div>
-        );
+        return <HistoryPanel />;
       case "privacy":
         return <PrivacyControls />;
       case "audit":
@@ -172,11 +173,7 @@ export default function App() {
       case "vault":
         return <VaultUnlock />;
       case "settings":
-        return (
-          <div className="flex h-full items-center justify-center text-muted-foreground">
-            Settings coming soon.
-          </div>
-        );
+        return <SettingsPanel />;
       default:
         return null;
     }
