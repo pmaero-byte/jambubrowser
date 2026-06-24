@@ -562,14 +562,110 @@ async def audit_run(req: AuditRunRequest):
         except Exception:
             pass
 
+        # Save to audit history
+        try:
+            from backend.core.database import get_db
+            findings_json = json.dumps([f.to_dict() for f in all_findings], default=str)
+            with get_db() as conn:
+                conn.execute("""
+                    INSERT INTO audit_history (url, title, mode, total_findings,
+                        critical_count, high_count, medium_count, low_count, info_count,
+                        findings_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    req.url, data.title, req.mode, len(all_findings),
+                    by_severity.get("critical", 0), by_severity.get("high", 0),
+                    by_severity.get("medium", 0), by_severity.get("low", 0),
+                    by_severity.get("info", 0), findings_json,
+                ))
+                conn.commit()
+        except Exception as e:
+            log.warning("Failed to save audit history: %s", e)
+
+        # Record API key usage if authenticated
+        if hasattr(req, '_api_key') and req._api_key:
+            try:
+                from backend.core.api_keys import record_audit_usage
+                record_audit_usage(
+                    req._api_key.id, req.mode, req.url,
+                    len(all_findings), data.load_time_ms,
+                )
+            except Exception:
+                pass
+
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
-@router.post("/quick")
-async def audit_quick(req: AuditRunRequest):
-    """Quick scan: 3 employees (Security, Performance, UX), fast turnaround."""
-    req.mode = "quick"
-    return await audit_run(req)
+@router.get("/history")
+async def audit_history(limit: int = 20, offset: int = 0):
+    from backend.core.database import get_db
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT id, url, title, mode, total_findings,
+                   critical_count, high_count, medium_count, low_count, info_count,
+                   created_at, share_token
+            FROM audit_history
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?
+        """, (limit, offset)).fetchall()
+
+    return {
+        "audits": [dict(r) for r in rows],
+        "total": len(rows),
+    }
+
+
+@router.get("/history/{audit_id}")
+async def audit_history_detail(audit_id: int):
+    from backend.core.database import get_db
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM audit_history WHERE id = ?", (audit_id,)
+        ).fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Audit not found")
+
+    result = dict(row)
+    if result.get("findings_json"):
+        result["findings"] = json.loads(result["findings_json"])
+        del result["findings_json"]
+    return result
+
+
+@router.post("/history/{audit_id}/share")
+async def audit_share(audit_id: int):
+    import secrets
+    token = secrets.token_urlsafe(16)
+    from backend.core.database import get_db
+    with get_db() as conn:
+        result = conn.execute(
+            "UPDATE audit_history SET share_token = ? WHERE id = ?",
+            (token, audit_id),
+        )
+        conn.commit()
+        if result.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Audit not found")
+
+    return {"share_token": token, "share_url": f"/audit/shared/{token}"}
+
+
+@router.get("/shared/{token}")
+async def audit_shared(token: str):
+    from backend.core.database import get_db
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM audit_history WHERE share_token = ?", (token,)
+        ).fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Shared audit not found or expired")
+
+    result = dict(row)
+    if result.get("findings_json"):
+        result["findings"] = json.loads(result["findings_json"])
+        del result["findings_json"]
+    return result
 
 
 def _sse(event: str, data: dict) -> str:
