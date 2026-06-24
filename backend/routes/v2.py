@@ -51,10 +51,12 @@ async def llm_chat(req: LLMChatRequest):
         return StreamingResponse(gen(), media_type="text/event-stream")
 
     try:
+        from backend.llm import normalize_llm_response
         resp = await get_registry().chat(
             msgs, provider=req.provider, model=req.model,
             max_tokens=req.max_tokens, temperature=req.temperature, tools=req.tools,
         )
+        resp.content = normalize_llm_response(resp.content)
         return resp.to_dict() if hasattr(resp, "to_dict") else {
             "content": resp.content, "model": resp.model, "provider": resp.provider,
             "usage": resp.usage.__dict__, "finish_reason": resp.finish_reason,
