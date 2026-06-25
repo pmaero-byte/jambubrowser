@@ -77,6 +77,26 @@ DEDUP_GROUPS = {
         "title": "Accessibility Issues",
         "description": "The page has accessibility barriers for users with disabilities.",
     },
+    "deprecated_apis": {
+        "categories": ["deprecated-api", "third-party"],
+        "title": "Deprecated API Usage",
+        "description": "Console warnings indicate deprecated browser API usage.",
+    },
+    "semantic_html": {
+        "categories": ["content", "navigation", "landmarks"],
+        "title": "Semantic HTML Structure",
+        "description": "Page structure could be improved with semantic HTML elements.",
+    },
+    "service_worker": {
+        "categories": ["error-handling", "anti-pattern", "loading"],
+        "title": "Service Worker & Loading Patterns",
+        "description": "Service worker and loading patterns need attention.",
+    },
+    "info_disclosure": {
+        "categories": ["info-disclosure"],
+        "title": "Information Disclosure",
+        "description": "Server headers reveal infrastructure details.",
+    },
 }
 
 
@@ -207,13 +227,59 @@ def _assess_business_impact(finding: Finding) -> BusinessImpact:
             reasoning="Accessibility issues create legal risk and exclude users.",
         )
 
-    # Default
+    # Default - better heuristics based on category patterns
+    if category in ["deprecated-api", "third-party", "error-handling", "anti-pattern", "loading"]:
+        return BusinessImpact(
+            user_impact="developers (code quality)",
+            revenue_impact="indirect (maintainability, future bugs)",
+            fix_effort="30 minutes",
+            priority_score=4,
+            reasoning="Code quality issues affect maintainability but not immediate user experience.",
+        )
+
+    if category in ["content", "navigation", "landmarks", "semantic"]:
+        return BusinessImpact(
+            user_impact="users with disabilities (~15% of population)",
+            revenue_impact="indirect (legal compliance, accessibility)",
+            fix_effort="1 hour",
+            priority_score=6,
+            reasoning="Semantic HTML and accessibility affect users with disabilities and SEO.",
+        )
+
+    if category in ["info-disclosure", "headers"]:
+        return BusinessImpact(
+            user_impact="all users",
+            revenue_impact="indirect (security posture)",
+            fix_effort="5 minutes",
+            priority_score=5,
+            reasoning="Information disclosure is low risk but indicates security hygiene.",
+        )
+
+    if category in ["structured-data", "og-tags", "twitter-card"]:
+        return BusinessImpact(
+            user_impact="potential users (search/social traffic)",
+            revenue_impact="indirect (discoverability, social sharing)",
+            fix_effort="15 minutes",
+            priority_score=5,
+            reasoning="Structured data and social tags improve discoverability.",
+        )
+
+    if category in ["performance-anti-pattern", "caching", "compression"]:
+        return BusinessImpact(
+            user_impact="all users (especially mobile)",
+            revenue_impact="direct (page speed affects conversions)",
+            fix_effort="1-2 hours",
+            priority_score=6,
+            reasoning="Performance optimizations improve user experience and conversions.",
+        )
+
+    # Truly unknown categories
     return BusinessImpact(
-        user_impact="varies",
+        user_impact="varies by implementation",
         revenue_impact="indirect",
         fix_effort="varies",
-        priority_score=5,
-        reasoning="Impact depends on specific implementation.",
+        priority_score=4,
+        reasoning="Impact depends on specific use case and implementation.",
     )
 
 
@@ -298,6 +364,103 @@ add_header {header[0]} "{header[1]}" always;
 
 <!-- Decorative image -->
 <img src="divider.png" alt="" role="presentation">
+```"""
+
+    if category == "keyboard":
+        return """Ensure keyboard accessibility:
+```html
+<!-- Add tabindex to interactive elements -->
+<div role="button" tabindex="0" onclick="handleClick()" onkeydown="handleKeyDown(event)">
+  Click me
+</div>
+
+<!-- CSS for focus states -->
+<style>
+:focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: 2px;
+}
+</style>
+```"""
+
+    if category == "aria":
+        return """Add ARIA attributes:
+```html
+<!-- For buttons without text -->
+<button aria-label="Close dialog">
+  <svg><!-- X icon --></svg>
+</button>
+
+<!-- For expandable content -->
+<button aria-expanded="false" aria-controls="content-1">
+  Show more
+</button>
+<div id="content-1" hidden>...</div>
+
+<!-- For live regions -->
+<div aria-live="polite" aria-atomic="true">
+  Status updates appear here
+</div>
+```"""
+
+    if category == "structured-data":
+        return """Add JSON-LD structured data:
+```html
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebSite",
+  "name": "Your Site Name",
+  "url": "https://yoursite.com/",
+  "description": "Your site description",
+  "potentialAction": {
+    "@type": "SearchAction",
+    "target": "https://yoursite.com/search?q={search_term_string}",
+    "query-input": "required name=search_term_string"
+  }
+}
+</script>
+```"""
+
+    if category in ["deprecated-api", "third-party"]:
+        return """Update deprecated API usage:
+```javascript
+// Instead of deprecated performance.timing
+// Use Performance Observer API
+const observer = new PerformanceObserver((list) => {
+  for (const entry of list.getEntries()) {
+    console.log(entry.name, entry.startTime);
+  }
+});
+observer.observe({ entryTypes: ['navigation', 'resource'] });
+```"""
+
+    if category in ["error-handling", "anti-pattern"]:
+        return """Add error handling:
+```javascript
+// Add .catch() to promises
+navigator.serviceWorker.getRegistrations()
+  .then(function(registrations) {
+    registrations.forEach(function(reg) { reg.unregister(); });
+  })
+  .catch(function(error) {
+    console.warn('Service worker cleanup failed:', error);
+  });
+```"""
+
+    if category in ["navigation", "links"]:
+        return """Improve navigation accessibility:
+```html
+<!-- Add skip-to-content link -->
+<body>
+  <a href="#main-content" class="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-50 focus:px-4 focus:py-2 focus:bg-white focus:shadow-lg">
+    Skip to main content
+  </a>
+  <!-- ... rest of content ... -->
+  <main id="main-content">
+    <!-- Main content here -->
+  </main>
+</body>
 ```"""
 
     return None

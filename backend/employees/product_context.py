@@ -123,19 +123,21 @@ RULES:
     def _prepare_data(self, data: AuditData) -> str:
         lines = [f"URL: {data.url}", f"Title: {data.title}\n"]
 
-        lines.append("=== PAGE SOURCE (first 10000 chars) ===")
+        lines.append("=== DOM STRUCTURE (accessibility tree) ===")
+        if data.dom_snapshot:
+            lines.append(data.dom_snapshot[:15000])
+            if len(data.dom_snapshot) > 15000:
+                lines.append(f"\n... (truncated, {len(data.dom_snapshot)} total chars)")
+        else:
+            lines.append("  (no DOM snapshot)")
+
+        lines.append("\n=== PAGE SOURCE (first 20000 chars) ===")
         if data.page_source:
-            lines.append(data.page_source[:10000])
-            if len(data.page_source) > 10000:
+            lines.append(data.page_source[:20000])
+            if len(data.page_source) > 20000:
                 lines.append(f"\n... (truncated, {len(data.page_source)} total chars)")
         else:
             lines.append("  (no page source)")
-
-        lines.append("\n=== DOM STRUCTURE ===")
-        if data.dom_snapshot:
-            lines.append(data.dom_snapshot[:5000])
-        else:
-            lines.append("  (no DOM snapshot)")
 
         return "\n".join(lines)
 
