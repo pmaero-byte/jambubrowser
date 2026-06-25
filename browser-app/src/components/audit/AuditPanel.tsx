@@ -12,6 +12,14 @@ import { localFetch } from "../../utils/api";
 // Types
 // ---------------------------------------------------------------------------
 
+interface BusinessImpact {
+  user_impact: string;
+  revenue_impact: string;
+  fix_effort: string;
+  priority_score: number;
+  reasoning: string;
+}
+
 interface Finding {
   id: string;
   employee: string;
@@ -23,6 +31,28 @@ interface Finding {
   evidence_snippet: string;
   wcag_criterion?: string;
   score_impact?: string;
+  business_impact?: BusinessImpact;
+  code_fix?: string;
+  fix_group?: string;
+}
+
+interface ProductContext {
+  what_it_does?: string;
+  target_audience?: string;
+  value_proposition?: string;
+  key_features?: string[];
+  tech_stack?: string[];
+  business_model?: string;
+}
+
+interface FixGroup {
+  id: string;
+  title: string;
+  description: string;
+  finding_count: number;
+  total_impact: string;
+  fix_effort: string;
+  code_fix: string;
 }
 
 interface EmployeeResult {
@@ -38,6 +68,9 @@ interface AuditSummary {
   by_severity: Record<string, number>;
   url: string;
   mode: string;
+  product_context?: ProductContext;
+  fix_groups?: FixGroup[];
+  findings?: Finding[];
 }
 
 // ---------------------------------------------------------------------------
@@ -73,12 +106,16 @@ export function AuditPanel() {
   const [phase, setPhase] = useState<string>("idle");
   const [employeeResults, setEmployeeResults] = useState<EmployeeResult[]>([]);
   const [summary, setSummary] = useState<AuditSummary | null>(null);
+  const [productContext, setProductContext] = useState<ProductContext | null>(null);
+  const [fixGroups, setFixGroups] = useState<FixGroup[]>([]);
   const [groupBy, setGroupBy] = useState<GroupBy>("employee");
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
   const abortRef = useRef<AbortController | null>(null);
 
   const reset = () => {
     setEmployeeResults([]);
+    setProductContext(null);
+    setFixGroups([]);
     setSummary(null);
     setPhase("idle");
     setExpandedCards(new Set());
@@ -194,8 +231,13 @@ export function AuditPanel() {
           },
         ]);
         break;
+      case "product_context":
+        setProductContext(data);
+        break;
       case "done":
         setSummary(data);
+        if (data.product_context) setProductContext(data.product_context);
+        if (data.fix_groups) setFixGroups(data.fix_groups);
         setPhase("done");
         break;
       case "error":
@@ -381,6 +423,56 @@ export function AuditPanel() {
         </div>
       )}
 
+      {/* Product Context */}
+      {productContext && productContext.what_it_does && (
+        <div className="shrink-0 border-b border-white/10 bg-blue-500/5 px-4 py-3">
+          <div className="flex items-start gap-3">
+            <span className="text-lg">🎯</span>
+            <div className="flex-1">
+              <div className="text-sm font-medium mb-1">Product Context</div>
+              <div className="text-xs text-muted-foreground space-y-1">
+                <div><strong>What it does:</strong> {productContext.what_it_does}</div>
+                {productContext.target_audience && <div><strong>Audience:</strong> {productContext.target_audience}</div>}
+                {productContext.value_proposition && <div><strong>Value prop:</strong> {productContext.value_proposition}</div>}
+                {productContext.business_model && <div><strong>Business model:</strong> {productContext.business_model}</div>}
+                {productContext.tech_stack && productContext.tech_stack.length > 0 && (
+                  <div><strong>Tech stack:</strong> {productContext.tech_stack.join(", ")}</div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Fix Groups */}
+      {fixGroups.length > 0 && (
+        <div className="shrink-0 border-b border-white/10 px-4 py-3">
+          <div className="text-xs font-medium mb-2">Fix Groups ({fixGroups.length})</div>
+          <div className="flex flex-wrap gap-2">
+            {fixGroups.map((fg) => (
+              <button
+                key={fg.id}
+                onClick={() => {
+                  const groupFindings = summary?.findings?.filter(f => f.fix_group === fg.id) || [];
+                  setExpandedCards(new Set(groupFindings.map(f => f.id)));
+                }}
+                className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs hover:bg-white/10 transition-colors"
+              >
+                <span className={`w-2 h-2 rounded-full ${
+                  fg.total_impact === "critical" ? "bg-red-500" :
+                  fg.total_impact === "high" ? "bg-orange-500" :
+                  fg.total_impact === "medium" ? "bg-yellow-500" :
+                  "bg-blue-500"
+                }`} />
+                <span className="font-medium">{fg.title}</span>
+                <span className="text-muted-foreground">({fg.finding_count})</span>
+                <span className="text-muted-foreground">· {fg.fix_effort}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Findings */}
       <div className="flex-1 overflow-y-auto p-4">
         {!summary && !running && (
@@ -489,10 +581,33 @@ export function AuditPanel() {
                                     <span className="text-[10px] font-medium uppercase text-muted-foreground">Description</span>
                                     <p className="text-sm">{finding.description}</p>
                                   </div>
+
+                                  {finding.business_impact && (
+                                    <div className="rounded-lg bg-blue-500/10 p-2 space-y-1">
+                                      <span className="text-[10px] font-medium uppercase text-blue-400">Business Impact</span>
+                                      <div className="text-xs space-y-0.5">
+                                        <div><strong>Users affected:</strong> {finding.business_impact.user_impact}</div>
+                                        <div><strong>Revenue impact:</strong> {finding.business_impact.revenue_impact}</div>
+                                        <div><strong>Fix effort:</strong> {finding.business_impact.fix_effort}</div>
+                                        <div><strong>Priority:</strong> {finding.business_impact.priority_score}/10 — {finding.business_impact.reasoning}</div>
+                                      </div>
+                                    </div>
+                                  )}
+
                                   <div>
                                     <span className="text-[10px] font-medium uppercase text-muted-foreground">Fix Suggestion</span>
                                     <p className="text-sm">{finding.fix_suggestion}</p>
                                   </div>
+
+                                  {finding.code_fix && (
+                                    <div>
+                                      <span className="text-[10px] font-medium uppercase text-green-400">Code Fix</span>
+                                      <pre className="mt-1 overflow-x-auto rounded bg-green-500/10 p-2 text-xs text-green-300 whitespace-pre-wrap">
+                                        {finding.code_fix}
+                                      </pre>
+                                    </div>
+                                  )}
+
                                   {finding.evidence_snippet && (
                                     <div>
                                       <span className="text-[10px] font-medium uppercase text-muted-foreground">Evidence</span>

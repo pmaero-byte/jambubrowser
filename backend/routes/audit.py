@@ -481,7 +481,7 @@ async def audit_collect(req: AuditCollectRequest):
 
 @router.post("/run")
 async def audit_run(req: AuditRunRequest):
-    """Full audit: collect data, dispatch all 6 employees in parallel, stream findings via SSE."""
+    """Full audit: collect data, extract product context, dispatch employees, deduplicate."""
     employees = ALL_EMPLOYEES if req.mode == "full" else QUICK_SCAN_EMPLOYEES
 
     async def event_stream():
@@ -506,13 +506,35 @@ async def audit_run(req: AuditRunRequest):
             yield _sse("error", {"phase": "collect", "error": str(e)})
             return
 
+        # Phase 1.5: Extract product context
+        yield _sse("status", {"phase": "understanding_product"})
+        try:
+            from backend.employees.product_context import ProductContextExtractor
+            context_extractor = ProductContextExtractor()
+            product_context = await context_extractor.extract_context(data)
+            yield _sse("product_context", {
+                "what_it_does": product_context.what_it_does,
+                "target_audience": product_context.target_audience,
+                "value_proposition": product_context.value_proposition,
+                "key_features": product_context.key_features,
+                "tech_stack": product_context.tech_stack,
+                "business_model": product_context.business_model,
+            })
+        except Exception as e:
+            log.warning("Product context extraction failed: %s", e)
+            product_context = None
+
         # Phase 2: Dispatch employees in parallel
         yield _sse("status", {"phase": "analyzing", "employees": [e.name for e in employees]})
+
+        context_prompt = product_context.to_prompt_context() if product_context else ""
 
         async def run_employee(emp_cls):
             emp = emp_cls()
             start = time.time()
             try:
+                if context_prompt and hasattr(emp, 'system_prompt'):
+                    emp.system_prompt = context_prompt + "\n\n" + emp.system_prompt
                 findings = await emp.analyze(data)
                 elapsed = round((time.time() - start) * 1000)
                 return emp.name, emp.emoji, findings, elapsed, None
@@ -540,16 +562,53 @@ async def audit_run(req: AuditRunRequest):
                     "findings": [f.to_dict() for f in findings],
                 })
 
-        # Phase 3: Summary
+        # Phase 3: Deduplicate and enhance findings
+        from backend.core.findings import deduplicate_findings, group_findings
+
+        enhanced_findings = deduplicate_findings(all_findings)
+        fix_groups = group_findings(enhanced_findings)
+
         by_severity = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
-        for f in all_findings:
+        for f in enhanced_findings:
             by_severity[f.severity.value] = by_severity.get(f.severity.value, 0) + 1
 
         yield _sse("done", {
-            "total_findings": len(all_findings),
+            "total_findings": len(enhanced_findings),
             "by_severity": by_severity,
             "url": req.url,
             "mode": req.mode,
+            "product_context": {
+                "what_it_does": product_context.what_it_does if product_context else None,
+                "target_audience": product_context.target_audience if product_context else None,
+                "value_proposition": product_context.value_proposition if product_context else None,
+            },
+            "fix_groups": [
+                {
+                    "id": fg.id,
+                    "title": fg.title,
+                    "description": fg.description,
+                    "finding_count": len(fg.findings),
+                    "total_impact": fg.total_impact,
+                    "fix_effort": fg.fix_effort,
+                    "code_fix": fg.code_fix,
+                }
+                for fg in fix_groups
+            ],
+            "findings": [
+                {
+                    **f.to_dict(),
+                    "business_impact": {
+                        "user_impact": f.business_impact.user_impact,
+                        "revenue_impact": f.business_impact.revenue_impact,
+                        "fix_effort": f.business_impact.fix_effort,
+                        "priority_score": f.business_impact.priority_score,
+                        "reasoning": f.business_impact.reasoning,
+                    } if f.business_impact else None,
+                    "code_fix": f.code_fix,
+                    "fix_group": f.fix_group,
+                }
+                for f in enhanced_findings
+            ],
         })
 
         # Audit log
