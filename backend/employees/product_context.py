@@ -143,9 +143,24 @@ RULES:
 
     async def extract_context(self, data: AuditData) -> ProductContext:
         """Run the extractor and return structured ProductContext."""
-        findings = await self.analyze(data)
+        from backend.llm import ChatMessage, Role, get_registry, normalize_llm_response
 
-        if not findings:
+        messages = self._build_messages(data)
+        llm_messages = [
+            ChatMessage(role=Role(m.role.value if hasattr(m.role, 'value') else str(m.role)), content=m.content)
+            for m in messages
+        ]
+
+        try:
+            response = await get_registry().chat(
+                llm_messages,
+                provider="minimax",
+                max_tokens=self.max_tokens,
+                temperature=self.temperature,
+            )
+            raw = normalize_llm_response(response.content)
+        except Exception as exc:
+            log.error("Product context extraction failed: %s", exc)
             return ProductContext(
                 what_it_does="Unable to determine",
                 target_audience="Unknown",
@@ -156,10 +171,8 @@ RULES:
                 user_journey="Unknown",
                 conversion_flow="Unknown",
                 competitive_advantage="Unknown",
-                raw_analysis="Extraction failed",
+                raw_analysis=f"Extraction failed: {exc}",
             )
-
-        raw = findings[0].description if findings else ""
 
         try:
             parsed = json.loads(raw)
