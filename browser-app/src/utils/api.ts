@@ -80,3 +80,73 @@ export function createWebSocket(path: string): WebSocket {
   const wsUrl = `ws://localhost:8001${path}`;
   return new WebSocket(wsUrl);
 }
+
+// ── Knowledge graph ─────────────────────────────────────────────────────────
+
+export interface KnowledgeConnection {
+  direction: "incoming" | "outgoing";
+  entity: string;
+  entity_type: string;
+  relation: string;
+  evidence: string;
+}
+
+export interface KnowledgeEntityDetail {
+  entity: {
+    id: string;
+    name: string;
+    type: string;
+    occurrences: number;
+  };
+  connections: KnowledgeConnection[];
+  connection_count: number;
+}
+
+export interface KnowledgeGraphData {
+  nodes: Array<{ id: string; label: string; group: string; val?: number }>;
+  links: Array<{ source: string; target: string; label?: string }>;
+}
+
+export interface KnowledgeStats {
+  entity_count: number;
+  relation_count: number;
+  [key: string]: unknown;
+}
+
+export async function fetchKnowledgeEntity(
+  entityId: string,
+): Promise<KnowledgeEntityDetail> {
+  const res = await localFetch(`/knowledge/entity/${encodeURIComponent(entityId)}`);
+  if (!res.ok) {
+    if (res.status === 404) {
+      throw new Error(`Entity not found: ${entityId}`);
+    }
+    throw new Error(`Failed to fetch entity (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function fetchKnowledgeGraph(
+  maxNodes = 100,
+): Promise<KnowledgeGraphData> {
+  const res = await localFetch(`/knowledge/graph?max_nodes=${maxNodes}`);
+  if (!res.ok) throw new Error(`Failed to fetch graph (${res.status})`);
+  return res.json();
+}
+
+export async function searchKnowledge(
+  query: string,
+  limit = 20,
+): Promise<{ results: unknown[] }> {
+  const res = await localFetch(
+    `/knowledge/search?query=${encodeURIComponent(query)}&limit=${limit}`,
+  );
+  if (!res.ok) throw new Error(`Search failed (${res.status})`);
+  return res.json();
+}
+
+export async function fetchKnowledgeStats(): Promise<KnowledgeStats> {
+  const res = await localFetch("/knowledge/stats");
+  if (!res.ok) throw new Error(`Stats failed (${res.status})`);
+  return res.json();
+}
