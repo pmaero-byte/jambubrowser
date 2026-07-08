@@ -131,7 +131,7 @@ class TestJambuDiff:
                     ],
                     "count": 2,
                 },
-                "/mission/results/compare": {
+                "/mission/results/compare?result_a=1&result_b=2": {
                     "result_a": {"id": 1, "run_at": 100.0},
                     "result_b": {"id": 2, "run_at": 200.0},
                     "text": {
@@ -183,7 +183,7 @@ class TestJambuDiff:
                     ],
                     "count": 2,
                 },
-                "/mission/results/compare": {
+                "/mission/results/compare?result_a=1&result_b=2": {
                     "text": {"length_a": 1, "length_b": 1, "length_delta": 0, "words_a": 1, "words_b": 1, "words_added": [], "words_removed": [], "similarity": 1.0, "changed": False},
                     "sources": {"added": [], "removed": [], "kept": ["https://same.com"]},
                     "status": {"success_a": True, "success_b": True, "changed": False},

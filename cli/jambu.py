@@ -406,8 +406,7 @@ def cmd_diff(args):
     b_id = results[0]["id"]  # newer
     diff = api_request(
         "GET",
-        "/mission/results/compare",
-        {"result_a": a_id, "result_b": b_id},
+        f"/mission/results/compare?result_a={a_id}&result_b={b_id}",
     )
     if not diff:
         return
