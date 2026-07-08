@@ -426,10 +426,12 @@ class MissionScheduler:
             # Check for duplicate results
             if mission.is_duplicate_result(result):
                 mission.record_result(result)
+                self._persist_result(mission.id, result, success=True)
                 return
 
             # New finding detected
             mission.record_result(result)
+            self._persist_result(mission.id, result, success=True)
 
             # Notify about new findings
             if self._on_new_finding:
@@ -446,7 +448,39 @@ class MissionScheduler:
                     pass
 
         except Exception as e:
-            mission.record_result(f"Error: {e}", success=False)
+            error_text = f"Error: {e}"
+            mission.record_result(error_text, success=False)
+            self._persist_result(mission.id, error_text, success=False)
+
+    def _persist_result(self, mission_id: str, result_text: str, success: bool) -> None:
+        """Write a run's result to the mission_results table."""
+        try:
+            with get_db_cursor() as cursor:
+                cursor.execute(
+                    "INSERT INTO mission_results (mission_id, run_at, result_text, success) "
+                    "VALUES (?, ?, ?, ?)",
+                    (mission_id, time.time(), result_text, 1 if success else 0),
+                )
+        except Exception as e:
+            log.error("Failed to persist mission result for %s: %s", mission_id, e)
+
+    def get_results(self, mission_id: str, limit: int = 50) -> List[dict]:
+        """Return the most recent results for a mission, newest first."""
+        with get_db_cursor() as cursor:
+            cursor.execute(
+                "SELECT id, run_at, result_text, success FROM mission_results "
+                "WHERE mission_id = ? ORDER BY run_at DESC LIMIT ?",
+                (mission_id, limit),
+            )
+            return [
+                {
+                    "id": row["id"],
+                    "run_at": row["run_at"],
+                    "result_text": row["result_text"],
+                    "success": bool(row["success"]),
+                }
+                for row in cursor.fetchall()
+            ]
 
     def stop(self):
         """Stop the scheduler loop."""

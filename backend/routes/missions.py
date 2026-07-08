@@ -115,6 +115,22 @@ async def list_missions(status: str = None):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/mission/{mission_id}/results")
+async def mission_results(mission_id: str, limit: int = 50):
+    """Return the most recent collected results for a mission, newest first."""
+    from backend.core.database import get_db_cursor
+    with get_db_cursor() as cursor:
+        cursor.execute("SELECT id FROM missions WHERE id = ?", (mission_id,))
+        if cursor.fetchone() is None:
+            raise HTTPException(status_code=404, detail=f"Mission not found: {mission_id}")
+    try:
+        from backend.modules.missions import get_scheduler
+        results = get_scheduler().get_results(mission_id, limit=limit)
+        return {"mission_id": mission_id, "results": results, "count": len(results)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/mission/start-scheduler")
 async def start_mission_scheduler():
     """Start the background mission scheduler loop."""

@@ -146,7 +146,27 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
         cursor.execute("SELECT schedule FROM missions LIMIT 1")
     except sqlite3.OperationalError:
         cursor.execute("ALTER TABLE missions ADD COLUMN schedule TEXT")
-    
+
+    # Mission results — each run of a mission stores its collected result
+    # text, success flag, and optional sources JSON. Without this table
+    # the scheduler only kept a hash for dedup and threw away the actual
+    # research output.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS mission_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mission_id TEXT NOT NULL,
+            run_at REAL NOT NULL,
+            result_text TEXT,
+            success INTEGER DEFAULT 1,
+            sources_json TEXT,
+            FOREIGN KEY (mission_id) REFERENCES missions(id) ON DELETE CASCADE
+        )
+    """)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_mission_results_mission_id "
+        "ON mission_results(mission_id, run_at DESC)"
+    )
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS custom_tools (
             name TEXT PRIMARY KEY,

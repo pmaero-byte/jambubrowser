@@ -150,3 +150,34 @@ export async function fetchKnowledgeStats(): Promise<KnowledgeStats> {
   if (!res.ok) throw new Error(`Stats failed (${res.status})`);
   return res.json();
 }
+
+// ── Missions ────────────────────────────────────────────────────────────────
+
+export interface MissionResult {
+  id: number;
+  run_at: number;
+  result_text: string;
+  success: boolean;
+}
+
+export interface MissionResultsResponse {
+  mission_id: string;
+  results: MissionResult[];
+  count: number;
+}
+
+export async function fetchMissionResults(
+  missionId: string,
+  limit = 50,
+): Promise<MissionResultsResponse> {
+  const res = await localFetch(
+    `/mission/${encodeURIComponent(missionId)}/results?limit=${limit}`,
+  );
+  if (res.status === 404) {
+    throw new Error(`Mission not found: ${missionId}`);
+  }
+  if (!res.ok) {
+    throw new Error(`Failed to fetch mission results (${res.status})`);
+  }
+  return res.json();
+}

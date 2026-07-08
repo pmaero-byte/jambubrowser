@@ -5,6 +5,7 @@ import {
   fetchKnowledgeGraph,
   searchKnowledge,
   fetchKnowledgeStats,
+  fetchMissionResults,
 } from "./api";
 
 describe("api", () => {
@@ -168,5 +169,57 @@ describe("fetchKnowledgeStats", () => {
   it("throws on non-OK response", async () => {
     vi.mocked(globalThis.fetch).mockResolvedValue(mockJsonResponse({}, 500));
     await expect(fetchKnowledgeStats()).rejects.toThrow(/Stats failed \(500\)/);
+  });
+});
+
+// ── Mission results API client ──────────────────────────────────────────────
+
+describe("fetchMissionResults", () => {
+  beforeEach(() => {
+    globalThis.fetch = vi.fn();
+  });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("calls /mission/{id}/results with URL-encoded id and default limit", async () => {
+    const mockFetch = vi.mocked(globalThis.fetch);
+    mockFetch.mockResolvedValue(mockJsonResponse({ mission_id: "abc", results: [], count: 0 }));
+    await fetchMissionResults("abc 123");
+    const url = mockFetch.mock.calls[0][0] as string;
+    expect(url).toContain("/mission/abc%20123/results");
+    expect(url).toContain("limit=50");
+  });
+
+  it("honors a custom limit", async () => {
+    const mockFetch = vi.mocked(globalThis.fetch);
+    mockFetch.mockResolvedValue(mockJsonResponse({ mission_id: "x", results: [], count: 0 }));
+    await fetchMissionResults("x", 10);
+    expect(mockFetch.mock.calls[0][0]).toContain("limit=10");
+  });
+
+  it("returns the parsed response on success", async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValue(
+      mockJsonResponse({
+        mission_id: "m1",
+        results: [{ id: 1, run_at: 1700000000, result_text: "hello", success: true }],
+        count: 1,
+      }),
+    );
+    const result = await fetchMissionResults("m1");
+    expect(result.mission_id).toBe("m1");
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0].success).toBe(true);
+    expect(result.count).toBe(1);
+  });
+
+  it("throws a friendly error on 404", async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValue(mockJsonResponse({}, 404));
+    await expect(fetchMissionResults("missing")).rejects.toThrow(/Mission not found: missing/);
+  });
+
+  it("throws a generic error on 500", async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValue(mockJsonResponse({}, 500));
+    await expect(fetchMissionResults("x")).rejects.toThrow(/Failed to fetch mission results \(500\)/);
   });
 });
