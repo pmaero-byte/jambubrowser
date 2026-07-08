@@ -11,6 +11,7 @@ server root (which would happen with query-param-based URLs).
 
 import logging
 import re
+import time
 import urllib.parse
 from urllib.parse import urlparse, urljoin
 
@@ -20,6 +21,7 @@ from fastapi.responses import StreamingResponse
 
 from backend.core.security import is_safe_url
 from backend.core.response_cache import ResponseCache, CachedResponse
+from backend.core.proxy_log import get_proxy_log
 
 log = logging.getLogger("jambu.proxy")
 router = APIRouter(tags=["proxy"])
@@ -75,6 +77,9 @@ async def web_proxy(url: str, request: Request):
 
     # ── Response cache (TTL 60 s, LRU, 50 MB budget) ──
     cache = get_proxy_cache()
+    proxy_log = get_proxy_log()
+    cache_hit = False
+    upstream_start = time.monotonic()
     cached = cache.get(upstream_url)
 
     if cached is not None:
@@ -82,6 +87,7 @@ async def web_proxy(url: str, request: Request):
         resp_content_type = cached.content_type
         resp_status = cached.status_code
         resp_headers = cached.headers
+        cache_hit = True
         log.debug("proxy cache hit for %s (%d bytes)", upstream_url, len(resp_body))
     else:
         try:
@@ -113,12 +119,48 @@ async def web_proxy(url: str, request: Request):
             log.debug("proxy cache miss + store for %s (%d bytes)", upstream_url, len(resp_body))
 
         except httpx.TimeoutException:
+            duration_ms = (time.monotonic() - upstream_start) * 1000
+            proxy_log.record(
+                upstream_url,
+                status_code=504,
+                cache_hit=False,
+                duration_ms=duration_ms,
+                content_length=0,
+                error="upstream_timeout",
+            )
             raise HTTPException(504, f"Upstream timeout fetching {upstream_url}")
         except httpx.ConnectError:
+            duration_ms = (time.monotonic() - upstream_start) * 1000
+            proxy_log.record(
+                upstream_url,
+                status_code=502,
+                cache_hit=False,
+                duration_ms=duration_ms,
+                content_length=0,
+                error="connect_error",
+            )
             raise HTTPException(502, f"Could not connect to {upstream_url}")
         except Exception as exc:
+            duration_ms = (time.monotonic() - upstream_start) * 1000
             log.error("proxy error for %s: %s", upstream_url, exc)
+            proxy_log.record(
+                upstream_url,
+                status_code=502,
+                cache_hit=False,
+                duration_ms=duration_ms,
+                content_length=0,
+                error=str(exc),
+            )
             raise HTTPException(502, f"Proxy error: {exc}")
+
+    proxy_log.record(
+        upstream_url,
+        status_code=resp_status,
+        cache_hit=cache_hit,
+        duration_ms=(time.monotonic() - upstream_start) * 1000,
+        content_length=len(resp_body),
+        content_type=resp_content_type,
+    )
 
     # ── Build response headers (override iframe-blockers) ──
     BLOCKLIST = {"content-encoding", "content-length",
@@ -560,3 +602,34 @@ def _inject_spa_shim(html: str, original_url: str) -> str:
         return html[:body_close.start()] + shim + html[body_close.start():]
 
     return shim + html
+
+
+# ---------------------------------------------------------------------------
+# DevTools — proxy request log query API
+# ---------------------------------------------------------------------------
+
+
+@router.get("/devtools/proxy-log")
+async def devtools_proxy_log(limit: int = 50):
+    """Return the most recent proxy request log entries (newest last).
+
+    Used by the DevTools panel to show what the browser proxy has been
+    fetching, whether each request was served from the response cache,
+    and how long the upstream round-trip took.
+    """
+    if limit < 1 or limit > 500:
+        raise HTTPException(400, "limit must be between 1 and 500")
+    log_ = get_proxy_log()
+    entries = log_.recent(limit=limit)
+    return {
+        "entries": [e.to_dict() for e in entries],
+        "count": len(entries),
+        "stats": log_.stats(),
+    }
+
+
+@router.delete("/devtools/proxy-log")
+async def devtools_proxy_log_clear():
+    """Clear the proxy request log. Returns the number of entries dropped."""
+    cleared = get_proxy_log().clear()
+    return {"cleared": cleared}
