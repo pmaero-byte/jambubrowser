@@ -1,8 +1,13 @@
 # Jambubrowser
 
-**The Sovereign Autonomous Research Agent**
+**AI employees that audit, research, and improve your web apps — autonomously.**
 
-Jambubrowser is a fully local, privacy-first autonomous AI browser and research engine. It thinks, acts, and evolves entirely on your machine. Built for researchers, security professionals, and power users who need unconstrained internet access with absolute forensic safety.
+Jambubrowser is a privacy-first autonomous AI platform. A team of specialist
+**AI employees** (security, performance, UX, accessibility, SEO, code-quality)
+audits your web apps by driving a real headless browser, then routes findings to
+human teams for resolution. Underneath sits a sovereign research engine
+(multi-engine search, local LLMs, knowledge graph, sandboxed code execution)
+that powers both the audits and free-form research.
 
 ---
 
@@ -149,7 +154,15 @@ python3 -m pytest tests/test_e2e.py -v
 
 ## Features
 
-### Agentic Research (v3 — the three pillars)
+### AI Employee Audit Engine (the headline feature)
+- **6 Specialist LLM Auditors**: Security, Performance, UX/UI, Accessibility, SEO, Code-Quality — each an autonomous "employee" that analyzes a live page.
+- **Real Browser Telemetry**: Playwright-driven collection of network requests, console errors, DOM, accessibility tree, and performance metrics.
+- **Parallel Dispatch + SSE Streaming**: All employees run concurrently; findings stream live to the `AuditPanel`.
+- **Product-Context Extraction**: Auto-infers what the app *does* and assigns business-impact scores to findings.
+- **Teams & Resolution Workflow**: Findings route to teams, get assigned, tracked, and marked resolved (`/teams/*`).
+- **Persistence & Sharing**: Full audit history + shareable read-only links (`/audit/history`, `/audit/shared/{token}`).
+
+### Agentic Research (v3 — the engine underneath)
 - **Unified LLM Layer**: 6 providers (Anthropic, OpenAI, Ollama, MLX, MiniMax, Mock) behind one `Provider` protocol. Auto-discovery, env-driven defaults, smart routing (`cheapest` / `fastest` / `quality` / `fallback` / `local_only`), per-request cost tracking.
 - **ReAct Agent Loop**: Plan → Execute → Verify → Replan, with streaming SSE events. Auto-derived JSON Schema for every tool, 10 built-in tools wrapping existing capabilities (web_search, scrape_url, vault_get, knowledge_query, memory_recall, memory_store, code_exec, goal_set, risk_check, final_answer). Budget-aware (max steps / tokens / seconds).
 - **Memory & Personalization**: 4 sub-stores (user profile, session, semantic with embeddings, procedural with success rates). Hybrid retrieval: 60% vector + 30% recency+importance + 10% FTS, with profile-interest boost. Per-user scoping, full forget support.
