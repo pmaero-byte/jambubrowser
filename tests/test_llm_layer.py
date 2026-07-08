@@ -95,9 +95,12 @@ class TestBaseTypes:
 # ---------------------------------------------------------------------------
 
 class TestConfig:
-    def test_default_config(self):
-        from backend.llm import get_config
-        c = get_config()
+    def test_default_config(self, monkeypatch):
+        # Neutralize JAMBU_LLM_PROVIDER so we assert the true code default,
+        # not whatever the calling environment (CI sets "mock") overrides it to.
+        monkeypatch.delenv("JAMBU_LLM_PROVIDER", raising=False)
+        from backend.llm import reload_config
+        c = reload_config()
         assert c.default_provider == "auto"
         assert "ollama" in c.fallback_chain
         assert c.max_tokens == 1024
@@ -241,6 +244,20 @@ class TestRouting:
         reload_config()
         from backend.llm.registry import reset_registry
         reset_registry()
+
+        # Mock the Ollama provider's chat to avoid real HTTP calls
+        from backend.llm.base import ChatResponse, Usage
+        async def _mock_chat(self, messages, **kwargs):
+            return ChatResponse(
+                content="mock response",
+                model="gemma4:12b-it-qat",
+                provider="ollama",
+                usage=Usage(prompt_tokens=10, completion_tokens=5, total_tokens=15),
+                latency_ms=5.0,
+            )
+        from backend.llm.providers.ollama import OllamaProvider
+        monkeypatch.setattr(OllamaProvider, "chat", _mock_chat)
+
         from backend.llm.routing import Router, RoutingStrategy
         router = Router(strategy=RoutingStrategy.LOCAL_ONLY)
         # Should pick ollama (local), not anthropic
@@ -265,7 +282,12 @@ class TestRouting:
         # Should succeed via mock
         assert resp.provider == "mock"
 
-    def test_routing_decision_recorded(self):
+    def test_routing_decision_recorded(self, monkeypatch):
+        monkeypatch.setenv("JAMBU_LLM_FALLBACK_CHAIN", "mock")
+        from backend.llm import reload_config
+        reload_config()
+        from backend.llm.registry import reset_registry
+        reset_registry()
         from backend.llm.routing import Router, RoutingStrategy
         router = Router(strategy=RoutingStrategy.AUTO)
         async def go():

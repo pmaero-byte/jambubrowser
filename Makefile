@@ -42,14 +42,23 @@ export PYTHONPATH         := $(REPO_ROOT)
 # Tier 1: fast, mock-only
 # ---------------------------------------------------------------------------
 
+# Core unit/integration tests — kept in sync with .github/workflows/test.yml
+# (the backend job). These are the honest green set.
+CORE_TESTS := tests/test_backend.py tests/test_llm_layer.py tests/test_memory_system.py tests/test_agent_loop.py
+
 .PHONY: test
 test: test-backend test-browser
 	@echo "==> tier 1: all unit tests passed"
 
 .PHONY: test-backend
 test-backend:
-	@echo "==> backend pytest (fast, mock)"
-	cd $(REPO_ROOT) && $(PYTHON) -m pytest tests/test_real_llm_integration.py tests/test_eval_cli.py tests/test_mcp_server.py -q
+	@echo "==> backend pytest (core unit tests, mock)"
+	cd $(REPO_ROOT) && $(PYTHON) -m pytest $(CORE_TESTS) -q
+
+.PHONY: ci
+ci: test-backend test-browser
+	@echo "==> ci: backend core tests + frontend typecheck/lint/test (matches GitHub Actions)"
+	@echo "==> run 'make test-council' separately for full integration gates"
 
 .PHONY: test-harness
 test-harness:
@@ -124,7 +133,8 @@ help:
 	@echo ""
 	@echo "Tier 1 (fast, no engine):"
 	@echo "  make test            all unit tests"
-	@echo "  make test-backend    backend pytest"
+	@echo "  make test-backend    backend core unit tests (mock)"
+	@echo "  make ci              backend core tests + frontend typecheck/lint/test (== CI)"
 	@echo "  make test-harness    HarnessX smoke"
 	@echo "  make test-mcp        MCP stdio smoke"
 	@echo "  make test-browser    browser typecheck + lint + vitest"
