@@ -41,8 +41,11 @@ dev = [
 # because it requires Python 3.11+. Not part of the base install.
 mlx = ["mlx-lm", "mlx-vlm"]
 
+[project.scripts]
+jambu = "cli.jambu:main"
+
 [tool.setuptools]
-packages = ["backend"]
+packages = ["backend", "cli"]
 
 [tool.ruff]
 line-length = 100
