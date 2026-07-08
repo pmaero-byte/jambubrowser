@@ -146,3 +146,36 @@ class TestGetVerificationReport:
         assert "system_components" in report
         assert "known_hashes_count" in report
         assert "python" in report["system_components"]
+
+    def test_regenerate_baseline_updates_hashes(self):
+        from backend.core.supply_chain import SupplyChainVerifier
+
+        verifier = SupplyChainVerifier(base_dir="/tmp/nonexistent_regenerate_test")
+        with (
+            patch.object(verifier, "verify_package") as mock_verify,
+            patch.object(verifier, "_save_known_hashes") as mock_save,
+        ):
+            mock_verify.return_value = MagicMock(
+                name="x", version="1.0", verified=True, actual_hash="abc" * 22
+            )
+            report = verifier.regenerate_baseline()
+
+        assert report["previous_checksum_count"] == 0
+        assert report["packages_updated"] > 0
+        assert report["packages_failed"] == 0
+        assert len(report["updated"]) > 0
+        assert report["updated"][0]["hash"].endswith("...")
+        mock_save.assert_called_once()
+
+    def test_regenerate_handles_failed_packages(self):
+        from backend.core.supply_chain import SupplyChainVerifier
+
+        verifier = SupplyChainVerifier(base_dir="/tmp/nonexistent_regenerate_fail")
+        with patch.object(verifier, "verify_package") as mock_verify:
+            mock_verify.return_value = MagicMock(
+                name="x", version="error", verified=False, actual_hash=None
+            )
+            report = verifier.regenerate_baseline()
+
+        assert report["packages_updated"] == 0
+        assert report["packages_failed"] > 0

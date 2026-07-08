@@ -299,6 +299,42 @@ class SupplyChainVerifier:
             "known_hashes_count": len(self._known_hashes),
         }
 
+    def regenerate_baseline(self) -> dict:
+        """Re-hash every critical package and overwrite the known-good baseline.
+
+        Use this after a legitimate dependency update (pip install --upgrade,
+        new requirements.txt) so future ``verify_package`` calls compare
+        against the new hashes instead of flagging every package as tampered.
+        """
+        critical_packages = [
+            "fastapi", "uvicorn", "pydantic", "httpx",
+            "cryptography", "sentence-transformers", "sqlite-vec",
+            "playwright", "crawl4ai", "psutil",
+        ]
+        previous_count = len(self._known_hashes)
+        updated = []
+        failed = []
+
+        for pkg in critical_packages:
+            info = self.verify_package(pkg)
+            if info.actual_hash:
+                self._known_hashes[pkg] = info.actual_hash
+                updated.append({"name": pkg, "version": info.version, "hash": info.actual_hash[:16] + "..."})
+            else:
+                failed.append(pkg)
+
+        self._save_known_hashes()
+
+        return {
+            "timestamp": time.time(),
+            "previous_checksum_count": previous_count,
+            "new_checksum_count": len(self._known_hashes),
+            "packages_updated": len(updated),
+            "packages_failed": len(failed),
+            "updated": updated,
+            "failed": failed,
+        }
+
 
 import sys
 

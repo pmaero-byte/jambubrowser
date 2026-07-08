@@ -134,7 +134,7 @@ async def verify_audit_chain():
 async def verify_security():
     """Verify supply chain integrity of all dependencies."""
     verifier = get_verifier()
-    report = verifier.verify_all()
+    report = verifier.get_verification_report()
     return report
 
 
@@ -144,6 +144,19 @@ async def verify_package(package_name: str):
     verifier = get_verifier()
     result = verifier.verify_package(package_name)
     return result
+
+
+@router.post("/security/regenerate")
+async def regenerate_supply_chain_baseline():
+    """Re-hash every critical package and overwrite the known-good baseline.
+
+    Call this after a legitimate dependency update (pip install --upgrade,
+    new requirements.txt) so future verify calls compare against the new
+    hashes instead of flagging every package as tampered.
+    """
+    verifier = get_verifier()
+    report = verifier.regenerate_baseline()
+    return report
 
 
 # ── LLM Config ──
