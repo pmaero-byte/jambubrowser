@@ -1,5 +1,5 @@
 """Knowledge graph and graph data endpoints."""
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from backend.core.database import get_db_cursor
 
@@ -50,7 +50,7 @@ async def knowledge_ingest(req: KnowledgeGraphIngestRequest):
     """Ingest content into the knowledge graph with entity extraction."""
     from backend.modules.knowledge_graph import get_knowledge_graph
     kg = get_knowledge_graph()
-    entities = kg.ingest(req.text, source_url=req.url)
+    entities = kg.ingest_document(req.text, url=req.url)
     return {"ingested": True, "entities_found": entities}
 
 
@@ -66,10 +66,18 @@ async def knowledge_graph_data(max_nodes: int = 100):
 @router.get("/knowledge/search")
 async def knowledge_search(query: str, limit: int = 20):
     """Search entities in the knowledge graph."""
+    if not query or not query.strip():
+        return {"query": query, "count": 0, "results": []}
+    if limit < 1 or limit > 100:
+        raise HTTPException(400, "limit must be between 1 and 100")
     from backend.modules.knowledge_graph import get_knowledge_graph
     kg = get_knowledge_graph()
-    results = kg.search(query, limit=limit)
-    return {"results": results}
+    results = kg.search_entities(query, limit=limit)
+    return {
+        "query": query,
+        "count": len(results),
+        "results": results,
+    }
 
 
 @router.get("/knowledge/entity/{entity_id}")

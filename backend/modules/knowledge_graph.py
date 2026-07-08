@@ -323,19 +323,66 @@ class KnowledgeGraph:
         }
 
     def search_entities(self, query: str, limit: int = 20) -> List[dict]:
-        """Search for entities matching a query."""
-        query_lower = query.lower()
-        results = []
+        """Search for entities matching a query (case-insensitive).
+
+        Matches against the entity name, any aliases, and any string values
+        in the entity metadata dict. Results are ordered by relevance:
+
+        1. Name match (highest priority)
+        2. Alias match
+        3. Metadata match (lowest priority)
+
+        Within the same priority tier, more-occurrent entities come first.
+        """
+        if not query or not query.strip():
+            return []
+        query_lower = query.lower().strip()
+        if limit < 1:
+            limit = 1
+        if limit > 100:
+            limit = 100
+
+        name_hits: List[Tuple[Entity, str]] = []
+        alias_hits: List[Tuple[Entity, str]] = []
+        meta_hits: List[Tuple[Entity, str]] = []
 
         for entity in self._entity_index.values():
             if query_lower in entity.name.lower():
-                results.append({
-                    'id': entity.id,
-                    'name': entity.name,
-                    'type': entity.entity_type,
-                    'occurrences': entity.occurrences,
-                    'sources': entity.sources[:3],
-                })
+                name_hits.append((entity, 'name'))
+                continue
+            if any(query_lower in a.lower() for a in entity.aliases):
+                alias_hits.append((entity, 'alias'))
+                continue
+            for v in entity.metadata.values():
+                if isinstance(v, str) and query_lower in v.lower():
+                    meta_hits.append((entity, 'metadata'))
+                    break
+
+        def _sort_key(pair: Tuple[Entity, str]) -> tuple:
+            return (0, -pair[0].occurrences) if pair[1] == 'name' else (
+                (1, -pair[0].occurrences) if pair[1] == 'alias' else
+                (2, -pair[0].occurrences)
+            )
+
+        name_hits.sort(key=_sort_key)
+        alias_hits.sort(key=_sort_key)
+        meta_hits.sort(key=_sort_key)
+
+        results: List[dict] = []
+        seen: set = set()
+        for pair in name_hits + alias_hits + meta_hits:
+            entity, match_type = pair
+            if entity.id in seen:
+                continue
+            seen.add(entity.id)
+            results.append({
+                'id': entity.id,
+                'name': entity.name,
+                'type': entity.entity_type,
+                'occurrences': entity.occurrences,
+                'sources': entity.sources[:3],
+                'match_type': match_type,
+            })
             if len(results) >= limit:
                 break
 
