@@ -6,6 +6,9 @@ import {
   searchKnowledge,
   fetchKnowledgeStats,
   fetchMissionResults,
+  fetchMoaPresets,
+  saveMoaPresets,
+  clearMoaPresets,
 } from "./api";
 
 describe("api", () => {
@@ -221,5 +224,99 @@ describe("fetchMissionResults", () => {
   it("throws a generic error on 500", async () => {
     vi.mocked(globalThis.fetch).mockResolvedValue(mockJsonResponse({}, 500));
     await expect(fetchMissionResults("x")).rejects.toThrow(/Failed to fetch mission results \(500\)/);
+  });
+});
+
+// ── MoA presets API client ──────────────────────────────────────────────────
+
+describe("fetchMoaPresets", () => {
+  beforeEach(() => {
+    globalThis.fetch = vi.fn();
+  });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("calls /v2/llm/moa/presets and returns the parsed response", async () => {
+    const mockFetch = vi.mocked(globalThis.fetch);
+    mockFetch.mockResolvedValue(
+      mockJsonResponse({
+        presets: { default: { aggregator: { provider: "mock" } } },
+        has_override: false,
+      }),
+    );
+    const result = await fetchMoaPresets();
+    expect(mockFetch.mock.calls[0][0]).toContain("/v2/llm/moa/presets");
+    expect(result.presets.default.aggregator.provider).toBe("mock");
+    expect(result.has_override).toBe(false);
+  });
+
+  it("throws on non-OK response", async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValue(mockJsonResponse({}, 500));
+    await expect(fetchMoaPresets()).rejects.toThrow(/Failed to fetch MoA presets \(500\)/);
+  });
+});
+
+describe("saveMoaPresets", () => {
+  beforeEach(() => {
+    globalThis.fetch = vi.fn();
+  });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("POSTs the presets wrapped in { presets: ... }", async () => {
+    const mockFetch = vi.mocked(globalThis.fetch);
+    mockFetch.mockResolvedValue(mockJsonResponse({ status: "installed", preset_count: 2 }));
+    await saveMoaPresets({
+      fast: { aggregator: { provider: "mock" } },
+      slow: { aggregator: { provider: "anthropic" } },
+    });
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toContain("/v2/llm/moa/presets");
+    expect((init as RequestInit).method).toBe("POST");
+    const body = JSON.parse((init as RequestInit).body as string);
+    expect(body.presets.fast.aggregator.provider).toBe("mock");
+    expect(body.presets.slow.aggregator.provider).toBe("anthropic");
+  });
+
+  it("returns the install confirmation", async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValue(
+      mockJsonResponse({ status: "installed", preset_count: 3 }),
+    );
+    const result = await saveMoaPresets({ a: { aggregator: { provider: "x" } } });
+    expect(result.status).toBe("installed");
+    expect(result.preset_count).toBe(3);
+  });
+
+  it("throws a descriptive error on 400 with the server detail", async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValue(
+      new Response("bad preset name", { status: 400 }),
+    );
+    await expect(saveMoaPresets({})).rejects.toThrow(/Failed to save MoA presets \(400\): bad preset name/);
+  });
+});
+
+describe("clearMoaPresets", () => {
+  beforeEach(() => {
+    globalThis.fetch = vi.fn();
+  });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("DELETEs /v2/llm/moa/presets and returns the cleared status", async () => {
+    const mockFetch = vi.mocked(globalThis.fetch);
+    mockFetch.mockResolvedValue(mockJsonResponse({ status: "cleared" }));
+    const result = await clearMoaPresets();
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toContain("/v2/llm/moa/presets");
+    expect((init as RequestInit).method).toBe("DELETE");
+    expect(result.status).toBe("cleared");
+  });
+
+  it("throws on non-OK response", async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValue(mockJsonResponse({}, 500));
+    await expect(clearMoaPresets()).rejects.toThrow(/Failed to clear MoA presets \(500\)/);
   });
 });

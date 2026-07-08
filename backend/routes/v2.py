@@ -82,6 +82,48 @@ async def llm_providers():
     }
 
 
+# ── MoA preset configuration ────────────────────────────────────────────────
+
+
+@router.get("/v2/llm/moa/presets")
+async def moa_get_presets():
+    """Return the currently active MoA preset set (override > env > defaults)."""
+    from backend.llm.providers.moa import get_active_presets, _OVERRIDE_PRESETS
+    return {
+        "presets": get_active_presets(),
+        "has_override": _OVERRIDE_PRESETS is not None,
+    }
+
+
+@router.post("/v2/llm/moa/presets")
+async def moa_set_presets(body: Dict[str, Any]):
+    """Install a runtime MoA preset override. Replaces env var + defaults.
+
+    The body must be a JSON object keyed by preset name; each value is a
+    preset definition with at least an ``aggregator`` field.
+    """
+    presets = body.get("presets")
+    if not isinstance(presets, dict) or not presets:
+        raise HTTPException(
+            status_code=400,
+            detail="body.presets must be a non-empty JSON object keyed by preset name",
+        )
+    try:
+        from backend.llm.providers.moa import set_presets
+        set_presets(presets)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "installed", "preset_count": len(presets)}
+
+
+@router.delete("/v2/llm/moa/presets")
+async def moa_clear_presets():
+    """Remove the runtime override so providers fall back to env / defaults."""
+    from backend.llm.providers.moa import clear_presets
+    clear_presets()
+    return {"status": "cleared"}
+
+
 class AgentRunRequest(BaseModel):
     query: str
     user_id: str = "default"

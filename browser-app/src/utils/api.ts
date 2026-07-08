@@ -181,3 +181,44 @@ export async function fetchMissionResults(
   }
   return res.json();
 }
+
+// ── MoA preset configuration ────────────────────────────────────────────────
+
+export interface MoaPreset {
+  reference_models?: Array<{ provider: string; model?: string }>;
+  aggregator: { provider: string; model?: string };
+  reference_temperature?: number;
+  aggregator_temperature?: number;
+  max_tokens?: number;
+  enabled?: boolean;
+}
+
+export interface MoaPresetsResponse {
+  presets: Record<string, MoaPreset>;
+  has_override: boolean;
+}
+
+export async function fetchMoaPresets(): Promise<MoaPresetsResponse> {
+  const res = await localFetch("/v2/llm/moa/presets");
+  if (!res.ok) throw new Error(`Failed to fetch MoA presets (${res.status})`);
+  return res.json();
+}
+
+export async function saveMoaPresets(presets: Record<string, MoaPreset>): Promise<{ status: string; preset_count: number }> {
+  const res = await localFetch("/v2/llm/moa/presets", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ presets }),
+  });
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`Failed to save MoA presets (${res.status}): ${detail}`);
+  }
+  return res.json();
+}
+
+export async function clearMoaPresets(): Promise<{ status: string }> {
+  const res = await localFetch("/v2/llm/moa/presets", { method: "DELETE" });
+  if (!res.ok) throw new Error(`Failed to clear MoA presets (${res.status})`);
+  return res.json();
+}
