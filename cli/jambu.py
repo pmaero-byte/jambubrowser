@@ -8,7 +8,9 @@ Usage:
     jambu history              Show past audits
     jambu share <audit-id>     Share an audit (generates public link)
     jambu tiers                Show pricing tiers
-    jambu health               Check engine status
+    jambu health               Check engine status (RAM, CPU, /health checks)
+    jambu status               Aggregate system health (engine + supply chain
+                               + LLM providers + DB stats + vault)
 
 Set JAMBU_ENGINE_URL to override the default (http://127.0.0.1:8001).
 """
@@ -282,6 +284,102 @@ def cmd_health(args):
         print(f"  {icon} {k}: {v}")
 
 
+def _section(title: str):
+    print(f"\n  {title}")
+    print(f"  {'─' * max(0, 60 - len(title))}")
+
+
+def _ok_icon(ok: bool) -> str:
+    return "✓" if ok else "✗"
+
+
+def cmd_status(args):
+    """Aggregate system health: engine, supply chain, LLM providers, DB, vault.
+
+    This is the one-shot diagnostic — useful for incident triage, deploy
+    verification, or just confirming everything is healthy after a config
+    change. Each section is shown even if a previous section failed, so
+    you get a complete picture in one command.
+    """
+    print(f"\n📊 Jambubrowser System Status — {get_engine_url()}")
+    print(f"   {'═' * 60}")
+
+    # 1. Engine /health
+    health = api_request("GET", "/health")
+    print("\n  [1] Engine health")
+    if health is None:
+        print("    ✗ Engine unreachable")
+    else:
+        status = health.get("status", "unknown")
+        icon = "✓" if status == "ok" else "✗"
+        print(f"    {icon} status: {status}")
+        ram = health.get("ram_used_gb", 0)
+        ram_t = health.get("ram_total_gb", 0)
+        if ram_t:
+            print(f"    RAM: {ram:.1f} / {ram_t:.1f} GB")
+        cpu = health.get("cpu_percent", 0)
+        if cpu:
+            print(f"    CPU: {cpu:.1f}%")
+        for k, v in health.get("checks", {}).items():
+            print(f"    {_ok_icon(v == 'ok')} {k}: {v}")
+
+    # 2. Supply chain verification
+    sc = api_request("GET", "/security/verify")
+    print("\n  [2] Supply chain")
+    if sc is None:
+        print("    ✗ Cannot reach supply chain verifier")
+    else:
+        packages = sc.get("packages", {})
+        if not packages:
+            print("    ⚠ no packages reported")
+        else:
+            verified = sum(1 for p in packages.values() if p.get("verified"))
+            total = len(packages)
+            print(f"    {_ok_icon(verified == total)} {verified}/{total} packages verified")
+            for name, info in list(packages.items())[:5]:
+                icon = _ok_icon(info.get("verified", False))
+                ver = info.get("version", "?")
+                print(f"      {icon} {name} {ver}")
+            if total > 5:
+                print(f"      ... and {total - 5} more")
+
+    # 3. LLM providers
+    providers = api_request("GET", "/v2/llm/providers")
+    print("\n  [3] LLM providers")
+    if providers is None:
+        print("    ✗ Cannot reach LLM registry")
+    elif isinstance(providers, dict):
+        items = providers.get("providers", providers) if isinstance(providers.get("providers", None), list) else providers
+        if isinstance(items, list):
+            for p in items:
+                name = p.get("name", "?") if isinstance(p, dict) else str(p)
+                healthy = p.get("healthy", True) if isinstance(p, dict) else True
+                print(f"    {_ok_icon(healthy)} {name}")
+        else:
+            print(f"    {items}")
+
+    # 4. DB stats
+    stats = api_request("GET", "/stats")
+    print("\n  [4] Database")
+    if stats is None:
+        print("    ✗ Cannot reach /stats")
+    elif isinstance(stats, dict):
+        for k, v in list(stats.items())[:8]:
+            print(f"    • {k}: {v}")
+
+    # 5. Vault
+    vault = api_request("GET", "/vault/status")
+    print("\n  [5] Vault")
+    if vault is None:
+        print("    ✗ Cannot reach /vault/status")
+    elif isinstance(vault, dict):
+        locked = vault.get("locked", True)
+        creds = vault.get("credential_count", "?")
+        print(f"    {'🔒' if locked else '🔓'} locked={locked}, credentials={creds}")
+
+    print(f"\n   {'═' * 60}\n")
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="jambu",
@@ -307,6 +405,11 @@ def main():
 
     p_health = subparsers.add_parser("health", help="Check engine status")
 
+    p_status = subparsers.add_parser(
+        "status",
+        help="Aggregate system health (engine + supply chain + LLM + DB + vault)",
+    )
+
     args = parser.parse_args()
 
     if args.command == "auth":
@@ -323,6 +426,8 @@ def main():
         cmd_tiers(args)
     elif args.command == "health":
         cmd_health(args)
+    elif args.command == "status":
+        cmd_status(args)
     else:
         parser.print_help()
 
