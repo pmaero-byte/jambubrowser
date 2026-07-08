@@ -116,3 +116,84 @@ class TestJambuStatusImports:
                 main()
             except SystemExit:
                 pass
+
+
+class TestJambuDiff:
+    def test_diff_shows_text_and_source_changes(self):
+        output = _run_argv(
+            ["diff", "m1"],
+            {
+                "/mission/m1/results": {
+                    "mission_id": "m1",
+                    "results": [
+                        {"id": 2, "run_at": 200.0, "result_text": "new", "success": True},
+                        {"id": 1, "run_at": 100.0, "result_text": "old", "success": True},
+                    ],
+                    "count": 2,
+                },
+                "/mission/results/compare": {
+                    "result_a": {"id": 1, "run_at": 100.0},
+                    "result_b": {"id": 2, "run_at": 200.0},
+                    "text": {
+                        "length_a": 3, "length_b": 3, "length_delta": 0,
+                        "words_a": 1, "words_b": 1,
+                        "words_added": ["new"], "words_removed": ["old"],
+                        "similarity": 0.0, "changed": True,
+                    },
+                    "sources": {
+                        "added": ["https://b.com"],
+                        "removed": ["https://a.com"],
+                        "kept": [],
+                    },
+                    "status": {"success_a": True, "success_b": True, "changed": False},
+                },
+            },
+        )
+        assert "Mission m1" in output
+        assert "diff result 1 → 2" in output
+        assert "https://b.com" in output
+        assert "https://a.com" in output
+        assert "Similarity: 0%" in output
+
+    def test_diff_no_mission_id_shows_usage(self):
+        output = _run_argv(["diff"], {})
+        assert "Usage: jambu diff" in output
+
+    def test_diff_needs_two_results(self):
+        output = _run_argv(
+            ["diff", "m1"],
+            {
+                "/mission/m1/results": {
+                    "mission_id": "m1", "results": [{"id": 1, "run_at": 1.0, "result_text": "x", "success": True}], "count": 1,
+                },
+            },
+        )
+        assert "1 result" in output
+        assert "at least 2" in output
+
+    def test_diff_no_source_changes_message(self):
+        output = _run_argv(
+            ["diff", "m1"],
+            {
+                "/mission/m1/results": {
+                    "mission_id": "m1",
+                    "results": [
+                        {"id": 2, "run_at": 200.0, "result_text": "x", "success": True},
+                        {"id": 1, "run_at": 100.0, "result_text": "x", "success": True},
+                    ],
+                    "count": 2,
+                },
+                "/mission/results/compare": {
+                    "text": {"length_a": 1, "length_b": 1, "length_delta": 0, "words_a": 1, "words_b": 1, "words_added": [], "words_removed": [], "similarity": 1.0, "changed": False},
+                    "sources": {"added": [], "removed": [], "kept": ["https://same.com"]},
+                    "status": {"success_a": True, "success_b": True, "changed": False},
+                },
+            },
+        )
+        assert "no source changes" in output
+        assert "Sources kept: 1" in output
+
+    def test_help_includes_diff_command(self):
+        output = _run_argv(["--help"], {})
+        assert "diff" in output
+        assert "diff between the two most recent" in output

@@ -11,6 +11,8 @@ Usage:
     jambu health               Check engine status (RAM, CPU, /health checks)
     jambu status               Aggregate system health (engine + supply chain
                                + LLM providers + DB stats + vault)
+    jambu diff <mission-id>    Show the diff between the two most recent
+                               results of a mission (text delta, sources)
 
 Set JAMBU_ENGINE_URL to override the default (http://127.0.0.1:8001).
 """
@@ -380,6 +382,65 @@ def cmd_status(args):
     print(f"\n   {'═' * 60}\n")
 
 
+def cmd_diff(args):
+    """Show the diff between the two most recent results of a mission.
+
+    Fetches the last 2 result rows for *mission_id* from the engine
+    and calls /mission/results/compare to compute a structured diff:
+    text length delta, word-level similarity, and sources added /
+    removed / kept.
+    """
+    if not args.mission_id:
+        print("Usage: jambu diff <mission_id>")
+        return
+
+    listing = api_request("GET", f"/mission/{args.mission_id}/results", {"limit": 2})
+    if not listing:
+        return
+    results = listing.get("results", [])
+    if len(results) < 2:
+        print(f"Mission {args.mission_id} has {len(results)} result(s); need at least 2 to diff.")
+        return
+
+    a_id = results[1]["id"]  # older
+    b_id = results[0]["id"]  # newer
+    diff = api_request(
+        "GET",
+        "/mission/results/compare",
+        {"result_a": a_id, "result_b": b_id},
+    )
+    if not diff:
+        return
+
+    text = diff.get("text", {})
+    src = diff.get("sources", {})
+    status = diff.get("status", {})
+
+    print(f"\n🔍 Mission {args.mission_id} — diff result {a_id} → {b_id}\n")
+    print(f"   Text: {text.get('length_a', 0)} → {text.get('length_b', 0)} chars "
+          f"(Δ {text.get('length_delta', 0):+d}), {text.get('words_a', 0)} → {text.get('words_b', 0)} words")
+    print(f"   Similarity: {text.get('similarity', 0):.0%}  changed: {text.get('changed')}")
+    print(f"   Status: {status.get('success_a')} → {status.get('success_b')}  changed: {status.get('changed')}")
+    print()
+    if src.get("added"):
+        print(f"   📥 Sources added ({len(src['added'])}):")
+        for s in src["added"][:10]:
+            print(f"      + {s}")
+        if len(src["added"]) > 10:
+            print(f"      ... and {len(src['added']) - 10} more")
+    if src.get("removed"):
+        print(f"   📤 Sources removed ({len(src['removed'])}):")
+        for s in src["removed"][:10]:
+            print(f"      - {s}")
+        if len(src["removed"]) > 10:
+            print(f"      ... and {len(src['removed']) - 10} more")
+    if src.get("kept"):
+        print(f"   ↔️  Sources kept: {len(src['kept'])}")
+    if not (src.get("added") or src.get("removed")):
+        print("   (no source changes)")
+    print()
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="jambu",
@@ -410,6 +471,12 @@ def main():
         help="Aggregate system health (engine + supply chain + LLM + DB + vault)",
     )
 
+    p_diff = subparsers.add_parser(
+        "diff",
+        help="Show the diff between the two most recent results of a mission",
+    )
+    p_diff.add_argument("mission_id", nargs="?", help="Mission ID to diff")
+
     args = parser.parse_args()
 
     if args.command == "auth":
@@ -428,6 +495,8 @@ def main():
         cmd_health(args)
     elif args.command == "status":
         cmd_status(args)
+    elif args.command == "diff":
+        cmd_diff(args)
     else:
         parser.print_help()
 

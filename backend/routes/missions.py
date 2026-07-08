@@ -131,6 +131,58 @@ async def mission_results(mission_id: str, limit: int = 50):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/mission/results/compare")
+async def compare_mission_results(result_a: int, result_b: int):
+    """Compare two mission_results rows and return a structured diff.
+
+    The result includes text length delta, word-level similarity, and a
+    sources diff (added / removed / kept URLs). Useful for spotting
+    mission output drift over time.
+    """
+    from backend.core.database import get_db_cursor
+    from backend.core.mission_diff import compare_results
+    if result_a == result_b:
+        raise HTTPException(400, "result_a and result_b must be different")
+
+    with get_db_cursor() as cursor:
+        cursor.execute(
+            "SELECT id, mission_id, run_at, result_text, success, sources_json "
+            "FROM mission_results WHERE id IN (?, ?)",
+            (result_a, result_b),
+        )
+        rows = {row["id"]: row for row in cursor.fetchall()}
+
+    if result_a not in rows:
+        raise HTTPException(404, f"mission result {result_a} not found")
+    if result_b not in rows:
+        raise HTTPException(404, f"mission result {result_b} not found")
+
+    a = rows[result_a]
+    b = rows[result_b]
+
+    sources_a = []
+    sources_b = []
+    if a["sources_json"]:
+        try:
+            import json
+            sources_a = json.loads(a["sources_json"])
+        except Exception:
+            sources_a = []
+    if b["sources_json"]:
+        try:
+            sources_b = json.loads(b["sources_json"])
+        except Exception:
+            sources_b = []
+
+    diff = compare_results(
+        {"id": a["id"], "run_at": a["run_at"], "result_text": a["result_text"], "success": a["success"]},
+        {"id": b["id"], "run_at": b["run_at"], "result_text": b["result_text"], "success": b["success"]},
+        sources_a=sources_a,
+        sources_b=sources_b,
+    )
+    return diff
+
+
 @router.post("/mission/start-scheduler")
 async def start_mission_scheduler():
     """Start the background mission scheduler loop."""
