@@ -69,6 +69,9 @@ class FormDetector:
     TEXTAREA_PATTERN = re.compile(
         r'<textarea\b[^>]*?>(.*?)</textarea>', re.I | re.DOTALL
     )
+    BUTTON_PATTERN = re.compile(
+        r'<button\b[^>]*?>', re.I
+    )
 
     @staticmethod
     def _extract_attr(tag: str, attr: str) -> str:
@@ -170,6 +173,22 @@ class FormDetector:
                 selector=f'select[name="{name}"]',
                 label=labels.get(name, name), options=options,
             ))
+
+        for m in self.BUTTON_PATTERN.finditer(form_html):
+            tag = m.group(0)
+            btn_type = (self._extract_attr(tag, 'type') or 'submit').lower()
+            if btn_type != 'submit':
+                continue
+            name = self._extract_attr(tag, 'name') or '__submit_btn__'
+            if name in seen_names:
+                continue
+            seen_names.add(name)
+            fields.append(FormField(
+                name=name, field_type='submit',
+                selector='button[type="submit"]',
+                label='Submit',
+            ))
+            break
 
         return fields
 
@@ -290,15 +309,21 @@ class FormFiller:
     def _classify_form(self, form: DetectedForm) -> str:
         """Classify the semantic type of a form."""
         field_types = [f.field_type for f in form.fields]
+        field_names = [f.name.lower() for f in form.fields]
 
         has_password = 'password' in field_types
-        has_email = 'email' in field_types or any(
-            f.field_type == 'email' for f in form.fields
-        )
+        has_email = 'email' in field_types
         has_username = 'username' in field_types or any(
-            'username' in f.name.lower() for f in form.fields
+            'username' in n for n in field_names
+        )
+        has_name = 'name' in field_types or any(
+            word in n for n in field_names for word in ('fullname', 'full_name', 'name')
         )
 
+        # Registration: password + name field (with or without email)
+        if has_password and has_name:
+            return 'registration'
+        # Login: password + email/username
         if has_password and (has_email or has_username):
             return 'login'
         if has_password and not has_email:
@@ -331,7 +356,7 @@ class FormFiller:
         return fill_data
 
     def generate_js_fill_script(self, fill_data: Dict[str, str], 
-                                 submit: bool = True) -> str:
+                                  submit: bool = True) -> str:
         """Generate JavaScript to fill form fields and optionally submit."""
         lines = []
         for selector, value in fill_data.items():
@@ -351,6 +376,68 @@ class FormFiller:
             )
 
         return "(async()=>{" + ' '.join(lines) + "})()"
+
+
+# ── Module-level async entry points (called by /forms/detect & /forms/fill-script) ─
+
+
+async def detect_and_classify(url: str) -> dict:
+    """Fetch a page, detect forms, and match with vault credentials."""
+    import httpx
+
+    async with httpx.AsyncClient(
+        follow_redirects=True, timeout=30.0,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/125.0.0.0 Safari/537.36"
+            ),
+        },
+    ) as client:
+        resp = await client.get(url)
+        html = resp.text
+
+    filler = get_form_filler()
+    return filler.detect_and_match(html, url)
+
+
+async def generate_fill_js(url: str) -> dict:
+    """Generate JavaScript to fill a form with vault credentials."""
+    import httpx
+
+    async with httpx.AsyncClient(
+        follow_redirects=True, timeout=30.0,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/125.0.0.0 Safari/537.36"
+            ),
+        },
+    ) as client:
+        resp = await client.get(url)
+        html = resp.text
+
+    filler = get_form_filler()
+    result = filler.detect_and_match(html, url)
+
+    scripts = []
+    for form in result.get("forms", []):
+        if form.get("auto_fillable"):
+            fill_data = {f["selector"]: f["value"] for f in form.get("fields", [])}
+            js = filler.generate_js_fill_script(fill_data, submit=True)
+            scripts.append({
+                "form_selector": form.get("form_selector", ""),
+                "form_type": form.get("form_type", "generic"),
+                "script": js,
+            })
+
+    return {
+        "url": url,
+        "forms_found": result.get("forms_found", 0),
+        "scripts": scripts,
+    }
 
 
 # ---- Module-level singleton ----
