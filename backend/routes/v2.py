@@ -136,7 +136,7 @@ class AgentRunRequest(BaseModel):
 @router.post("/v2/agent/run")
 async def agent_run(req: AgentRunRequest):
     """Run the ReAct/Plan-Execute agent loop."""
-    from backend.agent import Agent
+    from backend.agent import get_agent
     from backend.memory import get_memory, retrieve_relevant, format_context
 
     try:
@@ -152,7 +152,10 @@ async def agent_run(req: AgentRunRequest):
     except Exception:
         context_str = ""
 
-    agent = Agent(max_steps=req.max_steps, max_tokens=req.max_tokens, max_seconds=req.max_seconds)
+    agent = get_agent()
+    agent.max_steps = req.max_steps
+    agent.max_tokens = req.max_tokens
+    agent.max_seconds = req.max_seconds
 
     if req.stream:
         async def gen():
@@ -192,4 +195,12 @@ async def agent_tools():
 @router.get("/v2/agent/history")
 async def agent_history(limit: int = 10):
     """Return recent agent run history."""
-    return {"runs": [], "note": "agent runs are ephemeral; query audit_log for persistence"}
+    from backend.agent import get_agent
+    if limit < 1 or limit > 200:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 200")
+    runs = get_agent().history[-limit:]
+    return {
+        "runs": [r.to_dict() for r in runs],
+        "count": len(runs),
+        "total_in_history": len(get_agent().history),
+    }

@@ -375,3 +375,107 @@ class TestReplan:
         result = asyncio.run(reg.execute("always_fails"))
         assert result.success is False
         assert "intentional failure" in result.error
+
+
+# ---------------------------------------------------------------------------
+# Agent singleton + history endpoint
+# ---------------------------------------------------------------------------
+
+class TestAgentSingleton:
+    def test_get_agent_returns_same_instance(self):
+        from backend.agent import get_agent
+        from backend.agent.loop import reset_agent_singleton
+        reset_agent_singleton()
+        a = get_agent()
+        b = get_agent()
+        assert a is b
+        reset_agent_singleton()
+
+    def test_get_agent_creates_default(self):
+        from backend.agent import get_agent
+        from backend.agent.loop import reset_agent_singleton
+        reset_agent_singleton()
+        a = get_agent()
+        assert a is not None
+        assert a.max_steps == 10
+        assert a.max_tokens == 30000
+        assert a.max_seconds == 120.0
+        reset_agent_singleton()
+
+    def test_singleton_accumulates_runs(self):
+        from backend.agent import get_agent
+        from backend.agent.loop import AgentRunResult, Plan, Usage
+        from backend.agent.loop import reset_agent_singleton
+        reset_agent_singleton()
+        agent = get_agent()
+        # Inject two fake run results directly
+        for i in range(2):
+            agent._run_history.append(AgentRunResult(
+                run_id=f"r{i}",
+                query=f"q{i}",
+                answer=f"a{i}",
+                plan=Plan(),
+                steps_executed=1,
+                sources=[],
+                total_usage=Usage(),
+                duration_ms=10.0,
+                success=True,
+            ))
+        assert len(agent.history) == 2
+        assert agent.history[0].query == "q0"
+        assert agent.history[1].query == "q1"
+        reset_agent_singleton()
+
+    def test_history_property_returns_copy(self):
+        from backend.agent import get_agent
+        from backend.agent.loop import AgentRunResult, Plan, Usage
+        from backend.agent.loop import reset_agent_singleton
+        reset_agent_singleton()
+        agent = get_agent()
+        agent._run_history.append(AgentRunResult(
+            run_id="r", query="q", answer="a", plan=Plan(),
+            steps_executed=1, sources=[], total_usage=Usage(),
+            duration_ms=1.0, success=True,
+        ))
+        h = agent.history
+        h.clear()  # mutating the returned list should not affect internal state
+        assert len(agent._run_history) == 1
+        reset_agent_singleton()
+
+
+class TestAgentHistoryEndpoint:
+    def test_history_returns_recent_runs(self):
+        from backend.agent import get_agent
+        from backend.agent.loop import AgentRunResult, Plan, Usage
+        from backend.agent.loop import reset_agent_singleton
+        from backend.routes.v2 import agent_history
+
+        reset_agent_singleton()
+        agent = get_agent()
+        for i in range(3):
+            agent._run_history.append(AgentRunResult(
+                run_id=f"run{i}", query=f"q{i}", answer=f"a{i}", plan=Plan(),
+                steps_executed=1, sources=[], total_usage=Usage(),
+                duration_ms=5.0, success=True,
+            ))
+
+        import asyncio
+        result = asyncio.run(agent_history(limit=2))
+        assert result["count"] == 2
+        assert result["total_in_history"] == 3
+        assert result["runs"][0]["query"] == "q1"
+        assert result["runs"][1]["query"] == "q2"
+        reset_agent_singleton()
+
+    def test_history_rejects_invalid_limit(self):
+        from backend.agent.loop import reset_agent_singleton
+        from backend.routes.v2 import agent_history
+        reset_agent_singleton()
+        import asyncio
+        with pytest.raises(Exception) as exc:
+            asyncio.run(agent_history(limit=0))
+        assert "limit" in str(exc.value).lower()
+        with pytest.raises(Exception) as exc:
+            asyncio.run(agent_history(limit=500))
+        assert "limit" in str(exc.value).lower()
+        reset_agent_singleton()

@@ -475,3 +475,32 @@ async def run_agent(
     agent = Agent(max_steps=max_steps, max_tokens=max_tokens, max_seconds=max_seconds)
     async for event in agent.run(query, user_id=user_id, context=context):
         yield event
+
+
+# ---------------------------------------------------------------------------
+# Module-level singleton
+# ---------------------------------------------------------------------------
+
+_agent_instance: Optional["Agent"] = None
+
+
+def get_agent() -> "Agent":
+    """Return the process-wide Agent singleton.
+
+    The singleton owns the in-memory ``_run_history`` list, so consecutive
+    requests via ``/v2/agent/run`` accumulate history that ``/v2/agent/history``
+    can read. The per-request max_steps/max_tokens/max_seconds passed to
+    ``Agent(...)`` apply to the FIRST run only — subsequent runs use whatever
+    the singleton was constructed with. The first call to this function
+    establishes the configuration.
+    """
+    global _agent_instance
+    if _agent_instance is None:
+        _agent_instance = Agent()
+    return _agent_instance
+
+
+def reset_agent_singleton() -> None:
+    """Drop the cached agent (for tests)."""
+    global _agent_instance
+    _agent_instance = None

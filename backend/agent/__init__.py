@@ -31,7 +31,7 @@ Public API
 - `Planner`, `Evolver`, `Critic`, `EnsembleRunner`, `EvolutionLoop` — AEGIS pipeline (Phases 2-3)
 """
 
-from .loop import Agent, run_agent, AgentRunResult
+from .loop import Agent, run_agent, AgentRunResult, get_agent, reset_agent_singleton
 from .plan import Plan, StepStatus, PlanStep, decompose_goal
 from .tools import Tool, ToolSpec, ToolRegistry, ToolResult, get_registry as get_tool_registry
 from .verifier import StepVerdict, verify_step
@@ -112,6 +112,8 @@ __all__ = [
     "Agent",
     "run_agent",
     "AgentRunResult",
+    "get_agent",
+    "reset_agent_singleton",
     "Plan",
     "StepStatus",
     "PlanStep",
