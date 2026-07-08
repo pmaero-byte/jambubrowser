@@ -22,6 +22,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 
+# Ensure an event loop exists for this thread.  Python 3.9's asyncio.run()
+# destroys the loop when it finishes (set_event_loop(None)), and some
+# dependencies (FastAPI / Starlette internals) call get_event_loop() at
+# module load time, so if engine.py is imported after asyncio.run() has
+# been called — e.g. by a test that ran earlier in the suite — the import
+# would crash with "There is no current event loop in thread 'MainThread'".
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
 # Load .env before any environment-dependent import or config read.
 # This ensures JAMBU_LLM_PROVIDER, MINIMAX_API_KEY, etc. are available
 # when the engine is started directly (e.g. `python3 -m uvicorn ...`).
@@ -209,7 +220,7 @@ app.add_middleware(GZipMiddleware, minimum_size=500)
 app.add_middleware(RequestTimeoutMiddleware, timeout_seconds=30.0, exclude_paths=[
     "/research", "/scrape", "/exec", "/act", "/workflow", "/v2/",
     "/mlx/", "/mission", "/knowledge/ingest", "/login", "/discover_api",
-    "/audit/",
+    "/audit/", "/proxy",
 ])
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(TrustedHostMiddleware)
@@ -245,6 +256,8 @@ from backend.routes.audit import router as audit_router
 from backend.routes.api_keys import router as api_keys_router
 from backend.routes.billing import router as billing_router
 from backend.routes.teams import router as teams_router
+from backend.routes.proxy import router as proxy_router
+from backend.routes.mcp import router as mcp_router
 
 app.include_router(system_router)
 app.include_router(ws_router)
@@ -270,6 +283,8 @@ app.include_router(audit_router)
 app.include_router(api_keys_router)
 app.include_router(billing_router)
 app.include_router(teams_router)
+app.include_router(proxy_router)
+app.include_router(mcp_router)
 
 
 # ---------------------------------------------------------------------------
