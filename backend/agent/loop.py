@@ -180,6 +180,17 @@ class Agent:
 
         yield run_started(run_id, query, user_id)
 
+        # Consult procedural memory so the planner sees past approaches
+        # (which worked, which didn't) and starts from a warm cache.
+        if user_id:
+            try:
+                from backend.memory.retrieval import get_procedural_hints
+                hints = get_procedural_hints(user_id, query)
+                if hints:
+                    context = (context + "\n" + hints) if context else hints
+            except Exception:
+                pass  # procedural memory is advisory; never block plan generation
+
         # Step 0: Decompose goal into a plan
         try:
             plan = await decompose_goal(

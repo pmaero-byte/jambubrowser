@@ -19,8 +19,15 @@ from backend.modules.form_filler import (
 
 # Ensure the vault is unlocked for all tests in this module.
 # The test env sets JAMBU_VAULT_KEY, so unlock() will derive the key.
-_vault = get_vault()
-_vault.unlock("test-key-do-not-use-in-production-32bytes!")
+# Re-lock after the module finishes to avoid leaking into other test files.
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _unlock_vault():
+    vault = get_vault()
+    vault.unlock("test-key-do-not-use-in-production-32bytes!")
+    yield
+    vault.lock()
 
 
 # ── Sample HTML fixtures ─────────────────────────────────────────────────────

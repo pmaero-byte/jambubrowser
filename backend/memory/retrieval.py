@@ -196,3 +196,24 @@ def format_context(hits: list[RetrievalHit], max_chars: int = 2000) -> str:
     if len(parts) == 1:
         return ""
     return "\n".join(parts)
+
+
+def get_procedural_hints(user_id: str, query: str, limit: int = 5) -> str:
+    """Return LLM-readable hints from past successful/failed procedural memories."""
+    from backend.memory.store import ProceduralMemory, list_procedural as _list
+    memories = _list(user_id, limit=limit)
+    if not memories:
+        return ""
+
+    lines = ["[Procedural memory — past approaches]"]
+    for m in memories:
+        sr = m.success_rate
+        icon = "✓" if sr >= 0.7 else ("~" if sr >= 0.3 else "✗")
+        lines.append(
+            f"- {icon} pattern=\"{m.task_pattern[:120]}\" "
+            f"approach=\"{m.approach[:120]}\" "
+            f"success_rate={sr:.0%} ({m.success_count}/{m.success_count + m.failure_count})"
+        )
+        if len(lines) >= limit + 2:
+            break
+    return "\n".join(lines) + "\n"
