@@ -5,6 +5,7 @@ mod orchestrator;
 use chromium::manager::ChromiumManager;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
+use tauri::menu::{MenuBuilder, SubmenuBuilder, MenuItemBuilder};
 use tokio::sync::Mutex;
 
 /// Shared application state accessible from all Tauri commands.
@@ -40,6 +41,108 @@ pub fn run() {
         .manage(app_state)
         .setup(move |app| {
             let handle = app.handle().clone();
+
+            // 0. Build native macOS menu bar
+            let file_menu = SubmenuBuilder::new(app, "File")
+                .item(&MenuItemBuilder::with_id("new_tab", "New Tab")
+                    .accelerator("CmdOrCtrl+T")
+                    .build(app)?)
+                .item(&MenuItemBuilder::with_id("close_tab", "Close Tab")
+                    .accelerator("CmdOrCtrl+W")
+                    .build(app)?)
+                .separator()
+                .item(&MenuItemBuilder::with_id("new_window", "New Window")
+                    .accelerator("CmdOrCtrl+N")
+                    .build(app)?)
+                .separator()
+                .quit()
+                .build()?;
+
+            let edit_menu = SubmenuBuilder::new(app, "Edit")
+                .undo()
+                .redo()
+                .separator()
+                .cut()
+                .copy()
+                .paste()
+                .select_all()
+                .separator()
+                .item(&MenuItemBuilder::with_id("find", "Find...")
+                    .accelerator("CmdOrCtrl+F")
+                    .build(app)?)
+                .build()?;
+
+            let view_menu = SubmenuBuilder::new(app, "View")
+                .item(&MenuItemBuilder::with_id("reload", "Reload Page")
+                    .accelerator("CmdOrCtrl+R")
+                    .build(app)?)
+                .item(&MenuItemBuilder::with_id("zoom_in", "Zoom In")
+                    .accelerator("CmdOrCtrl+=")
+                    .build(app)?)
+                .item(&MenuItemBuilder::with_id("zoom_out", "Zoom Out")
+                    .accelerator("CmdOrCtrl+-")
+                    .build(app)?)
+                .item(&MenuItemBuilder::with_id("zoom_reset", "Actual Size")
+                    .accelerator("CmdOrCtrl+0")
+                    .build(app)?)
+                .separator()
+                .item(&MenuItemBuilder::with_id("toggle_bookmarks", "Show Bookmark Bar")
+                    .accelerator("CmdOrCtrl+Shift+B")
+                    .build(app)?)
+                .item(&MenuItemBuilder::with_id("toggle_devtools", "Developer Tools")
+                    .accelerator("CmdOrCtrl+Shift+I")
+                    .build(app)?)
+                .build()?;
+
+            let history_menu = SubmenuBuilder::new(app, "History")
+                .item(&MenuItemBuilder::with_id("go_back", "Back")
+                    .accelerator("CmdOrCtrl+[")
+                    .build(app)?)
+                .item(&MenuItemBuilder::with_id("go_forward", "Forward")
+                    .accelerator("CmdOrCtrl+]")
+                    .build(app)?)
+                .separator()
+                .item(&MenuItemBuilder::with_id("show_history", "Show Full History")
+                    .accelerator("CmdOrCtrl+Y")
+                    .build(app)?)
+                .build()?;
+
+            let bookmarks_menu = SubmenuBuilder::new(app, "Bookmarks")
+                .item(&MenuItemBuilder::with_id("bookmark_page", "Bookmark This Page...")
+                    .accelerator("CmdOrCtrl+D")
+                    .build(app)?)
+                .item(&MenuItemBuilder::with_id("bookmark_all_tabs", "Bookmark All Tabs...")
+                    .build(app)?)
+                .build()?;
+
+            let window_menu = SubmenuBuilder::new(app, "Window")
+                .minimize()
+                .separator()
+                .item(&MenuItemBuilder::with_id("next_tab", "Show Next Tab")
+                    .accelerator("CmdOrCtrl+Tab")
+                    .build(app)?)
+                .item(&MenuItemBuilder::with_id("prev_tab", "Show Previous Tab")
+                    .accelerator("CmdOrCtrl+Shift+Tab")
+                    .build(app)?)
+                .build()?;
+
+            let menu = MenuBuilder::new(app)
+                .item(&file_menu)
+                .item(&edit_menu)
+                .item(&view_menu)
+                .item(&history_menu)
+                .item(&bookmarks_menu)
+                .item(&window_menu)
+                .build()?;
+
+            app.set_menu(menu)?;
+
+            // Forward menu events to the frontend
+            let menu_handle = handle.clone();
+            app.on_menu_event(move |_app, event| {
+                let id = event.id().0.as_str();
+                let _ = menu_handle.emit("menu-event", id);
+            });
 
             // 1. Start Python backend (existing)
             orchestrator::services::start_all_services(app.handle());

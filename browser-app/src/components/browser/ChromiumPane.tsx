@@ -276,6 +276,32 @@ export function ChromiumPane() {
     }
   }, [activeTab, engineReady]);
 
+  // Keyboard shortcuts (Cmd/Ctrl + key)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod) return;
+      if (e.key >= "1" && e.key <= "9") {
+        e.preventDefault();
+        const idx = parseInt(e.key) - 1;
+        if (idx < browserTabs.length) setActiveBrowserTab(browserTabs[idx].id);
+        return;
+      }
+      switch (e.key.toLowerCase()) {
+        case "t": e.preventDefault(); handleNewTab(); break;
+        case "w": e.preventDefault(); activeTab && handleCloseTab(activeTab.id); break;
+        case "l": e.preventDefault(); inputRef.current?.focus(); inputRef.current?.select(); break;
+        case "d": e.preventDefault(); activeTab?.url && toggleBookmark(activeTab.url, activeTab.title || activeTab.url); break;
+        case "r": e.preventDefault(); reload(); break;
+        case "[": e.preventDefault(); goBack(); break;
+        case "]": e.preventDefault(); goForward(); break;
+        case "b": if (e.shiftKey) { e.preventDefault(); setShowBookmarks((v) => !v); } break;
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [browserTabs, activeTab, handleNewTab, handleCloseTab, toggleBookmark, reload, goBack, goForward, setActiveBrowserTab]);
+
   const selectSuggestion = useCallback((url: string, title: string) => {
     setInputUrl(url);
     setSuggestionsVisible(false);
