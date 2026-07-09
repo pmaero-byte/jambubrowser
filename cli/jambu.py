@@ -313,8 +313,8 @@ def cmd_status(args):
         print("    ✗ Engine unreachable")
     else:
         status = health.get("status", "unknown")
-        icon = "✓" if status == "ok" else "✗"
-        print(f"    {icon} status: {status}")
+        online_statuses = ("ok", "online", "ready", "healthy")
+        print(f"    {_ok_icon(str(status).lower() in online_statuses)} status: {status}")
         ram = health.get("ram_used_gb", 0)
         ram_t = health.get("ram_total_gb", 0)
         if ram_t:
@@ -323,7 +323,16 @@ def cmd_status(args):
         if cpu:
             print(f"    CPU: {cpu:.1f}%")
         for k, v in health.get("checks", {}).items():
-            print(f"    {_ok_icon(v == 'ok')} {k}: {v}")
+            str_v = str(v).lower()
+            failing = str_v in ("error", "missing", "down", "fail", "failed", "unreachable", "locked-error")
+            ok = str_v in ("ok", "online", "ready", "healthy", "open", "active")
+            if failing:
+                icon = "✗"
+            elif ok:
+                icon = "✓"
+            else:
+                icon = "•"
+            print(f"    {icon} {k}: {v}")
 
     # 2. Supply chain verification
     sc = api_request("GET", "/security/verify")
