@@ -13,6 +13,9 @@ import type { AgentEvent } from "./utils/types";
 const BrowserPane = lazy(() =>
   import("./components/browser/BrowserPane").then((m) => ({ default: m.BrowserPane }))
 );
+const ChromiumPane = lazy(() =>
+  import("./components/browser/ChromiumPane").then((m) => ({ default: m.ChromiumPane }))
+);
 const PrivacyControls = lazy(() =>
   import("./components/privacy/PrivacyControls").then((m) => ({ default: m.PrivacyControls }))
 );
@@ -162,7 +165,9 @@ export default function App() {
       case "plan":
         return <ChatPane agentEvents={agentEvents} onSend={handleSend} onStop={handleStop} />;
       case "browser":
-        return <BrowserPane />;
+        return (typeof window !== "undefined" && "__TAURI__" in window)
+          ? <ChromiumPane />
+          : <BrowserPane />;
       case "logs":
         return <AuditLogViewer />;
       case "memory":

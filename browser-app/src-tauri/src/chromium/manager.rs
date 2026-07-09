@@ -1,0 +1,212 @@
+//! Chromium process manager.
+//!
+//! Spawns and manages a Chromium (Chrome) instance with remote debugging
+//! enabled. Tracks open tabs and provides high-level browser operations.
+
+use rand::Rng;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::process::{Child, Command, Stdio};
+use tokio::time::{sleep, Duration};
+
+use super::cdp::CdpClient;
+use super::tab::{Tab, TabInfo};
+
+/// Manages a Chromium browser process and its tabs.
+pub struct ChromiumManager {
+    /// The Chrome/Chromium child process
+    process: Child,
+    /// CDP debug port
+    debug_port: u16,
+    /// CDP client for communication
+    cdp: CdpClient,
+    /// Open tabs, keyed by Jambu tab ID
+    tabs: HashMap<String, Tab>,
+    /// Chrome user data directory (temp dir that gets cleaned up on drop)
+    profile_dir: PathBuf,
+}
+
+impl ChromiumManager {
+    /// Launch a new Chromium instance with remote debugging enabled.
+    ///
+    /// # Arguments
+    /// * `chrome_path` — path to Chrome/Chromium executable
+    /// * `debug_port` — port for CDP remote debugging (0 = auto-assign)
+    /// * `profile_dir` — directory for Chrome user data (isolated profile)
+    pub async fn launch(
+        chrome_path: &str,
+        debug_port: u16,
+        profile_dir: PathBuf,
+    ) -> Result<Self, String> {
+        // Generate a short random profile name for isolation
+        let port = if debug_port == 0 {
+            rand::thread_rng().gen_range(9222..9999)
+        } else {
+            debug_port
+        };
+
+        // Ensure profile directory exists
+        std::fs::create_dir_all(&profile_dir)
+            .map_err(|e| format!("Failed to create profile dir: {e}"))?;
+
+        // Spawn Chromium with privacy-focused flags
+        let child = Command::new(chrome_path)
+            .args([
+                // Remote debugging for CDP
+                &format!("--remote-debugging-port={port}"),
+                // Allow WebSocket connections from any origin (required by Chrome 130+)
+                "--remote-allow-origins=*",
+                // Isolated profile (no shared cookies/history/extensions)
+                &format!("--user-data-dir={}", profile_dir.display()),
+                // Disable first-run wizard
+                "--no-first-run",
+                "--no-default-browser-check",
+                // Privacy: disable cloud services
+                "--disable-sync",
+                "--disable-background-networking",
+                "--disable-component-update",
+                // Disable unwanted Chrome features
+                "--disable-features=TranslateUI,PasswordManagerReauthentication",
+                // Start with a blank page
+                "about:blank",
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("Failed to launch Chrome at '{}': {}", chrome_path, e))?;
+
+        // Wait for Chrome to be ready (retry connecting up to 10 seconds)
+        let cdp = Self::wait_for_chrome(port, 20).await?;
+
+        Ok(Self {
+            process: child,
+            debug_port: port,
+            cdp,
+            tabs: HashMap::with_capacity(8),
+            profile_dir,
+        })
+    }
+
+    /// Wait for Chrome to be ready on the given port, retrying up to `max_retries` times.
+    async fn wait_for_chrome(port: u16, max_retries: u32) -> Result<CdpClient, String> {
+        for i in 0..max_retries {
+            sleep(Duration::from_millis(500)).await;
+            match CdpClient::connect(port).await {
+                Ok(client) => {
+                    eprintln!("[jambu] Chrome ready on port {port} after {}ms", (i + 1) * 500);
+                    return Ok(client);
+                }
+                Err(_) if i < max_retries - 1 => continue,
+                Err(e) => return Err(format!("Chrome failed to start on port {port}: {e}")),
+            }
+        }
+        unreachable!()
+    }
+
+    /// Create a new tab and navigate to the given URL.
+    pub async fn create_tab(&mut self, url: &str) -> Result<TabInfo, String> {
+        let tab = self.cdp.new_tab(url).await?;
+        self.cdp.navigate(&tab, url).await?;
+        let info = TabInfo::from(&tab);
+        self.tabs.insert(tab.id.clone(), tab);
+        Ok(info)
+    }
+
+    /// Navigate an existing tab to a new URL.
+    pub async fn navigate(&self, tab_id: &str, url: &str) -> Result<(), String> {
+        let tab = self
+            .tabs
+            .get(tab_id)
+            .ok_or_else(|| format!("Tab not found: {tab_id}"))?;
+        self.cdp.navigate(tab, url).await
+    }
+
+    /// Reload the current page in a tab.
+    pub async fn reload(&self, tab_id: &str) -> Result<(), String> {
+        let tab = self
+            .tabs
+            .get(tab_id)
+            .ok_or_else(|| format!("Tab not found: {tab_id}"))?;
+        self.cdp.reload(tab).await
+    }
+
+    /// Go back in history for a tab.
+    pub async fn go_back(&self, tab_id: &str) -> Result<(), String> {
+        let tab = self
+            .tabs
+            .get(tab_id)
+            .ok_or_else(|| format!("Tab not found: {tab_id}"))?;
+        self.cdp.go_back(tab).await
+    }
+
+    /// Go forward in history for a tab.
+    pub async fn go_forward(&self, tab_id: &str) -> Result<(), String> {
+        let tab = self
+            .tabs
+            .get(tab_id)
+            .ok_or_else(|| format!("Tab not found: {tab_id}"))?;
+        self.cdp.go_forward(tab).await
+    }
+
+    /// Close a tab.
+    pub async fn close_tab(&mut self, tab_id: &str) -> Result<(), String> {
+        let tab = self
+            .tabs
+            .remove(tab_id)
+            .ok_or_else(|| format!("Tab not found: {tab_id}"))?;
+        self.cdp.close_tab(&tab.target_id).await?;
+        Ok(())
+    }
+
+    /// Capture a screenshot of the tab (returns base64 PNG).
+    pub async fn capture_screenshot(&self, tab_id: &str) -> Result<String, String> {
+        let tab = self
+            .tabs
+            .get(tab_id)
+            .ok_or_else(|| format!("Tab not found: {tab_id}"))?;
+        self.cdp.capture_screenshot(tab).await
+    }
+
+    /// Execute JavaScript in the tab.
+    pub async fn evaluate(&self, tab_id: &str, expression: &str) -> Result<String, String> {
+        let tab = self
+            .tabs
+            .get(tab_id)
+            .ok_or_else(|| format!("Tab not found: {tab_id}"))?;
+        self.cdp.evaluate(tab, expression).await
+    }
+
+    /// Get tab info.
+    pub fn get_tab(&self, tab_id: &str) -> Option<TabInfo> {
+        self.tabs.get(tab_id).map(TabInfo::from)
+    }
+
+    /// List all open tabs.
+    pub fn list_tabs(&self) -> Vec<TabInfo> {
+        self.tabs.values().map(TabInfo::from).collect()
+    }
+
+    /// Shut down the Chromium process gracefully.
+    pub fn shutdown(&mut self) {
+        // Try to close via CDP first
+        let close_url = format!("http://127.0.0.1:{}/json/close/all", self.debug_port);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let _ = rt.block_on(async { reqwest::get(&close_url).await });
+
+        // Force kill if still running
+        let _ = self.process.kill();
+        let _ = self.process.wait();
+
+        // Clean up profile directory
+        let _ = std::fs::remove_dir_all(&self.profile_dir);
+    }
+}
+
+impl Drop for ChromiumManager {
+    fn drop(&mut self) {
+        let _ = self.process.kill();
+        let _ = self.process.wait();
+        // Best-effort cleanup — ignore errors on drop
+        let _ = std::fs::remove_dir_all(&self.profile_dir);
+    }
+}
