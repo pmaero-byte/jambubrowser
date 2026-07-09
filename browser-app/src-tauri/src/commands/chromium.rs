@@ -4,6 +4,8 @@
 //! They delegate to the shared `ChromiumManager` held in app state.
 
 use crate::AppState;
+use crate::chromium::audit::AuditReport;
+use crate::chromium::extensions::Extension;
 use crate::chromium::tab::TabInfo;
 use serde_json::Value;
 use tauri::State;
@@ -160,4 +162,25 @@ pub async fn browser_delete_cookie(
     let mgr = state.chromium.lock().await;
     let mgr = mgr.as_ref().ok_or("Browser engine not initialized")?;
     mgr.delete_cookie(&tab_id, &name, &domain).await
+}
+
+/// List all discovered browser extensions.
+#[tauri::command]
+pub async fn browser_list_extensions(
+    state: State<'_, AppState>,
+) -> Result<Vec<Extension>, String> {
+    let mgr = state.chromium.lock().await;
+    let mgr = mgr.as_ref().ok_or("Browser engine not initialized")?;
+    Ok(mgr.list_extensions())
+}
+
+/// Run a page audit on the active tab (perf, a11y, SEO, security).
+#[tauri::command]
+pub async fn browser_run_audit(
+    tab_id: String,
+    state: State<'_, AppState>,
+) -> Result<AuditReport, String> {
+    let mgr = state.chromium.lock().await;
+    let mgr = mgr.as_ref().ok_or("Browser engine not initialized")?;
+    mgr.run_audit(&tab_id).await
 }

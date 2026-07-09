@@ -12,6 +12,18 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 use super::tab::Tab;
 
+/// Performance metrics returned by CDP Performance.getMetrics.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct PerfMetrics {
+    pub dom_content_loaded_ms: Option<f64>,
+    pub load_complete_ms: Option<f64>,
+    pub first_paint_ms: Option<f64>,
+    pub first_contentful_paint_ms: Option<f64>,
+    pub dom_nodes: Option<u64>,
+    pub layout_count: Option<u64>,
+    pub js_heap_used_mb: Option<f64>,
+}
+
 /// CDP client connected to a Chromium browser instance.
 pub struct CdpClient {
     /// Base URL for Chrome's HTTP debugger API (e.g. http://127.0.0.1:9222)
@@ -250,6 +262,30 @@ impl CdpClient {
             }
         }
         Ok(())
+    }
+
+    /// Get performance metrics via CDP Performance.getMetrics.
+    pub async fn get_performance_metrics(&self, tab: &Tab) -> Result<PerfMetrics, String> {
+        let result = self
+            .send_cdp(&tab.ws_url, "Performance.getMetrics", json!({}))
+            .await?;
+
+        let metrics = &result["metrics"];
+        let get_num = |name: &str| -> Option<f64> {
+            metrics.as_array()?.iter()
+                .find(|m| m["name"].as_str() == Some(name))
+                .and_then(|m| m["value"].as_f64())
+        };
+
+        Ok(PerfMetrics {
+            dom_content_loaded_ms: get_num("DomContentLoaded"),
+            load_complete_ms: get_num("LoadEventFired"),
+            first_paint_ms: get_num("FirstPaint"),
+            first_contentful_paint_ms: get_num("FirstContentfulPaint"),
+            dom_nodes: get_num("Nodes").map(|v| v as u64),
+            layout_count: get_num("LayoutCount").map(|v| v as u64),
+            js_heap_used_mb: get_num("JSHeapUsedSize").map(|v| v / (1024.0 * 1024.0)),
+        })
     }
 
     // ── Internal helpers ─────────────────────────────────────────

@@ -10,7 +10,9 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use tokio::time::{sleep, Duration};
 
+use super::audit::{self, AuditReport};
 use super::cdp::CdpClient;
+use super::extensions::{self, Extension};
 use super::privacy;
 use super::tab::{Tab, TabInfo};
 
@@ -233,6 +235,26 @@ impl ChromiumManager {
     /// List all open tabs.
     pub fn list_tabs(&self) -> Vec<TabInfo> {
         self.tabs.values().map(TabInfo::from).collect()
+    }
+
+    /// Discover and list all extensions in the extensions directory.
+    pub fn list_extensions(&self) -> Vec<Extension> {
+        let dir = extensions::ensure_extensions_dir(&self.profile_dir);
+        extensions::discover_extensions(&dir)
+    }
+
+    /// Get the path to the extensions directory.
+    pub fn extensions_dir(&self) -> PathBuf {
+        extensions::ensure_extensions_dir(&self.profile_dir)
+    }
+
+    /// Run a page audit on the given tab.
+    pub async fn run_audit(&self, tab_id: &str) -> Result<AuditReport, String> {
+        let tab = self
+            .tabs
+            .get(tab_id)
+            .ok_or_else(|| format!("Tab not found: {tab_id}"))?;
+        audit::run_audit(&self.cdp, tab).await
     }
 
     /// Shut down the Chromium process gracefully.
