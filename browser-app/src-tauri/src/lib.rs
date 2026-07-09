@@ -81,6 +81,9 @@ pub fn run() {
             commands::chromium::browser_evaluate,
             commands::chromium::browser_list_tabs,
             commands::chromium::browser_get_tab_info,
+            commands::chromium::browser_get_cookies,
+            commands::chromium::browser_clear_cookies,
+            commands::chromium::browser_delete_cookie,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

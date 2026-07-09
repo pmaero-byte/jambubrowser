@@ -4,12 +4,14 @@
 //! enabled. Tracks open tabs and provides high-level browser operations.
 
 use rand::Rng;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use tokio::time::{sleep, Duration};
 
 use super::cdp::CdpClient;
+use super::privacy;
 use super::tab::{Tab, TabInfo};
 
 /// Manages a Chromium browser process and its tabs.
@@ -104,8 +106,23 @@ impl ChromiumManager {
     }
 
     /// Create a new tab and navigate to the given URL.
+    /// Applies ad/tracker blocking and fingerprint protection automatically.
     pub async fn create_tab(&mut self, url: &str) -> Result<TabInfo, String> {
         let tab = self.cdp.new_tab(url).await?;
+
+        // Apply privacy protection
+        let blocked = privacy::get_blocked_urls();
+        if let Err(e) = self.cdp.set_blocked_urls(&tab, &blocked).await {
+            eprintln!("[jambu] Failed to apply ad blocking: {e}");
+        }
+        if let Err(e) = self
+            .cdp
+            .add_script_on_new_document(&tab, privacy::FINGERPRINT_PROTECTION_SCRIPT)
+            .await
+        {
+            eprintln!("[jambu] Failed to inject fingerprint protection: {e}");
+        }
+
         self.cdp.navigate(&tab, url).await?;
         let info = TabInfo::from(&tab);
         self.tabs.insert(tab.id.clone(), tab);
@@ -174,6 +191,38 @@ impl ChromiumManager {
             .get(tab_id)
             .ok_or_else(|| format!("Tab not found: {tab_id}"))?;
         self.cdp.evaluate(tab, expression).await
+    }
+
+    /// Get all cookies for a tab.
+    pub async fn get_cookies(&self, tab_id: &str) -> Result<Value, String> {
+        let tab = self
+            .tabs
+            .get(tab_id)
+            .ok_or_else(|| format!("Tab not found: {tab_id}"))?;
+        self.cdp.get_cookies(tab).await
+    }
+
+    /// Clear all cookies for a tab.
+    pub async fn clear_cookies(&self, tab_id: &str) -> Result<(), String> {
+        let tab = self
+            .tabs
+            .get(tab_id)
+            .ok_or_else(|| format!("Tab not found: {tab_id}"))?;
+        self.cdp.clear_cookies(tab).await
+    }
+
+    /// Delete a specific cookie.
+    pub async fn delete_cookie(
+        &self,
+        tab_id: &str,
+        name: &str,
+        domain: &str,
+    ) -> Result<(), String> {
+        let tab = self
+            .tabs
+            .get(tab_id)
+            .ok_or_else(|| format!("Tab not found: {tab_id}"))?;
+        self.cdp.delete_cookies(tab, name, domain).await
     }
 
     /// Get tab info.

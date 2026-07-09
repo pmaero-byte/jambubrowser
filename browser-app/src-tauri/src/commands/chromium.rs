@@ -5,6 +5,7 @@
 
 use crate::AppState;
 use crate::chromium::tab::TabInfo;
+use serde_json::Value;
 use tauri::State;
 
 // ── Commands ─────────────────────────────────────────────────────
@@ -124,4 +125,39 @@ pub async fn browser_get_tab_info(
     let mgr = mgr.as_ref().ok_or("Browser engine not initialized")?;
     mgr.get_tab(&tab_id)
         .ok_or_else(|| format!("Tab not found: {tab_id}"))
+}
+
+/// Get all cookies for a tab.
+#[tauri::command]
+pub async fn browser_get_cookies(
+    tab_id: String,
+    state: State<'_, AppState>,
+) -> Result<Value, String> {
+    let mgr = state.chromium.lock().await;
+    let mgr = mgr.as_ref().ok_or("Browser engine not initialized")?;
+    mgr.get_cookies(&tab_id).await
+}
+
+/// Clear all cookies for a tab.
+#[tauri::command]
+pub async fn browser_clear_cookies(
+    tab_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mgr = state.chromium.lock().await;
+    let mgr = mgr.as_ref().ok_or("Browser engine not initialized")?;
+    mgr.clear_cookies(&tab_id).await
+}
+
+/// Delete a specific cookie from a tab.
+#[tauri::command]
+pub async fn browser_delete_cookie(
+    tab_id: String,
+    name: String,
+    domain: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mgr = state.chromium.lock().await;
+    let mgr = mgr.as_ref().ok_or("Browser engine not initialized")?;
+    mgr.delete_cookie(&tab_id, &name, &domain).await
 }

@@ -187,6 +187,71 @@ impl CdpClient {
         Ok(data)
     }
 
+    // ── Privacy & fingerprinting ──────────────────────────────────
+
+    /// Block a list of URL patterns via Network.setBlockedURLs.
+    pub async fn set_blocked_urls(&self, tab: &Tab, patterns: &[String]) -> Result<(), String> {
+        // Enable network domain first
+        self.send_cdp(&tab.ws_url, "Network.enable", json!({})).await?;
+        self.send_cdp(
+            &tab.ws_url,
+            "Network.setBlockedURLs",
+            json!({"urls": patterns}),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Inject a script that runs before every new document (for fingerprint protection).
+    pub async fn add_script_on_new_document(
+        &self,
+        tab: &Tab,
+        script: &str,
+    ) -> Result<(), String> {
+        self.send_cdp(
+            &tab.ws_url,
+            "Page.addScriptToEvaluateOnNewDocument",
+            json!({"source": script, "worldName": "jambu-privacy"}),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Get all cookies for the current page.
+    pub async fn get_cookies(&self, tab: &Tab) -> Result<serde_json::Value, String> {
+        self.send_cdp(&tab.ws_url, "Network.getCookies", json!({})).await
+    }
+
+    /// Delete cookies matching a name and domain.
+    pub async fn delete_cookies(
+        &self,
+        tab: &Tab,
+        name: &str,
+        domain: &str,
+    ) -> Result<(), String> {
+        self.send_cdp(
+            &tab.ws_url,
+            "Network.deleteCookies",
+            json!({"name": name, "domain": domain}),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Clear all cookies for the current page.
+    pub async fn clear_cookies(&self, tab: &Tab) -> Result<(), String> {
+        // Get all cookies first, then delete each
+        let cookies = self.get_cookies(tab).await?;
+        if let Some(list) = cookies.get("cookies").and_then(|c| c.as_array()) {
+            for cookie in list {
+                let name = cookie["name"].as_str().unwrap_or("");
+                let domain = cookie["domain"].as_str().unwrap_or("");
+                let _ = self.delete_cookies(tab, name, domain).await;
+            }
+        }
+        Ok(())
+    }
+
     // ── Internal helpers ─────────────────────────────────────────
 
     /// Send a single CDP command over WebSocket and return the result.
