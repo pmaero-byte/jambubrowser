@@ -148,3 +148,105 @@ pub fn open_download(_path: &str) -> Result<(), String> {
 pub fn remove_download(path: &str) -> Result<(), String> {
     std::fs::remove_file(path).map_err(|e| format!("remove failed: {e}"))
 }
+
+/// Fetch a URL via reqwest and save the response body to the download
+/// directory under a sensible filename. Returns the absolute path of the
+/// saved file. Used by the PDF "Download" button — the Tauri side
+/// downloads the file directly so the user can open it in a native
+/// PDF reader instead of staring at a static screenshot.
+pub async fn download_url_to_dir(url: &str) -> Result<String, String> {
+    use std::io::Write;
+    let dir = ensure_download_dir();
+
+    // Pull the filename from the URL path; fall back to a timestamped
+    // "download-<n>.bin" if the URL has no useful basename.
+    let basename = url_basename(url)
+        .unwrap_or_else(|| format!("download-{}.bin", unix_now_secs()));
+
+    let target = unique_target(&dir, &basename);
+
+    let resp = reqwest::get(url)
+        .await
+        .map_err(|e| format!("fetch failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("http {} for {url}", resp.status()));
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("body read failed: {e}"))?;
+
+    let mut f = std::fs::File::create(&target)
+        .map_err(|e| format!("create file failed: {e}"))?;
+    f.write_all(&bytes)
+        .map_err(|e| format!("write failed: {e}"))?;
+    f.sync_all().ok();
+
+    Ok(target.to_string_lossy().to_string())
+}
+
+/// Last non-empty path segment of a URL, URL-decoded. Returns None if
+/// the URL is malformed or the path has no useful basename. Avoids the
+/// `url` crate dep — we only need the filename, not full URL parsing.
+fn url_basename(url: &str) -> Option<String> {
+    // Drop the query string and fragment.
+    let path = url.split(['?', '#']).next()?;
+    // Last `/`-separated segment.
+    let last = path.rsplit('/').next()?.trim();
+    if last.is_empty() {
+        return None;
+    }
+    // Best-effort percent-decode. We replace %XX with the byte; if the
+    // result isn't valid UTF-8 we drop the % and ship the raw bytes.
+    let mut out = Vec::with_capacity(last.len());
+    let bytes = last.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(h), Some(l)) = (hex(bytes[i + 1]), hex(bytes[i + 2])) {
+                out.push((h << 4) | l);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8(out).ok()
+}
+
+fn hex(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn unix_now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// If <basename> already exists in <dir>, suffix with -1, -2, ...
+/// until a free name is found. Preserves the extension.
+fn unique_target(dir: &Path, basename: &str) -> PathBuf {
+    let candidate = dir.join(basename);
+    if !candidate.exists() {
+        return candidate;
+    }
+    let (stem, ext) = match basename.rsplit_once('.') {
+        Some((s, e)) => (s.to_string(), format!(".{e}")),
+        None => (basename.to_string(), String::new()),
+    };
+    for n in 1..=9999 {
+        let next = dir.join(format!("{stem}-{n}{ext}"));
+        if !next.exists() {
+            return next;
+        }
+    }
+    dir.join(format!("{stem}-{}", unix_now_secs()))
+}

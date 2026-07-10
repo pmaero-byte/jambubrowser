@@ -245,3 +245,11 @@ pub async fn browser_open_download(path: String) -> Result<(), String> {
 pub async fn browser_remove_download(path: String) -> Result<(), String> {
     downloads::remove_download(&path)
 }
+
+/// Fetch a URL server-side and save it to the download directory.
+/// Returns the absolute path of the saved file. Used by the PDF
+/// "Download" button to get the file onto disk for a native reader.
+#[tauri::command]
+pub async fn browser_download_url(url: String) -> Result<String, String> {
+    downloads::download_url_to_dir(&url).await
+}

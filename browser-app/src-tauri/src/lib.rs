@@ -195,6 +195,7 @@ pub fn run() {
             commands::chromium::browser_list_downloads,
             commands::chromium::browser_open_download,
             commands::chromium::browser_remove_download,
+            commands::chromium::browser_download_url,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
