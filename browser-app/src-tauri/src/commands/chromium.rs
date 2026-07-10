@@ -5,6 +5,7 @@
 
 use crate::AppState;
 use crate::chromium::audit::AuditReport;
+use crate::chromium::downloads::{self, Download};
 use crate::chromium::extensions::Extension;
 use crate::chromium::tab::TabInfo;
 use serde_json::Value;
@@ -224,4 +225,23 @@ pub async fn browser_set_fingerprint(
         .as_mut()
         .ok_or("Browser engine not initialized")?;
     mgr.set_fingerprint_enabled(&tab_id, enabled).await
+}
+
+/// List all files in the download directory, newest first.
+#[tauri::command]
+pub async fn browser_list_downloads() -> Result<Vec<Download>, String> {
+    let dir = downloads::default_download_dir();
+    Ok(downloads::scan_downloads(&dir))
+}
+
+/// Open a downloaded file with the OS default handler.
+#[tauri::command]
+pub async fn browser_open_download(path: String) -> Result<(), String> {
+    downloads::open_download(&path)
+}
+
+/// Remove a downloaded file from the download directory.
+#[tauri::command]
+pub async fn browser_remove_download(path: String) -> Result<(), String> {
+    downloads::remove_download(&path)
 }
