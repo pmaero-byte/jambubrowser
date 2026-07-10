@@ -174,4 +174,43 @@ describe("appStore - browser tabs", () => {
     useAppStore.getState().setActiveBrowserTab(firstId);
     expect(useAppStore.getState().activeBrowserTabId).toBe(firstId);
   });
+
+  it("reorderBrowserTabs accepts a new tab order", () => {
+    useAppStore.getState().addBrowserTab("https://b.com", "B");
+    useAppStore.getState().addBrowserTab("https://c.com", "C");
+    const tabs = useAppStore.getState().browserTabs;
+    // Move the first tab to the end.
+    const reordered = [tabs[1], tabs[2], tabs[0]];
+    useAppStore.getState().reorderBrowserTabs(reordered);
+    const urls = useAppStore.getState().browserTabs.map((t) => t.url);
+    expect(urls).toEqual(["https://b.com", "https://c.com", "about:blank"]);
+  });
+
+  it("reorderBrowserTabs with the same order is a no-op", () => {
+    useAppStore.getState().addBrowserTab("https://b.com", "B");
+    const before = useAppStore.getState().browserTabs;
+    useAppStore.getState().reorderBrowserTabs([...before]);
+    const after = useAppStore.getState().browserTabs;
+    expect(after.map((t) => t.id)).toEqual(before.map((t) => t.id));
+  });
+
+  it("reorderBrowserTabs rejects arrays of different length", () => {
+    useAppStore.getState().addBrowserTab("https://b.com", "B");
+    const before = useAppStore.getState().browserTabs.map((t) => t.id);
+    useAppStore.getState().reorderBrowserTabs([]);
+    const after = useAppStore.getState().browserTabs.map((t) => t.id);
+    expect(after).toEqual(before);
+  });
+
+  it("reorderBrowserTabs rejects arrays with different tab ids", () => {
+    useAppStore.getState().addBrowserTab("https://b.com", "B");
+    const before = useAppStore.getState().browserTabs;
+    const foreign = [
+      { id: "ghost-1", url: "https://x.com", title: "X" },
+      { id: "ghost-2", url: "https://y.com", title: "Y" },
+    ];
+    useAppStore.getState().reorderBrowserTabs(foreign);
+    const after = useAppStore.getState().browserTabs;
+    expect(after).toEqual(before); // unchanged
+  });
 });

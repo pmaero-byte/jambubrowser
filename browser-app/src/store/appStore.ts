@@ -64,6 +64,7 @@ interface AppState {
   closeBrowserTab: (id: string) => void;
   setActiveBrowserTab: (id: string) => void;
   updateBrowserTab: (id: string, patch: Partial<BrowserTab>) => void;
+  reorderBrowserTabs: (newOrder: BrowserTab[]) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -132,4 +133,16 @@ export const useAppStore = create<AppState>((set) => ({
         t.id === id ? { ...t, ...patch } : t
       ),
     })),
+  reorderBrowserTabs: (newOrder) =>
+    set((s) => {
+      // Reject malformed reorders: must be a permutation of the current tabs.
+      // Framer Motion's Reorder can briefly fire onReorder with stale arrays
+      // (e.g. dropping past the last item), so guards here keep the array
+      // shape stable.
+      if (newOrder.length !== s.browserTabs.length) return {};
+      const currentIds = s.browserTabs.map((t) => t.id).sort();
+      const newIds = newOrder.map((t) => t.id).sort();
+      if (currentIds.some((id, i) => id !== newIds[i])) return {};
+      return { browserTabs: newOrder };
+    }),
 }));
