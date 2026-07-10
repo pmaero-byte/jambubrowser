@@ -4,7 +4,7 @@ import { Button } from "../ui/button";
 import {
   ArrowLeft, ArrowRight, RotateCcw, Home, Plus, X,
   Globe, Bug, BugOff, Cpu, Star, Clock, Bookmark,
-  Shield,
+  Shield, FileText, Download,
 } from "lucide-react";
 import { useAppStore, BrowserTab } from "../../store/appStore";
 import { useDevtoolsStore } from "../../store/devtoolsStore";
@@ -64,6 +64,18 @@ function faviconUrl(url: string): string {
     const host = new URL(url).hostname;
     return `https://www.google.com/s2/favicons?domain=${host}&sz=32`;
   } catch { return ""; }
+}
+
+// ── PDF detection helper ─────────────────────────────────────────
+// Lightweight check on the URL only. Strips query/fragment so
+// `?file=foo.pdf` doesn't false-positive. Real content-type sniffing
+// would require a CDP Network.responseReceived listener, which is
+// overkill for an indicator badge.
+
+export function isPdfUrl(url: string): boolean {
+  if (!url) return false;
+  const noQuery = url.split(/[?#]/)[0];
+  return noQuery.toLowerCase().endsWith(".pdf");
 }
 
 // ── Main Component ───────────────────────────────────────────────
@@ -380,6 +392,19 @@ export function ChromiumPane() {
     setPreview(null);
   }, [cancelPreview]);
 
+  // PDF download — the screenshot-mode viewport can't render an interactive
+  // PDF, so the user gets a "Download" button that fetches the bytes and
+  // saves them to the download dir for opening in a native reader.
+  const [pdfDownloading, setPdfDownloading] = useState(false);
+  const downloadActivePdf = useCallback(async () => {
+    if (!activeTab?.url || !isTauri || !engineReady) return;
+    setPdfDownloading(true);
+    try {
+      await invoke("browser_download_url", { url: activeTab.url });
+    } catch { /* surfaced via download bar on next refresh */ }
+    finally { setPdfDownloading(false); }
+  }, [activeTab?.url, engineReady]);
+
   const reload = useCallback(async () => {
     if (!activeTab) return;
     setSpinning(true); setTimeout(() => setSpinning(false), 700);
@@ -529,6 +554,21 @@ export function ChromiumPane() {
                 className={`shrink-0 ${isBookmarked(activeTab.url) ? "text-amber-400" : "text-muted-foreground hover:text-foreground"}`}>
                 <Star size={12} fill={isBookmarked(activeTab.url) ? "currentColor" : "none"} />
               </button>
+            )}
+            {/* PDF indicator + download */}
+            {isPdfUrl(activeTab?.url || "") && (
+              <>
+                <span className="flex shrink-0 items-center gap-1 rounded bg-red-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-red-400">
+                  <FileText size={9} /> PDF
+                </span>
+                <button type="button" onClick={downloadActivePdf} disabled={pdfDownloading}
+                  title="Download PDF for native reader"
+                  className="shrink-0 text-muted-foreground hover:text-foreground disabled:opacity-50">
+                  {pdfDownloading
+                    ? <span className="block h-3 w-3 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground" />
+                    : <Download size={11} />}
+                </button>
+              </>
             )}
             {/* Bookmark bar toggle */}
             <button type="button" onClick={() => setShowBookmarks((v) => !v)}
