@@ -155,11 +155,13 @@ pub fn run() {
 
             // 2. Launch Chromium browser engine
             let state = chromium_state.clone();
+            let handle_for_watchdog = handle.clone();
             tauri::async_runtime::spawn(async move {
                 let chrome_path = find_chrome();
                 eprintln!("[jambu] Using Chrome at: {}", chrome_path);
 
-                let profile_dir = std::env::temp_dir().join("jambubrowser-chrome-profile");
+                let profile_dir = std::env::temp_dir()
+                    .join(format!("jambubrowser-chrome-profile-{}", chromium::manager::uuid_v4_like()));
 
                 match ChromiumManager::launch(&chrome_path, 9222, profile_dir).await {
                     Ok(mgr) => {
@@ -171,8 +173,14 @@ pub fn run() {
                     Err(e) => {
                         eprintln!("[jambu] Failed to start Chromium: {e}");
                         let _ = handle.emit("browser-error", e);
+                        return;
                     }
                 }
+
+                // Spawn the crash-recovery watchdog. It re-arms itself
+                // on every restart, so this single call is enough for
+                // the lifetime of the app.
+                chromium::manager::spawn_watchdog(state, handle_for_watchdog);
             });
 
             Ok(())
