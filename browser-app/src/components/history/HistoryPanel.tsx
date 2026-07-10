@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { History, Activity, RefreshCw, Database, Shield, Lock } from "lucide-react";
+import { History, Activity, RefreshCw, Database, Shield, Lock, Globe, Trash2, ExternalLink, X } from "lucide-react";
 import { Button } from "../ui/button";
 import { localFetch } from "../../utils/api";
+import { useBrowsingHistoryStore } from "../../store/browsingHistoryStore";
+import { useAppStore } from "../../store/appStore";
 
 interface HealthData {
   status: string;
@@ -25,10 +27,25 @@ interface StatsData {
   browser_sessions: number;
 }
 
+function timeAgo(ms: number): string {
+  const sec = Math.floor((Date.now() - ms) / 1000);
+  if (sec < 60) return "just now";
+  if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
+  return `${Math.floor(sec / 86400)}d ago`;
+}
+
 export function HistoryPanel() {
   const [health, setHealth] = useState<HealthData | null>(null);
   const [stats, setStats] = useState<StatsData | null>(null);
   const [loading, setLoading] = useState(false);
+  const [historyFilter, setHistoryFilter] = useState("");
+
+  const history = useBrowsingHistoryStore((s) => s.entries);
+  const removeHistoryEntry = useBrowsingHistoryStore((s) => s.removeEntry);
+  const clearHistory = useBrowsingHistoryStore((s) => s.clearAll);
+  const setActiveTab = useAppStore((s) => s.setActiveTab);
+  const addBrowserTab = useAppStore((s) => s.addBrowserTab);
 
   const loadAll = async () => {
     setLoading(true);
@@ -49,6 +66,19 @@ export function HistoryPanel() {
   useEffect(() => {
     loadAll();
   }, []);
+
+  const filteredHistory = historyFilter.trim()
+    ? history.filter(
+        (e) =>
+          e.url.toLowerCase().includes(historyFilter.toLowerCase()) ||
+          e.title.toLowerCase().includes(historyFilter.toLowerCase())
+      )
+    : history;
+
+  const openInBrowser = (url: string, title: string) => {
+    addBrowserTab(url, title || url);
+    setActiveTab("browser");
+  };
 
   return (
     <div className="flex h-full flex-col">
@@ -91,6 +121,77 @@ export function HistoryPanel() {
               <StatRow label="Custom Tools" value={String(stats?.custom_tools ?? "—")} />
               <StatRow label="Credentials" value={String(stats?.credentials ?? "—")} />
               <StatRow label="Browser Sessions" value={String(stats?.browser_sessions ?? "—")} />
+            </Section>
+
+            <Section title="Browser History" icon={<Globe size={14} />}>
+              <div className="mb-2 flex items-center gap-1">
+                <input
+                  type="text"
+                  placeholder="Filter by url or title…"
+                  value={historyFilter}
+                  onChange={(e) => setHistoryFilter(e.target.value)}
+                  className="flex-1 rounded border border-border bg-background px-2 py-1 text-[11px] outline-none placeholder:text-muted-foreground/50"
+                />
+                {history.length > 0 && (
+                  <Button
+                    variant="ghost" size="icon"
+                    onClick={() => { if (confirm(`Clear all ${history.length} history entries?`)) clearHistory(); }}
+                    title="Clear all history"
+                    className="h-6 w-6 text-muted-foreground hover:text-red-400"
+                  >
+                    <Trash2 size={11} />
+                  </Button>
+                )}
+              </div>
+              {history.length === 0 ? (
+                <div className="rounded border border-dashed border-border p-3 text-center text-[11px] text-muted-foreground">
+                  No browsing history yet. Pages you visit in the browser pane
+                  will appear here.
+                </div>
+              ) : filteredHistory.length === 0 ? (
+                <div className="rounded border border-dashed border-border p-3 text-center text-[11px] text-muted-foreground">
+                  No history entries match "{historyFilter}".
+                </div>
+              ) : (
+                <ul className="max-h-72 space-y-1 overflow-y-auto">
+                  {filteredHistory.slice(0, 50).map((e) => (
+                    <li
+                      key={`${e.url}-${e.visitedAt}`}
+                      className="group flex items-start gap-2 rounded px-2 py-1.5 text-[11px] hover:bg-muted/40"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-foreground/90" title={e.url}>
+                          {e.title || e.url}
+                        </div>
+                        <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                          <span className="truncate">{e.url}</span>
+                          <span>·</span>
+                          <span className="shrink-0">{timeAgo(e.visitedAt)}</span>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => openInBrowser(e.url, e.title)}
+                        title="Open in browser"
+                        className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                      >
+                        <ExternalLink size={10} />
+                      </button>
+                      <button
+                        onClick={() => removeHistoryEntry(e.url, e.visitedAt)}
+                        title="Remove this entry"
+                        className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-red-500/20 hover:text-red-400"
+                      >
+                        <X size={10} />
+                      </button>
+                    </li>
+                  ))}
+                  {filteredHistory.length > 50 && (
+                    <li className="px-2 py-1 text-center text-[10px] text-muted-foreground">
+                      Showing 50 of {filteredHistory.length} matching entries
+                    </li>
+                  )}
+                </ul>
+              )}
             </Section>
           </motion.div>
         </AnimatePresence>
