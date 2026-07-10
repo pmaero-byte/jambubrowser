@@ -9,6 +9,7 @@ import {
 import { useAppStore, BrowserTab } from "../../store/appStore";
 import { useDevtoolsStore } from "../../store/devtoolsStore";
 import { DevToolsPanel } from "./DevToolsPanel";
+import { DownloadBar } from "./DownloadBar";
 
 // ── Tauri API detection ──────────────────────────────────────────
 
@@ -705,6 +706,9 @@ export function ChromiumPane() {
           )}
         </AnimatePresence>
       </div>
+
+      {/* ── Download Bar ── */}
+      <DownloadBar />
 
       {/* ── CDP Audit Overlay ── */}
       <AnimatePresence>
