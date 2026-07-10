@@ -92,6 +92,22 @@ export function ChromiumPane() {
   const screenshotRef = useRef<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // ── Tab preview (hover thumbnail) ──
+  // Positioned absolutely above the hovered tab. Cache by tabId so re-hovering
+  // the same tab in quick succession doesn't re-fetch.
+  const [preview, setPreview] = useState<{
+    tabId: string;
+    title: string;
+    url: string;
+    screenshot: string | null;
+    loading: boolean;
+    x: number;
+    y: number;
+  } | null>(null);
+  const previewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const previewAbortRef = useRef<AbortController | null>(null);
+  const previewCacheRef = useRef<Map<string, string>>(new Map());
+
   const devtoolsOpen = useDevtoolsStore((s) => s.devtoolsOpen);
   const setDevtoolsOpen = useDevtoolsStore((s) => s.setDevtoolsOpen);
 
@@ -318,6 +334,50 @@ export function ChromiumPane() {
     }
     closeBrowserTab(id);
   }, [engineReady, closeBrowserTab]);
+
+  // ── Tab preview hover handlers ──
+  // Debounced 300ms; aborts in-flight fetches when the user moves to a
+  // different tab so we never display a stale screenshot.
+  const cancelPreview = useCallback(() => {
+    if (previewTimerRef.current) { clearTimeout(previewTimerRef.current); previewTimerRef.current = null; }
+    if (previewAbortRef.current) { previewAbortRef.current.abort(); previewAbortRef.current = null; }
+  }, []);
+
+  const handleTabPreviewEnter = useCallback((tab: BrowserTab, el: HTMLElement) => {
+    if (tab.id === activeBrowserTabId) return; // active tab already visible in viewport
+    if (tab.url === "about:blank" || !tab.url) return; // nothing to show
+    cancelPreview();
+    const rect = el.getBoundingClientRect();
+    previewTimerRef.current = setTimeout(async () => {
+      const cached = previewCacheRef.current.get(tab.id);
+      if (cached) {
+        setPreview({ tabId: tab.id, title: tab.title, url: tab.url, screenshot: cached, loading: false,
+          x: rect.left, y: rect.top });
+        return;
+      }
+      if (!isTauri || !engineReady) return;
+      const ctrl = new AbortController();
+      previewAbortRef.current = ctrl;
+      setPreview({ tabId: tab.id, title: tab.title, url: tab.url, screenshot: null, loading: true,
+        x: rect.left, y: rect.top });
+      try {
+        const dataUrl = await invoke("browser_capture_screenshot", { tabId: tab.id });
+        if (ctrl.signal.aborted) return;
+        const url = String(dataUrl);
+        previewCacheRef.current.set(tab.id, url);
+        setPreview({ tabId: tab.id, title: tab.title, url: tab.url, screenshot: url, loading: false,
+          x: rect.left, y: rect.top });
+      } catch {
+        // CDP error — silently dismiss the preview.
+        if (!ctrl.signal.aborted) setPreview(null);
+      }
+    }, 300);
+  }, [activeBrowserTabId, engineReady, cancelPreview]);
+
+  const handleTabPreviewLeave = useCallback(() => {
+    cancelPreview();
+    setPreview(null);
+  }, [cancelPreview]);
 
   const reload = useCallback(async () => {
     if (!activeTab) return;
@@ -549,6 +609,8 @@ export function ChromiumPane() {
               as="button"
               onClick={() => setActiveBrowserTab(tab.id)}
               onMouseDown={(e) => { if (e.button === 1) { e.preventDefault(); handleCloseTab(tab.id); } }}
+              onMouseEnter={(e) => handleTabPreviewEnter(tab, e.currentTarget)}
+              onMouseLeave={handleTabPreviewLeave}
               whileTap={{ scale: 0.96 }}
               whileDrag={{ scale: 1.04, zIndex: 10 }}
               className={`group relative flex max-w-[180px] items-center gap-1.5 rounded-md pl-2 pr-1 py-1 text-xs touch-none cursor-grab active:cursor-grabbing ${
@@ -577,6 +639,41 @@ export function ChromiumPane() {
           );
         })}
       </Reorder.Group>
+
+      {/* ── Tab preview popup ── */}
+      <AnimatePresence>
+        {preview && (
+          <motion.div
+            initial={{ opacity: 0, y: 6, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 6, scale: 0.96 }}
+            transition={{ duration: 0.14, ease: "easeOut" }}
+            style={{
+              position: "fixed",
+              left: Math.max(8, Math.min(preview.x, window.innerWidth - 348)),
+              top: Math.max(8, preview.y - 200),
+              zIndex: 60,
+            }}
+            className="pointer-events-none w-[340px] rounded-lg border border-border bg-card shadow-2xl overflow-hidden"
+          >
+            {preview.loading ? (
+              <div className="flex h-[180px] items-center justify-center bg-muted/30">
+                <motion.div
+                  animate={{ rotate: 360 }}
+                  transition={{ duration: 1.2, repeat: Infinity, ease: "linear" }}
+                  className="h-5 w-5 rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground"
+                />
+              </div>
+            ) : preview.screenshot ? (
+              <img src={preview.screenshot} alt={preview.title} className="block h-[180px] w-full object-cover bg-white" />
+            ) : null}
+            <div className="border-t border-border bg-card/95 px-2.5 py-1.5">
+              <div className="truncate text-[11px] font-medium text-foreground">{preview.title || "New Tab"}</div>
+              <div className="truncate text-[10px] text-muted-foreground">{preview.url}</div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ── Viewport ── */}
       <div className="relative min-h-0 flex-1 bg-background">
