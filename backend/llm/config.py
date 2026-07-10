@@ -121,6 +121,7 @@ class LLMConfig:
             "mlx": self.mlx_model,
             "minimax": self.minimax_model,
             "mock": "mock-model",
+            "moa": self.default_model or "default",
         }.get(provider, "")
 
 

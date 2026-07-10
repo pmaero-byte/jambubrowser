@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Button } from "../ui/button";
 import {
@@ -9,8 +9,14 @@ import {
   Plus,
   X,
   Globe,
+  Bug,
+  BugOff,
 } from "lucide-react";
 import { useAppStore } from "../../store/appStore";
+import { useDevtoolsStore } from "../../store/devtoolsStore";
+import { DevToolsPanel } from "./DevToolsPanel";
+
+const PROXY_BASE = "http://localhost:8001/proxy/";
 
 export function BrowserPane() {
   const {
@@ -30,9 +36,62 @@ export function BrowserPane() {
   const [navTick, setNavTick] = useState(0);
   const [spinning, setSpinning] = useState(false);
 
+  const devtoolsOpen = useDevtoolsStore((s) => s.devtoolsOpen);
+  const setDevtoolsOpen = useDevtoolsStore((s) => s.setDevtoolsOpen);
+
   useEffect(() => {
     if (activeTab?.url) setInputUrl(activeTab.url);
   }, [activeTab?.url, activeBrowserTabId]);
+
+  // ── DevTools: listen for postMessage from the proxy-injected script ──
+  const handleDevtoolsMessage = useCallback((event: MessageEvent) => {
+    if (!event.data || event.data.source !== "jambu-devtools") return;
+    const { type, data } = event.data;
+    const store = useDevtoolsStore.getState();
+
+    switch (type) {
+      case "perf:navigation":
+        store.setNavigation(data);
+        break;
+      case "perf:lcp":
+        store.setLcp(data);
+        break;
+      case "perf:fcp":
+        store.setFcp(data);
+        break;
+      case "perf:cls":
+        store.setCls(data);
+        break;
+      case "perf:longtask":
+        store.addLongTask(data);
+        break;
+      case "perf:resource":
+        store.addResource(data);
+        break;
+      case "console":
+        store.addConsoleEntry(data);
+        break;
+      case "error":
+        // Map error events to console error entries
+        store.addConsoleEntry({
+          level: "error",
+          message: `[${data.source || "JS Error"}] ${data.message}${data.filename ? `\n  at ${data.filename}:${data.lineno}:${data.colno}` : ""}`,
+          timestamp: data.timestamp || Date.now(),
+        });
+        store.addError(data);
+        break;
+    }
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener("message", handleDevtoolsMessage);
+    return () => window.removeEventListener("message", handleDevtoolsMessage);
+  }, [handleDevtoolsMessage]);
+
+  // Clear devtools data when navigating to a new page
+  useEffect(() => {
+    useDevtoolsStore.getState().clearAll();
+  }, [navTick]);
 
   const normalizeUrl = (raw: string) => {
     if (!raw.trim()) return "about:blank";
@@ -59,10 +118,10 @@ export function BrowserPane() {
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-2 border-b border-border bg-card/50 px-2 py-1.5">
         <div className="flex items-center gap-1">
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => iframeRef.current?.contentWindow?.history.back()}>
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { try { iframeRef.current?.contentWindow?.history.back(); } catch { /* cross-origin */ } }}>
             <ArrowLeft size={14} />
           </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => iframeRef.current?.contentWindow?.history.forward()}>
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { try { iframeRef.current?.contentWindow?.history.forward(); } catch { /* cross-origin */ } }}>
             <ArrowRight size={14} />
           </Button>
           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={reload}>
@@ -73,6 +132,15 @@ export function BrowserPane() {
             >
               <RotateCcw size={14} />
             </motion.span>
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className={`h-7 w-7 ${devtoolsOpen ? "text-accent" : ""}`}
+            onClick={() => setDevtoolsOpen(!devtoolsOpen)}
+            title={devtoolsOpen ? "Close DevTools" : "Open DevTools"}
+          >
+            {devtoolsOpen ? <BugOff size={14} /> : <Bug size={14} />}
           </Button>
           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => navigate("about:blank")}>
             <Home size={14} />
@@ -156,7 +224,7 @@ export function BrowserPane() {
             <motion.iframe
               key={`${activeBrowserTabId}-${navTick}`}
               ref={iframeRef}
-              src={activeTab.url}
+              src={PROXY_BASE + activeTab.url}
               title="Browser"
               sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
               className="h-full w-full border-0"
@@ -186,6 +254,9 @@ export function BrowserPane() {
           )}
         </AnimatePresence>
       </div>
+
+      {/* DevTools Panel */}
+      <DevToolsPanel />
     </div>
   );
 }

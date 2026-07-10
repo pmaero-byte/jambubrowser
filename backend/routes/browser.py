@@ -140,7 +140,7 @@ async def set_privacy_mode(req: PrivacyModeRequest):
     try:
         mode = PrivacyMode(req.mode.lower())
         privacy_mgr.set_mode(mode)
-        return {"status": "ok", "mode": mode.value}
+        return {"success": True, "status": "ok", "mode": mode.value}
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Invalid privacy mode: {req.mode}")
 

@@ -1,0 +1,470 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - img [ref=e8]
+        - generic [ref=e11]: Jambubrowser
+      - button "Workspace Default" [ref=e13]:
+        - generic [ref=e14]: Workspace
+        - generic [ref=e15]: Default
+    - generic [ref=e16]:
+      - generic [ref=e17]:
+        - generic [ref=e18]: "Model:"
+        - generic [ref=e19]: auto
+      - generic [ref=e20]:
+        - img [ref=e21]
+        - generic [ref=e23]: Enhanced
+      - button "Command ⌘K" [ref=e24]:
+        - img [ref=e25]
+        - generic [ref=e27]: Command
+        - generic [ref=e28]: ⌘K
+      - button [ref=e29]:
+        - img [ref=e30]
+  - generic [ref=e33]:
+    - complementary [ref=e34]:
+      - navigation "Primary" [ref=e36]:
+        - generic [ref=e37]: Workspace
+        - button "Research" [ref=e38]:
+          - img [ref=e40]
+          - generic [ref=e42]: Research
+        - button "Plan" [ref=e43]:
+          - img [ref=e45]
+          - generic [ref=e48]: Plan
+        - button "Browser" [active] [ref=e49]:
+          - img [ref=e51]
+          - generic [ref=e54]: Browser
+        - button "Logs" [ref=e55]:
+          - img [ref=e57]
+          - generic [ref=e60]: Logs
+        - button "Memory" [ref=e61]:
+          - img [ref=e63]
+          - generic [ref=e71]: Memory
+        - button "Knowledge" [ref=e72]:
+          - img [ref=e74]
+          - generic [ref=e82]: Knowledge
+        - button "Missions" [ref=e83]:
+          - img [ref=e85]
+          - generic [ref=e87]: Missions
+        - button "History" [ref=e88]:
+          - img [ref=e90]
+          - generic [ref=e94]: History
+        - generic [ref=e95]: System
+        - button "Privacy" [ref=e96]:
+          - img [ref=e98]
+          - generic [ref=e100]: Privacy
+        - button "Audit" [ref=e101]:
+          - img [ref=e103]
+          - generic [ref=e106]: Audit
+        - button "Team" [ref=e107]:
+          - img [ref=e109]
+          - generic [ref=e114]: Team
+        - button "Vault" [ref=e115]:
+          - img [ref=e117]
+          - generic [ref=e120]: Vault
+        - button "Settings" [ref=e121]:
+          - img [ref=e123]
+          - generic [ref=e126]: Settings
+        - generic [ref=e127]:
+          - img [ref=e128]
+          - generic [ref=e130]: Engine online
+    - main [ref=e131]:
+      - generic [ref=e193]:
+        - generic [ref=e194]:
+          - generic [ref=e195]:
+            - button [ref=e196]:
+              - img [ref=e197]
+            - button [ref=e199]:
+              - img [ref=e200]
+            - button [ref=e202]:
+              - img [ref=e204]
+            - button [ref=e207]:
+              - img [ref=e208]
+          - generic [ref=e211]:
+            - img [ref=e212]
+            - textbox [ref=e215]: https://astrogenesis.net
+          - button [ref=e216]:
+            - img [ref=e218]
+        - button "Astrogenesis" [ref=e220]:
+          - generic [ref=e222]: Astrogenesis
+        - iframe [ref=e224]:
+          - generic [ref=f6e2]:
+            - link "Skip to main content" [ref=f6e3] [cursor=pointer]:
+              - /url: "#main"
+            - main [ref=f6e4]:
+              - generic:
+                - img:
+                  - generic: ♈
+                  - generic: ♉
+                  - generic: ♊
+                  - generic: ♋
+                  - generic: ♌
+                  - generic: ♍
+                  - generic: ♎
+                  - generic: ♏
+                  - generic: ♐
+                  - generic: ♑
+                  - generic: ♒
+                  - generic: ♓
+              - generic [ref=f6e5]:
+                - generic [ref=f6e6]:
+                  - button "Support Support" [ref=f6e8] [cursor=pointer]:
+                    - img "Support" [ref=f6e9]
+                    - generic [ref=f6e10]: Support
+                  - link "Sign In" [ref=f6e11] [cursor=pointer]:
+                    - /url: /account
+                  - link "Alerts" [ref=f6e12] [cursor=pointer]:
+                    - /url: /alerts
+                - generic [ref=f6e13]:
+                  - generic [ref=f6e15]:
+                    - generic:
+                      - generic:
+                        - img
+                    - img [ref=f6e16]:
+                      - generic [ref=f6e75]:
+                        - generic [ref=f6e76]: ♈
+                        - generic [ref=f6e77]: H1
+                      - generic [ref=f6e78]:
+                        - generic [ref=f6e79]: ♉
+                        - generic [ref=f6e80]: H2
+                      - generic [ref=f6e81]:
+                        - generic [ref=f6e82]: ♊
+                        - generic [ref=f6e83]: H3
+                      - generic [ref=f6e84]:
+                        - generic [ref=f6e85]: ♋
+                        - generic [ref=f6e86]: H4
+                      - generic [ref=f6e87]:
+                        - generic [ref=f6e88]: ♌
+                        - generic [ref=f6e89]: H5
+                      - generic [ref=f6e90]:
+                        - generic [ref=f6e91]: ♍
+                        - generic [ref=f6e92]: H6
+                      - generic [ref=f6e93]:
+                        - generic [ref=f6e94]: ♎
+                        - generic [ref=f6e95]: H7
+                      - generic [ref=f6e96]:
+                        - generic [ref=f6e97]: ♏
+                        - generic [ref=f6e98]: H8
+                      - generic [ref=f6e99]:
+                        - generic [ref=f6e100]: ♐
+                        - generic [ref=f6e101]: H9
+                      - generic [ref=f6e102]:
+                        - generic [ref=f6e103]: ♑
+                        - generic [ref=f6e104]: H10
+                      - generic [ref=f6e105]:
+                        - generic [ref=f6e106]: ♒
+                        - generic [ref=f6e107]: H11
+                      - generic [ref=f6e108]:
+                        - generic [ref=f6e109]: ♓
+                        - generic [ref=f6e110]: H12
+                    - generic:
+                      - img "Live transit (Moon's current position)"
+                    - generic:
+                      - generic: Enter birth data to wind
+                  - paragraph [ref=f6e111]: astrogenesis · est. mmxxv · movement n° viii
+                  - heading "your birth is a watch, the sky wound it." [level=1] [ref=f6e112]:
+                    - text: your birth is a watch,
+                    - text: the sky wound it.
+                  - paragraph [ref=f6e113]: One birth moment. Every feature unlocked. No account required · Birth data never stored · 70.2% benchmark accuracy
+                  - button "Scroll to birth data form" [ref=f6e118] [cursor=pointer]:
+                    - generic [ref=f6e119]: Enter your particulars
+                    - generic [ref=f6e120]: ↓
+                - generic [ref=f6e123]:
+                  - generic [ref=f6e124]:
+                    - paragraph [ref=f6e125]: Enter Once, Explore Everything
+                    - heading "Cast your chart" [level=2] [ref=f6e126]
+                    - paragraph [ref=f6e127]: Enter your birth particulars once. Every feature on this page will connect to your chart automatically.
+                  - generic [ref=f6e128]:
+                    - generic [ref=f6e129]:
+                      - generic [ref=f6e130]:
+                        - generic [ref=f6e131]:
+                          - generic [ref=f6e132]: Date of Birth
+                          - textbox [ref=f6e133]: 1990-06-15
+                        - generic [ref=f6e134]:
+                          - generic [ref=f6e135]: Time of Birth (local)
+                          - textbox [ref=f6e136]: 14:30
+                      - generic [ref=f6e137]:
+                        - generic [ref=f6e138]: City
+                        - combobox "City" [ref=f6e140]
+                        - paragraph [ref=f6e141]: not listed? enter latitude / longitude / timezone manually below
+                      - paragraph [ref=f6e142]: No account required. Your birth data is computed locally and never stored.
+                      - generic [ref=f6e143]:
+                        - button "Cast My Chart →" [ref=f6e144] [cursor=pointer]
+                        - button "Try a Famous Chart" [ref=f6e145] [cursor=pointer]
+                    - generic [ref=f6e146]:
+                      - paragraph [ref=f6e147]: Or discover your historical twin
+                      - button "Align My Destiny →" [ref=f6e149] [cursor=pointer]:
+                        - img [ref=f6e150]
+                        - text: Align My Destiny →
+                - region "Sample watches — explore before winding your own" [ref=f6e153]:
+                  - generic [ref=f6e154]:
+                    - heading "Already-wound watches" [level=2] [ref=f6e155]
+                    - paragraph [ref=f6e156]: Explore the dial of a famous timepiece before you wind your own.
+                  - generic [ref=f6e157]:
+                    - link "Mahatma Gandhi Libra ascendant, the scales of public weight. Saturn-Jupiter year of Salt March. Wind this watch →" [ref=f6e158] [cursor=pointer]:
+                      - /url: /reading/mahatma-gandhi
+                      - img [ref=f6e160]:
+                        - generic [ref=f6e162]: ♎
+                        - generic [ref=f6e163]: Libra
+                      - generic [ref=f6e164]: Mahatma Gandhi
+                      - generic [ref=f6e165]: Libra ascendant, the scales of public weight. Saturn-Jupiter year of Salt March.
+                      - generic [ref=f6e166]: Wind this watch →
+                    - link "Albert Einstein Gemini ascendant, the twin pulses of thought. 1905 — three papers, one year. Wind this watch →" [ref=f6e167] [cursor=pointer]:
+                      - /url: /reading/albert-einstein
+                      - img [ref=f6e169]:
+                        - generic [ref=f6e171]: ♊
+                        - generic [ref=f6e172]: Gemini
+                      - generic [ref=f6e173]: Albert Einstein
+                      - generic [ref=f6e174]: Gemini ascendant, the twin pulses of thought. 1905 — three papers, one year.
+                      - generic [ref=f6e175]: Wind this watch →
+                    - link "Steve Jobs Leo ascendant, the creator of small worlds. iPhone born of a return. Wind this watch →" [ref=f6e176] [cursor=pointer]:
+                      - /url: /reading/steve-jobs
+                      - img [ref=f6e178]:
+                        - generic [ref=f6e180]: ♌
+                        - generic [ref=f6e181]: Leo
+                      - generic [ref=f6e182]: Steve Jobs
+                      - generic [ref=f6e183]: Leo ascendant, the creator of small worlds. iPhone born of a return.
+                      - generic [ref=f6e184]: Wind this watch →
+                - generic [ref=f6e185]:
+                  - generic [ref=f6e186]:
+                    - generic [ref=f6e187]:
+                      - paragraph [ref=f6e188]: 70.2%
+                      - paragraph [ref=f6e189]: Hit rate
+                      - paragraph [ref=f6e190]: 1.68× lift over chance
+                    - generic [ref=f6e191]:
+                      - paragraph [ref=f6e192]: 0.0039°
+                      - paragraph [ref=f6e193]: Precision
+                      - paragraph [ref=f6e194]: vs Swiss Ephemeris
+                    - generic [ref=f6e195]:
+                      - paragraph [ref=f6e196]: "598"
+                      - paragraph [ref=f6e197]: Charts tested
+                      - paragraph [ref=f6e198]: verified celebrities
+                    - generic [ref=f6e199]:
+                      - paragraph [ref=f6e200]: "940"
+                      - paragraph [ref=f6e201]: Classical rules
+                      - paragraph [ref=f6e202]: 12 astrologers
+                  - link "Full Transparency Report →" [ref=f6e204] [cursor=pointer]:
+                    - /url: /benchmark
+                - generic [ref=f6e205]:
+                  - generic [ref=f6e206]:
+                    - paragraph [ref=f6e207]: Trusted by seekers
+                    - paragraph [ref=f6e208]: What practitioners say
+                  - generic [ref=f6e209]:
+                    - generic [ref=f6e210]:
+                      - paragraph [ref=f6e211]: "\"The dasha predictions hit windows I had already observed in my practice. The 70% accuracy is real.\""
+                      - generic [ref=f6e212]:
+                        - paragraph [ref=f6e213]: Vedic Astrologer
+                        - paragraph [ref=f6e214]: Chennai
+                    - generic [ref=f6e215]:
+                      - paragraph [ref=f6e216]: "\"I use the Rules Library as a reference in client consultations. 940 classical aphorisms, instantly searchable.\""
+                      - generic [ref=f6e217]:
+                        - paragraph [ref=f6e218]: Jyotish Practitioner
+                        - paragraph [ref=f6e219]: London
+                    - generic [ref=f6e220]:
+                      - paragraph [ref=f6e221]: "\"The radio feature is uncanny. I can hear the shift when Venus takes over from Mars in my timeline.\""
+                      - generic [ref=f6e222]:
+                        - paragraph [ref=f6e223]: Music Therapist
+                        - paragraph [ref=f6e224]: Berlin
+                - generic [ref=f6e226]:
+                  - generic [ref=f6e227]:
+                    - paragraph [ref=f6e228]: Your chart, heard — not just read
+                    - paragraph [ref=f6e229]: Every planetary period has a raga
+                  - generic [ref=f6e230]:
+                    - generic [ref=f6e231]:
+                      - paragraph [ref=f6e232]: Your Moon Mahādaśā plays Chandrakauns. Your Jupiter Antardaśā plays Sankarabharanam. The engine maps your entire Vimshottari timeline to Carnatic ragas — each with its own mood, time-of-day, and planetary association.
+                      - generic [ref=f6e233]:
+                        - generic [ref=f6e234]: Veena
+                        - generic [ref=f6e235]: Mridangam
+                        - generic [ref=f6e236]: Tambura
+                        - generic [ref=f6e237]: Bansuri
+                        - generic [ref=f6e238]: Sitar
+                        - generic [ref=f6e239]: Tabla
+                        - generic [ref=f6e240]: Nadaswaram
+                        - generic [ref=f6e241]: Sarangi
+                    - generic [ref=f6e242]:
+                      - link "♫ Live Radio Stream music from the current sky" [ref=f6e243] [cursor=pointer]:
+                        - /url: /radio/vesper
+                        - generic [ref=f6e244]:
+                          - img [ref=f6e245]
+                          - generic [ref=f6e249]:
+                            - paragraph [ref=f6e250]: ♫ Live Radio
+                            - paragraph [ref=f6e251]: Stream music from the current sky
+                      - link "♥ Life Music Your entire timeline as a soundtrack" [ref=f6e252] [cursor=pointer]:
+                        - /url: /life-music/vesper
+                        - generic [ref=f6e253]:
+                          - img [ref=f6e254]
+                          - generic [ref=f6e256]:
+                            - paragraph [ref=f6e257]: ♥ Life Music
+                            - paragraph [ref=f6e258]: Your entire timeline as a soundtrack
+                - generic [ref=f6e259]:
+                  - generic [ref=f6e260]:
+                    - paragraph [ref=f6e261]: How it works
+                    - paragraph [ref=f6e262]: From birth data to classical reading
+                  - generic [ref=f6e263]:
+                    - generic [ref=f6e264]:
+                      - img [ref=f6e265]
+                      - paragraph [ref=f6e268]: Birth Data
+                      - paragraph [ref=f6e269]: Date, time, and place of birth.
+                    - generic [ref=f6e270]:
+                      - img [ref=f6e271]
+                      - paragraph [ref=f6e273]: Skyfield Engine
+                      - paragraph [ref=f6e274]: NASA-grade ephemeris computation.
+                    - generic [ref=f6e275]:
+                      - img [ref=f6e276]
+                      - paragraph [ref=f6e278]: 940 Rules
+                      - paragraph [ref=f6e279]: Classical aphorisms applied live.
+                    - generic [ref=f6e280]:
+                      - img [ref=f6e281]
+                      - paragraph [ref=f6e283]: Your Reading
+                      - paragraph [ref=f6e284]: Chart wheel, dasha, interpretations.
+                - generic [ref=f6e286]:
+                  - generic [ref=f6e287]:
+                    - paragraph [ref=f6e288]: Get classical insights in your inbox
+                    - paragraph [ref=f6e289]: "Weekly: transit alerts, raga recommendations, and deep dives into Parashara's ślokas."
+                  - generic [ref=f6e290]:
+                    - textbox "your@email.com" [ref=f6e291]
+                    - button "Subscribe →" [ref=f6e292] [cursor=pointer]
+                  - paragraph [ref=f6e293]: No spam. Unsubscribe anytime. We respect your data.
+                - generic [ref=f6e294]:
+                  - paragraph [ref=f6e296]: Common questions
+                  - generic [ref=f6e297]:
+                    - button "Is my birth data stored?" [ref=f6e299] [cursor=pointer]:
+                      - paragraph [ref=f6e300]: Is my birth data stored?
+                      - img [ref=f6e301]
+                    - button "What's the difference between Vedic and Western astrology?" [ref=f6e304] [cursor=pointer]:
+                      - paragraph [ref=f6e305]: What's the difference between Vedic and Western astrology?
+                      - img [ref=f6e306]
+                    - button "How accurate are the predictions?" [ref=f6e309] [cursor=pointer]:
+                      - paragraph [ref=f6e310]: How accurate are the predictions?
+                      - img [ref=f6e311]
+                    - button "What is ayanāmśa and which should I use?" [ref=f6e314] [cursor=pointer]:
+                      - paragraph [ref=f6e315]: What is ayanāmśa and which should I use?
+                      - img [ref=f6e316]
+                    - button "Can I use this for professional consultations?" [ref=f6e319] [cursor=pointer]:
+                      - paragraph [ref=f6e320]: Can I use this for professional consultations?
+                      - img [ref=f6e321]
+                - generic [ref=f6e324]: ❦
+                - generic [ref=f6e325]:
+                  - paragraph [ref=f6e326]: or open a famous case
+                  - generic [ref=f6e327]:
+                    - button "Mahatma Gandhi Oct 2, 1869 · 07:33 · 21.64°, 69.63°" [ref=f6e328] [cursor=pointer]:
+                      - text: Mahatma Gandhi
+                      - generic [ref=f6e329]: Oct 2, 1869 · 07:33 · 21.64°, 69.63°
+                    - button "Albert Einstein Mar 14, 1879 · 11:30 · 48.40°, 10.00°" [ref=f6e330] [cursor=pointer]:
+                      - text: Albert Einstein
+                      - generic [ref=f6e331]: Mar 14, 1879 · 11:30 · 48.40°, 10.00°
+                    - button "Steve Jobs Feb 24, 1955 · 19:15 · 37.77°, -122.42°" [ref=f6e332] [cursor=pointer]:
+                      - text: Steve Jobs
+                      - generic [ref=f6e333]: Feb 24, 1955 · 19:15 · 37.77°, -122.42°
+                    - button "Indira Gandhi Nov 19, 1917 · 23:11 · 25.44°, 81.85°" [ref=f6e334] [cursor=pointer]:
+                      - text: Indira Gandhi
+                      - generic [ref=f6e335]: Nov 19, 1917 · 23:11 · 25.44°, 81.85°
+                    - link "+ 594 more in the Case Library" [ref=f6e336] [cursor=pointer]:
+                      - /url: /cases
+                - generic [ref=f6e337]:
+                  - generic [ref=f6e339]: ❦
+                  - paragraph [ref=f6e340]: All astrology computation happens locally in your browser or on our server via Skyfield ephemeris. Birth data is never stored on any remote server, sold, or shared.
+                  - generic [ref=f6e341]:
+                    - link "Privacy" [ref=f6e342] [cursor=pointer]:
+                      - /url: /privacy
+                    - link "Terms" [ref=f6e343] [cursor=pointer]:
+                      - /url: /terms
+                    - link "Plans" [ref=f6e344] [cursor=pointer]:
+                      - /url: /plans
+                - generic [ref=f6e346]:
+                  - generic [ref=f6e347]:
+                    - generic [ref=f6e348]:
+                      - generic [ref=f6e349]:
+                        - img [ref=f6e350]:
+                          - generic [ref=f6e361]: A
+                        - generic [ref=f6e362]: astrogenesis
+                      - paragraph [ref=f6e363]:
+                        - text: vimshottari · kp · classical
+                        - text: est. mmxxv · movement n° viii
+                    - generic [ref=f6e364]:
+                      - paragraph [ref=f6e365]: Product
+                      - generic [ref=f6e366]:
+                        - link "Birth Chart" [ref=f6e367] [cursor=pointer]:
+                          - /url: /cast
+                        - link "Predictions" [ref=f6e368] [cursor=pointer]:
+                          - /url: /predictions
+                        - link "Radio" [ref=f6e369] [cursor=pointer]:
+                          - /url: /radio
+                        - link "Life Music" [ref=f6e370] [cursor=pointer]:
+                          - /url: /life-music
+                        - link "Pricing" [ref=f6e371] [cursor=pointer]:
+                          - /url: /plans
+                    - generic [ref=f6e372]:
+                      - paragraph [ref=f6e373]: Resources
+                      - generic [ref=f6e374]:
+                        - link "Rules Library" [ref=f6e375] [cursor=pointer]:
+                          - /url: /rules
+                        - link "Case Library" [ref=f6e376] [cursor=pointer]:
+                          - /url: /cases
+                        - link "Benchmark" [ref=f6e377] [cursor=pointer]:
+                          - /url: /benchmark
+                        - link "Library" [ref=f6e378] [cursor=pointer]:
+                          - /url: /library
+                        - link "Contact" [ref=f6e379] [cursor=pointer]:
+                          - /url: /contact
+                    - generic [ref=f6e380]:
+                      - paragraph [ref=f6e381]: Legal
+                      - generic [ref=f6e382]:
+                        - link "Privacy" [ref=f6e383] [cursor=pointer]:
+                          - /url: /privacy
+                        - link "Terms" [ref=f6e384] [cursor=pointer]:
+                          - /url: /terms
+                        - link "Open Source ↗" [ref=f6e385] [cursor=pointer]:
+                          - /url: https://github.com/astrogenesis
+                  - generic [ref=f6e386]:
+                    - paragraph [ref=f6e387]: © 2026 AstroGenesis. Birth data never stored.
+                    - generic [ref=f6e388]:
+                      - link "Twitter" [ref=f6e389] [cursor=pointer]:
+                        - /url: https://twitter.com/astrogenesis
+                        - text: 𝕏
+                      - link "Instagram" [ref=f6e390] [cursor=pointer]:
+                        - /url: https://instagram.com/astrogenesis
+                        - text: IG
+                      - link "Email" [ref=f6e391] [cursor=pointer]:
+                        - /url: mailto:hello@astrogenesis.net
+                        - text: "@"
+    - complementary [ref=e152]:
+      - generic [ref=e225]:
+        - generic [ref=e226]:
+          - generic [ref=e227]: Inspector
+          - button "Close inspector" [ref=e228]:
+            - img [ref=e229]
+        - generic [ref=e232]:
+          - generic [ref=e234]:
+            - img [ref=e235]
+            - text: Knowledge Graph
+          - generic [ref=e247]:
+            - generic [ref=e248]:
+              - img [ref=e249]
+              - text: Sources
+            - paragraph [ref=e252]: No sources selected.
+          - generic [ref=e253]:
+            - generic [ref=e254]:
+              - img [ref=e255]
+              - text: Context
+            - generic [ref=e257]:
+              - paragraph [ref=e258]: "Active tab: browser"
+              - paragraph [ref=e259]: "Messages: 0"
+  - contentinfo [ref=e155]:
+    - generic [ref=e156]:
+      - generic [ref=e157]:
+        - img [ref=e161]
+        - generic [ref=e165]: WS live
+      - generic [ref=e166]:
+        - img [ref=e167]
+        - generic [ref=e170]: idle
+      - generic [ref=e171]:
+        - img [ref=e178]
+        - generic [ref=e180]: 0.0 tok/s
+    - generic [ref=e181]:
+      - generic [ref=e182]:
+        - img [ref=e183]
+        - generic [ref=e186]: Enhanced
+      - generic [ref=e187]:
+        - img [ref=e188]
+        - generic [ref=e190]: $0.0000
+      - generic [ref=e192]: idle

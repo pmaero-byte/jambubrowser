@@ -1,0 +1,5 @@
+- generic [ref=e2]:
+  - link "Skip to main content" [ref=e3] [cursor=pointer]:
+    - /url: "#main"
+  - main [ref=e4]:
+    - paragraph [ref=e6]: loading folio…

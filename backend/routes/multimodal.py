@@ -47,8 +47,13 @@ async def multimodal_file(req: MultimodalFileRequest):
 async def multimodal_text(req: MultimodalTextRequest):
     """Process pasted text (URL detection, code recognition)."""
     try:
-        from backend.modules.multimodal_input import process_text
-        result = await process_text(req.text, req.prompt)
-        return result
+        from backend.modules.multimodal_input import get_processor
+        processor = get_processor()
+        result = await processor.process_text_input(req.text)
+        return {
+            "input_type": result.input_type,
+            "extracted_text": result.extracted_text,
+            "summary": result.summary,
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

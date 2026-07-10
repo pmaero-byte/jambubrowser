@@ -15,6 +15,7 @@ import {
   Sparkles,
   Users,
   FileText,
+  Puzzle,
 } from "lucide-react";
 import { useAppStore, type CanvasTab } from "../../store/appStore";
 import { useAgentWebSocket } from "../../utils/useAgentWebSocket";
@@ -31,6 +32,7 @@ const workspaceNav: { id: CanvasTab; label: string; icon: React.ElementType }[] 
 ];
 
 const systemNav: { id: CanvasTab; label: string; icon: React.ElementType }[] = [
+  { id: "extensions", label: "Extensions", icon: Puzzle },
   { id: "privacy", label: "Privacy", icon: Shield },
   { id: "audit", label: "Audit", icon: ScrollText },
   { id: "team", label: "Team", icon: Users },

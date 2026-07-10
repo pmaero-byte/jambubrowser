@@ -15,6 +15,10 @@ pub struct Tab {
     pub title: String,
     /// Whether the tab is currently loading
     pub loading: bool,
+    /// Whether ad/tracker blocking is active on this tab
+    pub adblock_enabled: bool,
+    /// Whether fingerprint protection is active on this tab
+    pub fp_enabled: bool,
 }
 
 impl Tab {
@@ -27,6 +31,8 @@ impl Tab {
             url,
             title,
             loading: true,
+            adblock_enabled: true,
+            fp_enabled: true,
         }
     }
 }
@@ -39,6 +45,8 @@ pub struct TabInfo {
     pub url: String,
     pub title: String,
     pub loading: bool,
+    pub adblock_enabled: bool,
+    pub fp_enabled: bool,
 }
 
 impl From<&Tab> for TabInfo {
@@ -49,6 +57,8 @@ impl From<&Tab> for TabInfo {
             url: t.url.clone(),
             title: t.title.clone(),
             loading: t.loading,
+            adblock_enabled: t.adblock_enabled,
+            fp_enabled: t.fp_enabled,
         }
     }
 }

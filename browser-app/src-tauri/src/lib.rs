@@ -189,6 +189,9 @@ pub fn run() {
             commands::chromium::browser_delete_cookie,
             commands::chromium::browser_list_extensions,
             commands::chromium::browser_run_audit,
+            commands::chromium::browser_sync_tab,
+            commands::chromium::browser_set_adblock,
+            commands::chromium::browser_set_fingerprint,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

@@ -184,3 +184,44 @@ pub async fn browser_run_audit(
     let mgr = mgr.as_ref().ok_or("Browser engine not initialized")?;
     mgr.run_audit(&tab_id).await
 }
+
+/// Sync a tab's metadata (title + URL) from the live page.
+#[tauri::command]
+pub async fn browser_sync_tab(
+    tab_id: String,
+    state: State<'_, AppState>,
+) -> Result<TabInfo, String> {
+    let mut mgr = state.chromium.lock().await;
+    let mgr = mgr
+        .as_mut()
+        .ok_or("Browser engine not initialized")?;
+    mgr.sync_tab(&tab_id).await
+}
+
+/// Toggle ad/tracker blocking on a tab.
+#[tauri::command]
+pub async fn browser_set_adblock(
+    tab_id: String,
+    enabled: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut mgr = state.chromium.lock().await;
+    let mgr = mgr
+        .as_mut()
+        .ok_or("Browser engine not initialized")?;
+    mgr.set_adblock_enabled(&tab_id, enabled).await
+}
+
+/// Toggle fingerprint protection on a tab.
+#[tauri::command]
+pub async fn browser_set_fingerprint(
+    tab_id: String,
+    enabled: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut mgr = state.chromium.lock().await;
+    let mgr = mgr
+        .as_mut()
+        .ok_or("Browser engine not initialized")?;
+    mgr.set_fingerprint_enabled(&tab_id, enabled).await
+}

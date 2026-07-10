@@ -4,6 +4,7 @@ import { Button } from "../ui/button";
 import {
   ArrowLeft, ArrowRight, RotateCcw, Home, Plus, X,
   Globe, Bug, BugOff, Cpu, Star, Clock, Bookmark,
+  Shield,
 } from "lucide-react";
 import { useAppStore, BrowserTab } from "../../store/appStore";
 import { useDevtoolsStore } from "../../store/devtoolsStore";
@@ -93,6 +94,67 @@ export function ChromiumPane() {
   const devtoolsOpen = useDevtoolsStore((s) => s.devtoolsOpen);
   const setDevtoolsOpen = useDevtoolsStore((s) => s.setDevtoolsOpen);
 
+  // ── CDP Page Audit ──
+  interface AuditFinding {
+    category: string;
+    severity: string;
+    title: string;
+    detail: string;
+    score: number | null;
+    icon?: string;
+  }
+  const [auditRunning, setAuditRunning] = useState(false);
+  const [auditFindings, setAuditFindings] = useState<AuditFinding[]>([]);
+  const [auditOpen, setAuditOpen] = useState(false);
+  const auditRef = useRef<HTMLDivElement>(null);
+
+  const runPageAudit = useCallback(async () => {
+    if (!activeTab || !isTauri || !engineReady) return;
+    setAuditRunning(true);
+    setAuditOpen(true);
+    try {
+      const report = await invoke("browser_run_audit", { tabId: activeTab.id }) as {
+        findings: AuditFinding[];
+        overall_score: number;
+        url: string;
+        perf_metrics: Record<string, number>;
+      };
+      setAuditFindings(report.findings || []);
+    } catch (e) {
+      setAuditFindings([{ category: "error", severity: "info", title: "Audit failed", detail: String(e), score: null }]);
+    } finally {
+      setAuditRunning(false);
+    }
+  }, [activeTab, engineReady]);
+
+  // ── Privacy toggles (CDP ad blocking + fingerprint protection) ──
+  const [adblockEnabled, setAdblockEnabled] = useState(true);
+  const [fpEnabled, setFpEnabled] = useState(true);
+
+  const toggleAdblock = useCallback(async () => {
+    if (!isTauri || !engineReady || !activeTab) return;
+    const next = !adblockEnabled;
+    try {
+      await invoke("browser_set_adblock", { tabId: activeTab.id, enabled: next });
+      setAdblockEnabled(next);
+    } catch { /* */ }
+  }, [adblockEnabled, activeTab, engineReady]);
+
+  const toggleFingerprint = useCallback(async () => {
+    if (!isTauri || !engineReady || !activeTab) return;
+    const next = !fpEnabled;
+    try {
+      await invoke("browser_set_fingerprint", { tabId: activeTab.id, enabled: next });
+      setFpEnabled(next);
+    } catch { /* */ }
+  }, [fpEnabled, activeTab, engineReady]);
+
+  const auditSeverityColors: Record<string, string> = {
+    critical: "text-red-400 bg-red-500/10 border-red-500/30",
+    warning: "text-amber-400 bg-amber-500/10 border-amber-500/30",
+    info: "text-blue-400 bg-blue-500/10 border-blue-500/30",
+  };
+
   // ── History ──
   const [history, setHistory] = useState<HistoryEntry[]>(() => loadJson(HISTORY_KEY, []));
 
@@ -174,7 +236,7 @@ export function ChromiumPane() {
     if (activeTab?.url) setInputUrl(activeTab.url);
   }, [activeTab?.url, activeBrowserTabId]);
 
-  // ── Screenshot polling ──
+  // ── Screenshot + title/URL polling ──
   useEffect(() => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
     if (!isTauri || !engineReady || !activeTab?.url || activeTab.url === "about:blank") {
@@ -187,12 +249,17 @@ export function ChromiumPane() {
           screenshotRef.current = dataUrl;
           setScreenshot(dataUrl);
         }
+        // Also sync tab title and URL from the live page (via CDP Runtime.evaluate)
+        const tabInfo = await invoke("browser_sync_tab", { tabId: activeTab.id }) as { url: string; title: string };
+        if (tabInfo && (tabInfo.title !== activeTab.title || tabInfo.url !== activeTab.url)) {
+          updateBrowserTab(activeTab.id, { title: tabInfo.title, url: tabInfo.url });
+        }
       } catch { /* tab closing or Chrome restarting */ }
     };
     poll();
     pollRef.current = setInterval(poll, SCREENSHOT_INTERVAL);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [activeTab?.id, activeTab?.url, engineReady]);
+  }, [activeTab?.id, activeTab?.url, engineReady, updateBrowserTab]);
 
   // ── Window title sync ──
   useEffect(() => {
@@ -363,6 +430,14 @@ export function ChromiumPane() {
             {devtoolsOpen ? <BugOff size={14} /> : <Bug size={14} />}
           </Button>
           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => doNavigate("about:blank")}><Home size={14} /></Button>
+          <Button variant="ghost" size="icon" className={`h-7 w-7 ${auditOpen ? "text-accent" : ""}`}
+            onClick={() => {
+              if (!auditOpen) { runPageAudit(); }
+              else { setAuditOpen(false); setAuditFindings([]); }
+            }}
+            title="Run page audit (CDP)">
+            <Shield size={14} />
+          </Button>
         </div>
 
         {/* URL bar with autocomplete */}
@@ -398,9 +473,21 @@ export function ChromiumPane() {
               className={`shrink-0 ${showBookmarks ? "text-accent" : "text-muted-foreground hover:text-foreground"}`}>
               <Bookmark size={12} />
             </button>
+            {isTauri && engineReady && (
+              <>
+                <button type="button" onClick={toggleAdblock} title={adblockEnabled ? "Ad blocking on" : "Ad blocking off"}
+                  className={`shrink-0 ${adblockEnabled ? "text-emerald-400" : "text-muted-foreground/40 hover:text-muted-foreground"}`}>
+                  <Shield size={11} />
+                </button>
+                <button type="button" onClick={toggleFingerprint} title={fpEnabled ? "Fingerprint protection on" : "Fingerprint protection off"}
+                  className={`shrink-0 ${fpEnabled ? "text-emerald-400" : "text-muted-foreground/40 hover:text-muted-foreground"}`}>
+                  <Cpu size={10} />
+                </button>
+              </>
+            )}
             {isTauri && (
               <span className={`shrink-0 text-[10px] ${engineReady ? "text-emerald-500" : "text-amber-500"}`}>
-                <Cpu size={10} className="inline mr-0.5" />{engineReady ? "Chromium" : "..."}
+                {engineReady ? "Ready" : "..."}
               </span>
             )}
           </motion.form>
@@ -511,6 +598,64 @@ export function ChromiumPane() {
           )}
         </AnimatePresence>
       </div>
+
+      {/* ── CDP Audit Overlay ── */}
+      <AnimatePresence>
+        {auditOpen && (
+          <motion.div
+            ref={auditRef}
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.18 }}
+            className="shrink-0 overflow-hidden border-t border-border bg-card/60"
+          >
+            <div className="max-h-[200px] overflow-y-auto p-3 space-y-1.5">
+              <div className="flex items-center gap-2 mb-2">
+                <Shield size={12} className="text-muted-foreground" />
+                <span className="text-[11px] font-medium text-muted-foreground">CDP Page Audit</span>
+                {auditRunning && (
+                  <motion.span animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }} className="inline-block">
+                    <RotateCcw size={10} className="text-accent" />
+                  </motion.span>
+                )}
+                {!auditRunning && auditFindings.length > 0 && (
+                  <span className="text-[10px] text-muted-foreground">{auditFindings.length} finding(s)</span>
+                )}
+                <div className="flex-1" />
+                <button onClick={() => setAuditOpen(false)} className="text-muted-foreground hover:text-foreground">
+                  <X size={12} />
+                </button>
+              </div>
+              {auditFindings.length === 0 && !auditRunning && (
+                <p className="text-[11px] text-muted-foreground">No issues found.</p>
+              )}
+              {auditFindings.map((f, i) => {
+                const colors = auditSeverityColors[f.severity] || auditSeverityColors.info;
+                return (
+                  <div key={i} className={`flex items-start gap-2 rounded border px-2.5 py-1.5 ${colors}`}>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[11px] font-medium capitalize">{f.category}</span>
+                        <span className={`rounded px-1 py-0.5 text-[9px] font-medium uppercase ${colors}`}>
+                          {f.severity}
+                        </span>
+                      </div>
+                      <p className="text-[11px] mt-0.5">{f.title}</p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5 line-clamp-2">{f.detail}</p>
+                    </div>
+                    {f.score != null && (
+                      <span className="shrink-0 text-[10px] tabular-nums">
+                        {Math.round(f.score * 100)}%
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <DevToolsPanel />
     </div>

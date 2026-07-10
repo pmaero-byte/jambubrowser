@@ -13,7 +13,8 @@ export type CanvasTab =
   | "audit"
   | "vault"
   | "settings"
-  | "team";
+  | "team"
+  | "extensions";
 
 export interface BrowserTab {
   id: string;
@@ -74,7 +75,7 @@ export const useAppStore = create<AppState>((set) => ({
   messages: [],
   input: "",
   isLoading: false,
-  browserTabs: [{ id: "1", url: "about:blank", title: "New Tab" }],
+  browserTabs: [{ id: "1", url: "https://astrogenesis.net", title: "Astrogenesis" }],
   activeBrowserTabId: "1",
   commandOpen: false,
   onboardingOpen: false,
@@ -99,7 +100,7 @@ export const useAppStore = create<AppState>((set) => ({
   setCommandOpen: (commandOpen) => set({ commandOpen }),
   setOnboardingOpen: (onboardingOpen) => set({ onboardingOpen }),
 
-  addBrowserTab: (url = "about:blank", title = "New Tab") =>
+  addBrowserTab: (url = "https://astrogenesis.net", title = "Astrogenesis") =>
     set((s) => {
       const id = crypto.randomUUID();
       return {

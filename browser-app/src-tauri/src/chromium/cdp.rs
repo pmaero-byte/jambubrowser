@@ -8,6 +8,7 @@
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
+use tokio::time::{sleep, Duration};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 use super::tab::Tab;
@@ -108,6 +109,8 @@ impl CdpClient {
         if let Some(error_text) = result.get("errorText").and_then(|v| v.as_str()) {
             return Err(format!("Navigation failed: {error_text}"));
         }
+        // Wait for the page to finish loading (up to 10 s)
+        self.wait_for_page_load(tab, 10_000).await.ok();
         Ok(())
     }
 
@@ -115,6 +118,8 @@ impl CdpClient {
     pub async fn reload(&self, tab: &Tab) -> Result<(), String> {
         self.send_cdp(&tab.ws_url, "Page.reload", json!({"ignoreCache": false}))
             .await?;
+        // Wait for the page to finish loading (up to 10 s)
+        self.wait_for_page_load(tab, 10_000).await.ok();
         Ok(())
     }
 
@@ -166,6 +171,23 @@ impl CdpClient {
         Ok(())
     }
 
+    /// Wait for the page to finish loading (document.readyState === "complete").
+    pub async fn wait_for_page_load(&self, tab: &Tab, timeout_ms: u64) -> Result<(), String> {
+        for _ in 0..timeout_ms / 100 {
+            let state = self
+                .evaluate(tab, "document.readyState")
+                .await
+                .unwrap_or_default()
+                .trim_matches('"')
+                .to_string();
+            if state == "complete" {
+                return Ok(());
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+        Err(format!("Page did not finish loading within {timeout_ms}ms"))
+    }
+
     /// Execute JavaScript in the tab and return the result.
     pub async fn evaluate(&self, tab: &Tab, expression: &str) -> Result<String, String> {
         let result = self
@@ -181,6 +203,18 @@ impl CdpClient {
             .map(|v| v.to_string())
             .unwrap_or_else(|| "undefined".to_string());
         Ok(value)
+    }
+
+    /// Get the current page title from the tab via DOM.
+    pub async fn get_page_title(&self, tab: &Tab) -> Result<String, String> {
+        self.evaluate(tab, "document.title").await
+            .map(|v| v.trim_matches('"').to_string())
+    }
+
+    /// Get the current page URL from the tab via DOM.
+    pub async fn get_page_url(&self, tab: &Tab) -> Result<String, String> {
+        self.evaluate(tab, "window.location.href").await
+            .map(|v| v.trim_matches('"').to_string())
     }
 
     /// Capture a screenshot of the tab (returns base64-encoded PNG).

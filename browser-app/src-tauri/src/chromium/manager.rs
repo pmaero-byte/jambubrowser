@@ -53,27 +53,36 @@ impl ChromiumManager {
         std::fs::create_dir_all(&profile_dir)
             .map_err(|e| format!("Failed to create profile dir: {e}"))?;
 
+        // Discover installed extensions and build --load-extension arg
+        let ext_dir = extensions::ensure_extensions_dir(&profile_dir);
+        let discovered_exts = extensions::discover_extensions(&ext_dir);
+        let ext_arg = extensions::build_load_extension_arg(&discovered_exts);
+
         // Spawn Chromium with privacy-focused flags
-        let child = Command::new(chrome_path)
-            .args([
-                // Remote debugging for CDP
-                &format!("--remote-debugging-port={port}"),
-                // Allow WebSocket connections from any origin (required by Chrome 130+)
-                "--remote-allow-origins=*",
-                // Isolated profile (no shared cookies/history/extensions)
-                &format!("--user-data-dir={}", profile_dir.display()),
-                // Disable first-run wizard
-                "--no-first-run",
-                "--no-default-browser-check",
-                // Privacy: disable cloud services
-                "--disable-sync",
-                "--disable-background-networking",
-                "--disable-component-update",
-                // Disable unwanted Chrome features
-                "--disable-features=TranslateUI,PasswordManagerReauthentication",
-                // Start with a blank page
-                "about:blank",
-            ])
+        let mut cmd = Command::new(chrome_path);
+        cmd.args([
+            // Remote debugging for CDP
+            &format!("--remote-debugging-port={port}"),
+            // Allow WebSocket connections from any origin (required by Chrome 130+)
+            "--remote-allow-origins=*",
+            // Isolated profile (no shared cookies/history/extensions)
+            &format!("--user-data-dir={}", profile_dir.display()),
+            // Disable first-run wizard
+            "--no-first-run",
+            "--no-default-browser-check",
+            // Privacy: disable cloud services
+            "--disable-sync",
+            "--disable-background-networking",
+            "--disable-component-update",
+            // Disable unwanted Chrome features
+            "--disable-features=TranslateUI,PasswordManagerReauthentication",
+            // Start with a blank page
+            "about:blank",
+        ]);
+        if let Some(arg) = &ext_arg {
+            cmd.arg(arg.as_str());
+        }
+        let child = cmd
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
@@ -232,6 +241,38 @@ impl ChromiumManager {
         self.tabs.get(tab_id).map(TabInfo::from)
     }
 
+    /// Sync tab state from the actual page (title + URL).
+    pub async fn sync_tab(&mut self, tab_id: &str) -> Result<TabInfo, String> {
+        let title;
+        let url;
+        {
+            let tab = self
+                .tabs
+                .get(tab_id)
+                .ok_or_else(|| format!("Tab not found: {tab_id}"))?;
+            title = self.cdp.get_page_title(tab).await.unwrap_or_else(|_| tab.title.clone());
+            url = self.cdp.get_page_url(tab).await.unwrap_or_else(|_| tab.url.clone());
+        }
+        // Update the stored tab and capture privacy state
+        let (adblock_enabled, fp_enabled) = if let Some(tab) = self.tabs.get_mut(tab_id) {
+            tab.title = title.clone();
+            tab.url = url.clone();
+            tab.loading = false;
+            (tab.adblock_enabled, tab.fp_enabled)
+        } else {
+            (true, true)
+        };
+        Ok(TabInfo {
+            id: tab_id.to_string(),
+            target_id: String::new(),
+            url,
+            title,
+            loading: false,
+            adblock_enabled,
+            fp_enabled,
+        })
+    }
+
     /// List all open tabs.
     pub fn list_tabs(&self) -> Vec<TabInfo> {
         self.tabs.values().map(TabInfo::from).collect()
@@ -246,6 +287,44 @@ impl ChromiumManager {
     /// Get the path to the extensions directory.
     pub fn extensions_dir(&self) -> PathBuf {
         extensions::ensure_extensions_dir(&self.profile_dir)
+    }
+
+    /// Enable or disable ad/tracker blocking on a tab.
+    pub async fn set_adblock_enabled(&mut self, tab_id: &str, enabled: bool) -> Result<(), String> {
+        let tab = self
+            .tabs
+            .get(tab_id)
+            .ok_or_else(|| format!("Tab not found: {tab_id}"))?;
+        let patterns = if enabled {
+            privacy::get_blocked_urls()
+        } else {
+            Vec::new()
+        };
+        self.cdp.set_blocked_urls(tab, &patterns).await?;
+        if let Some(tab) = self.tabs.get_mut(tab_id) {
+            tab.adblock_enabled = enabled;
+        }
+        Ok(())
+    }
+
+    /// Enable or disable fingerprint protection on a tab.
+    /// When enabling, injects into the current page and future documents.
+    /// When disabling, only affects future navigations (can't un-inject from current page).
+    pub async fn set_fingerprint_enabled(&mut self, tab_id: &str, enabled: bool) -> Result<(), String> {
+        let tab = self
+            .tabs
+            .get(tab_id)
+            .ok_or_else(|| format!("Tab not found: {tab_id}"))?;
+        if enabled {
+            // Inject into the current page via evaluate (immediate)
+            self.cdp.evaluate(tab, privacy::FINGERPRINT_PROTECTION_SCRIPT).await.ok();
+            // Inject for future documents
+            self.cdp.add_script_on_new_document(tab, privacy::FINGERPRINT_PROTECTION_SCRIPT).await?;
+        }
+        if let Some(tab) = self.tabs.get_mut(tab_id) {
+            tab.fp_enabled = enabled;
+        }
+        Ok(())
     }
 
     /// Run a page audit on the given tab.

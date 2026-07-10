@@ -81,6 +81,9 @@ class TestResolveLLMConfig:
         assert result.get("modelId") == "claude-3"
 
     def test_cloud_provider_preset_applied(self):
+        # Reset config singleton to avoid ordering issues
+        from backend.llm import reload_config
+        reload_config()
         from backend.engine_runtime import _resolve_llm_config
         result = _resolve_llm_config({"provider": "mlx"})
         assert result.get("provider") == "mlx"

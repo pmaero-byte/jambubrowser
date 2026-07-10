@@ -120,6 +120,13 @@ def _resolve_llm_config(cfg: dict) -> dict:
         for k, v in CLOUD_PROVIDERS[provider].items():
             if v and k not in merged:
                 merged[k] = v
+    # If modelId still missing, derive it from the final provider
+    if "modelId" not in merged and "provider" in merged:
+        from backend.llm.config import get_config
+        env_cfg = get_config()
+        model_id = env_cfg.model_for(merged["provider"])
+        if model_id:
+            merged["modelId"] = model_id
     return merged
 
 
@@ -283,6 +290,7 @@ class ConnectionManager:
                 await old.close(code=1000, reason="replaced")
             except Exception:
                 pass
+            self._release_ip(_peer_ip(old))
 
         await websocket.accept()
         self.active_connections[client_id] = websocket

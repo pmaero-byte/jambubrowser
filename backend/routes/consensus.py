@@ -8,7 +8,9 @@ router = APIRouter(tags=["consensus"])
 
 class ConsensusProposeRequest(BaseModel):
     title: str
-    description: str
+    description: str = ""
+    options: list[str] = []
+    required_nodes: int = 3
     proposer: str = "mcp"
 
 
@@ -23,8 +25,12 @@ async def consensus_propose(req: ConsensusProposeRequest):
     """Create a proposal for multi-node consensus voting."""
     from backend.modules.consensus_engine import ConsensusEngine
     engine = ConsensusEngine()
-    proposal = engine.create_proposal(req.title, req.description, req.proposer)
-    return {"proposal_id": proposal.id, "status": "open"}
+    proposal = await engine.create_proposal(
+        req.title, req.description or "",
+        options=req.options or ["Yes", "No"],
+        required_nodes=req.required_nodes,
+    )
+    return {"proposal_id": proposal.get("proposal", {}).get("id", ""), "status": "open", "success": proposal.get("success", True)}
 
 
 @router.get("/consensus/list")

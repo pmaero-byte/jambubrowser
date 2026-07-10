@@ -84,7 +84,8 @@ class Router:
 
     LOCAL_PROVIDERS = {"ollama", "mlx", "mock"}
     QUALITY_PREFERENCE = [
-        "anthropic",  # Claude Opus
+        "moa",       # Mixture-of-Agents (aggregates multiple perspectives)
+        "anthropic",  # Claude Opus / Sonnet
         "openai",     # GPT-4o / o1
         "minimax",
         "ollama",

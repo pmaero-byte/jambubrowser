@@ -1,0 +1,240 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - img [ref=e8]
+        - generic [ref=e11]: Jambubrowser
+      - button "Workspace Default" [ref=e13]:
+        - generic [ref=e14]: Workspace
+        - generic [ref=e15]: Default
+    - generic [ref=e16]:
+      - generic [ref=e17]:
+        - generic [ref=e18]: "Model:"
+        - generic [ref=e19]: auto
+      - generic [ref=e20]:
+        - img [ref=e21]
+        - generic [ref=e23]: Enhanced
+      - button "Command ⌘K" [ref=e24]:
+        - img [ref=e25]
+        - generic [ref=e27]: Command
+        - generic [ref=e28]: ⌘K
+      - button [ref=e29]:
+        - img [ref=e30]
+  - generic [ref=e33]:
+    - complementary [ref=e34]:
+      - navigation "Primary" [ref=e36]:
+        - generic [ref=e37]: Workspace
+        - button "Research" [ref=e38]:
+          - img [ref=e40]
+          - generic [ref=e42]: Research
+        - button "Plan" [ref=e43]:
+          - img [ref=e45]
+          - generic [ref=e48]: Plan
+        - button "Browser" [active] [ref=e49]:
+          - img [ref=e51]
+          - generic [ref=e54]: Browser
+        - button "Logs" [ref=e55]:
+          - img [ref=e57]
+          - generic [ref=e60]: Logs
+        - button "Memory" [ref=e61]:
+          - img [ref=e63]
+          - generic [ref=e71]: Memory
+        - button "Knowledge" [ref=e72]:
+          - img [ref=e74]
+          - generic [ref=e82]: Knowledge
+        - button "Missions" [ref=e83]:
+          - img [ref=e85]
+          - generic [ref=e87]: Missions
+        - button "History" [ref=e88]:
+          - img [ref=e90]
+          - generic [ref=e94]: History
+        - generic [ref=e95]: System
+        - button "Privacy" [ref=e96]:
+          - img [ref=e98]
+          - generic [ref=e100]: Privacy
+        - button "Audit" [ref=e101]:
+          - img [ref=e103]
+          - generic [ref=e106]: Audit
+        - button "Team" [ref=e107]:
+          - img [ref=e109]
+          - generic [ref=e114]: Team
+        - button "Vault" [ref=e115]:
+          - img [ref=e117]
+          - generic [ref=e120]: Vault
+        - button "Settings" [ref=e121]:
+          - img [ref=e123]
+          - generic [ref=e126]: Settings
+        - generic [ref=e127]:
+          - img [ref=e128]
+          - generic [ref=e130]: Engine online
+    - main [ref=e131]:
+      - generic [ref=e193]:
+        - generic [ref=e194]:
+          - generic [ref=e195]:
+            - button [ref=e196]:
+              - img [ref=e197]
+            - button [ref=e199]:
+              - img [ref=e200]
+            - button [ref=e202]:
+              - img [ref=e204]
+            - button [ref=e207]:
+              - img [ref=e208]
+          - generic [ref=e211]:
+            - img [ref=e212]
+            - textbox [ref=e215]: https://astrogenesis.net
+          - button [ref=e216]:
+            - img [ref=e218]
+        - button "Astrogenesis" [ref=e220]:
+          - generic [ref=e222]: Astrogenesis
+        - iframe [ref=e224]:
+          - generic [ref=f5e2]:
+            - link "Skip to main content" [ref=f5e3] [cursor=pointer]:
+              - /url: "#main"
+            - main [ref=f5e4]:
+              - generic:
+                - img:
+                  - generic: ♈
+                  - generic: ♉
+                  - generic: ♊
+                  - generic: ♋
+                  - generic: ♌
+                  - generic: ♍
+                  - generic: ♎
+                  - generic: ♏
+                  - generic: ♐
+                  - generic: ♑
+                  - generic: ♒
+                  - generic: ♓
+              - generic [ref=f5e6]:
+                - link [ref=f5e7] [cursor=pointer]:
+                  - /url: /
+                  - img [ref=f5e8]:
+                    - generic [ref=f5e19]: A
+                - generic [ref=f5e20]:
+                  - button "Alerts" [ref=f5e22] [cursor=pointer]:
+                    - img [ref=f5e23]
+                  - button "Open menu" [ref=f5e26] [cursor=pointer]:
+                    - img [ref=f5e27]
+              - generic [ref=f5e28]:
+                - paragraph [ref=f5e29]: folio — 404
+                - heading "This folio is empty." [level=1] [ref=f5e30]
+                - paragraph [ref=f5e31]:
+                  - text: The page at
+                  - code [ref=f5e32]: /proxy/https://astrogenesis.net
+                  - text: "doesn't exist. Perhaps you meant one of these:"
+                - list [ref=f5e33]:
+                  - listitem [ref=f5e34]:
+                    - link "Cast a chart→" [ref=f5e35] [cursor=pointer]:
+                      - /url: /cast
+                  - listitem [ref=f5e36]:
+                    - link "Today's sky→" [ref=f5e37] [cursor=pointer]:
+                      - /url: /today
+                  - listitem [ref=f5e38]:
+                    - link "Sample reading→" [ref=f5e39] [cursor=pointer]:
+                      - /url: /reading/vesper
+                  - listitem [ref=f5e40]:
+                    - link "Accuracy benchmark→" [ref=f5e41] [cursor=pointer]:
+                      - /url: /benchmark
+                  - listitem [ref=f5e42]:
+                    - link "Library→" [ref=f5e43] [cursor=pointer]:
+                      - /url: /library
+                - link "← back to home" [ref=f5e44] [cursor=pointer]:
+                  - /url: /
+              - generic [ref=f5e46]:
+                - generic [ref=f5e47]:
+                  - generic [ref=f5e48]:
+                    - generic [ref=f5e49]:
+                      - img [ref=f5e50]:
+                        - generic [ref=f5e61]: A
+                      - generic [ref=f5e62]: astrogenesis
+                    - paragraph [ref=f5e63]:
+                      - text: vimshottari · kp · classical
+                      - text: est. mmxxv · movement n° viii
+                  - generic [ref=f5e64]:
+                    - paragraph [ref=f5e65]: Product
+                    - generic [ref=f5e66]:
+                      - link "Birth Chart" [ref=f5e67] [cursor=pointer]:
+                        - /url: /cast
+                      - link "Predictions" [ref=f5e68] [cursor=pointer]:
+                        - /url: /predictions
+                      - link "Radio" [ref=f5e69] [cursor=pointer]:
+                        - /url: /radio
+                      - link "Life Music" [ref=f5e70] [cursor=pointer]:
+                        - /url: /life-music
+                      - link "Pricing" [ref=f5e71] [cursor=pointer]:
+                        - /url: /plans
+                  - generic [ref=f5e72]:
+                    - paragraph [ref=f5e73]: Resources
+                    - generic [ref=f5e74]:
+                      - link "Rules Library" [ref=f5e75] [cursor=pointer]:
+                        - /url: /rules
+                      - link "Case Library" [ref=f5e76] [cursor=pointer]:
+                        - /url: /cases
+                      - link "Benchmark" [ref=f5e77] [cursor=pointer]:
+                        - /url: /benchmark
+                      - link "Library" [ref=f5e78] [cursor=pointer]:
+                        - /url: /library
+                      - link "Contact" [ref=f5e79] [cursor=pointer]:
+                        - /url: /contact
+                  - generic [ref=f5e80]:
+                    - paragraph [ref=f5e81]: Legal
+                    - generic [ref=f5e82]:
+                      - link "Privacy" [ref=f5e83] [cursor=pointer]:
+                        - /url: /privacy
+                      - link "Terms" [ref=f5e84] [cursor=pointer]:
+                        - /url: /terms
+                      - link "Open Source ↗" [ref=f5e85] [cursor=pointer]:
+                        - /url: https://github.com/astrogenesis
+                - generic [ref=f5e86]:
+                  - paragraph [ref=f5e87]: © 2026 AstroGenesis. Birth data never stored.
+                  - generic [ref=f5e88]:
+                    - link "Twitter" [ref=f5e89] [cursor=pointer]:
+                      - /url: https://twitter.com/astrogenesis
+                      - text: 𝕏
+                    - link "Instagram" [ref=f5e90] [cursor=pointer]:
+                      - /url: https://instagram.com/astrogenesis
+                      - text: IG
+                    - link "Email" [ref=f5e91] [cursor=pointer]:
+                      - /url: mailto:hello@astrogenesis.net
+                      - text: "@"
+    - complementary [ref=e152]:
+      - generic [ref=e225]:
+        - generic [ref=e226]:
+          - generic [ref=e227]: Inspector
+          - button "Close inspector" [ref=e228]:
+            - img [ref=e229]
+        - generic [ref=e232]:
+          - generic [ref=e234]:
+            - img [ref=e235]
+            - text: Knowledge Graph
+          - generic [ref=e247]:
+            - generic [ref=e248]:
+              - img [ref=e249]
+              - text: Sources
+            - paragraph [ref=e252]: No sources selected.
+          - generic [ref=e253]:
+            - generic [ref=e254]:
+              - img [ref=e255]
+              - text: Context
+            - generic [ref=e257]:
+              - paragraph [ref=e258]: "Active tab: browser"
+              - paragraph [ref=e259]: "Messages: 0"
+  - contentinfo [ref=e155]:
+    - generic [ref=e156]:
+      - generic [ref=e157]:
+        - img [ref=e161]
+        - generic [ref=e165]: WS live
+      - generic [ref=e166]:
+        - img [ref=e167]
+        - generic [ref=e170]: idle
+      - generic [ref=e171]:
+        - img [ref=e178]
+        - generic [ref=e180]: 0.0 tok/s
+    - generic [ref=e181]:
+      - generic [ref=e182]:
+        - img [ref=e183]
+        - generic [ref=e186]: Enhanced
+      - generic [ref=e187]:
+        - img [ref=e188]
+        - generic [ref=e190]: $0.0000
+      - generic [ref=e192]: idle
