@@ -34,6 +34,35 @@ async def get_vault_credential(url: str):
     return {"found": False}
 
 
+@router.get("/vault/credential/full")
+async def get_vault_credential_full(url: str):
+    """Find the best matching credential for a URL and return the decrypted
+    password. Separate endpoint from /vault/credential so callers that
+    only need a "is there a saved login" check don't have to be exposed
+    to the secret. The Tauri autofill button is the only known caller.
+
+    Returns 404 if the vault is locked, has no match, or the URL is
+    rejected by the safety filter. We deliberately don't distinguish
+    those cases in the response body to avoid leaking the vault state
+    to a misbehaving caller."""
+    if not is_safe_url(url):
+        raise HTTPException(status_code=400, detail="Invalid or blocked URL")
+    vault = get_vault()
+    _ensure_vault_unlocked(vault)
+    if vault.is_locked:
+        raise HTTPException(status_code=404, detail="Vault is locked")
+    cred = vault.find_best_credential(url)
+    if not cred or not cred.get("password"):
+        raise HTTPException(status_code=404, detail="No credential found")
+    return {
+        "found": True,
+        "domain": cred["domain"],
+        "username": cred["username"],
+        "password": cred["password"],
+        "url_pattern": cred.get("url_pattern") or "",
+    }
+
+
 from pydantic import BaseModel
 
 
