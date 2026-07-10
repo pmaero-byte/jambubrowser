@@ -15,10 +15,32 @@ use super::cdp::CdpClient;
 use super::downloads;
 use super::extensions::{self, Extension};
 use super::privacy;
+
+/// Make a fresh per-launch profile dir under the OS temp dir. Called
+/// from `launch` and again from `restart` so a crashed Chrome's state
+/// doesn't leak into the next session.
+fn ensure_profile_dir() -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("jambubrowser-chrome-profile-{}", uuid_v4_like()));
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
+/// Tiny random-suffix helper so each restart gets its own profile dir
+/// without pulling in the `uuid` crate. 8 hex chars = 32 bits of entropy
+/// which is plenty to avoid collisions on a single user machine.
+pub fn uuid_v4_like() -> String {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let bytes: [u8; 4] = rng.gen();
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
 use super::tab::{Tab, TabInfo};
 
 /// Manages a Chromium browser process and its tabs.
 pub struct ChromiumManager {
+    /// Path to the Chrome/Chromium binary. Kept around so restart() can
+    /// re-spawn without the caller having to remember it.
+    chrome_path: String,
     /// The Chrome/Chromium child process
     process: Child,
     /// CDP debug port
@@ -100,6 +122,7 @@ impl ChromiumManager {
         let cdp = Self::wait_for_chrome(port, 20).await?;
 
         Ok(Self {
+            chrome_path: chrome_path.to_string(),
             process: child,
             debug_port: port,
             cdp,
@@ -344,6 +367,60 @@ impl ChromiumManager {
         audit::run_audit(&self.cdp, tab).await
     }
 
+    /// Kill the existing process (if alive) and spawn a fresh Chromium
+    /// instance on the same debug port. Wipes the tab map because the
+    /// old CDP target IDs are no longer valid. Intended for the crash-
+    /// recovery watchdog — a clean restart path is the frontend just
+    /// calling shutdown() + relaunch from lib.rs.
+    pub async fn restart(&mut self) -> Result<(), String> {
+        // Best-effort kill. We don't care if it returns an error
+        // (process might already be dead).
+        let _ = self.process.kill();
+        let _ = self.process.wait();
+        // The old profile dir was tied to the dead Chrome session.
+        // Drop it so the new session starts with a clean slate.
+        let _ = std::fs::remove_dir_all(&self.profile_dir);
+        let profile_dir = ensure_profile_dir();
+
+        // Reuse the same port the previous Chrome was on. If that port
+        // is still in TIME_WAIT we just retry on a different one; the
+        // frontend reads the new port from `debug_port` after restart.
+        let port = self.debug_port;
+        let mut next = Self::launch(&self.chrome_path, port, profile_dir).await?;
+
+        // Move the new manager's state into self so the caller keeps
+        // holding the same struct (Arc<Mutex<...>> doesn't need to know).
+        std::mem::swap(&mut self.chrome_path, &mut next.chrome_path);
+        std::mem::swap(&mut self.process, &mut next.process);
+        std::mem::swap(&mut self.debug_port, &mut next.debug_port);
+        std::mem::swap(&mut self.cdp, &mut next.cdp);
+        std::mem::swap(&mut self.profile_dir, &mut next.profile_dir);
+        // next now owns the dead process and dead profile_dir; its
+        // Drop will clean them up.
+
+        // Tab map is stale — CDP target IDs are gone with the old Chrome.
+        self.tabs.clear();
+        Ok(())
+    }
+
+    /// Returns true if the child process is still running. Cheap: just
+    /// calls `try_wait` and treats both `Ok(None)` and any error as
+    /// 'still running' (because we don't want the watchdog to panic on
+    /// transient errors).
+    pub fn is_alive(&mut self) -> bool {
+        match self.process.try_wait() {
+            Ok(None) => true,
+            Ok(Some(_)) | Err(_) => false,
+        }
+    }
+
+    /// The debug port the running Chrome is listening on. Useful for the
+    /// watchdog and the frontend (after a restart, the port may differ
+    /// from the original if the old port was still in TIME_WAIT).
+    pub fn debug_port(&self) -> u16 {
+        self.debug_port
+    }
+
     /// Shut down the Chromium process gracefully.
     pub fn shutdown(&mut self) {
         // Try to close via CDP first
@@ -358,6 +435,57 @@ impl ChromiumManager {
         // Clean up profile directory
         let _ = std::fs::remove_dir_all(&self.profile_dir);
     }
+}
+
+use std::sync::Arc;
+use tauri::Emitter;
+use tokio::sync::Mutex;
+
+/// Watchdog: periodically checks whether the Chromium child is alive
+/// and, if it died unexpectedly, calls `restart()` to bring it back
+/// up. Emits a `browser-restarted` Tauri event so the frontend can
+/// surface a toast.
+///
+/// `state` is the same Arc<Mutex<Option<ChromiumManager>>> the rest of
+/// the app uses; the watchdog briefly locks it to check the process
+/// status and to perform the restart under the same lock the Tauri
+/// commands use (so we never race with browser_new_tab et al).
+pub fn spawn_watchdog(
+    state: Arc<Mutex<Option<ChromiumManager>>>,
+    app: tauri::AppHandle,
+) {
+    tauri::async_runtime::spawn(async move {
+        // Re-arm on every restart so the watchdog keeps watching the
+        // fresh process. The loop only exits if the manager slot goes
+        // back to None (e.g. on app shutdown).
+        loop {
+            const POLL_INTERVAL_MS: u64 = 3000;
+            tokio::time::sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
+
+            let mut guard = state.lock().await;
+            let Some(mgr) = guard.as_mut() else {
+                // Manager slot is empty — app is shutting down.
+                break;
+            };
+            if mgr.is_alive() {
+                continue;
+            }
+
+            eprintln!("[jambu] Chromium crashed — restarting");
+            match mgr.restart().await {
+                Ok(()) => {
+                    eprintln!("[jambu] Chromium restarted on port {}", mgr.debug_port());
+                    let _ = app.emit("browser-restarted", mgr.debug_port());
+                }
+                Err(e) => {
+                    eprintln!("[jambu] Chromium restart failed: {e}");
+                    let _ = app.emit("browser-error", e);
+                    // Don't tight-loop on a failed restart; the next
+                    // poll tick (3s) will try again.
+                }
+            }
+        }
+    });
 }
 
 impl Drop for ChromiumManager {
