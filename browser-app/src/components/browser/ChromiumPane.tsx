@@ -7,6 +7,7 @@ import {
   Shield, FileText, Download, BookOpen, KeyRound,
 } from "lucide-react";
 import { useAppStore, BrowserTab } from "../../store/appStore";
+import { useBrowsingHistoryStore } from "../../store/browsingHistoryStore";
 import { useDevtoolsStore } from "../../store/devtoolsStore";
 import { DevToolsPanel } from "./DevToolsPanel";
 import { DownloadBar } from "./DownloadBar";
@@ -28,12 +29,6 @@ if (isTauri) {
 
 // ── Types ────────────────────────────────────────────────────────
 
-interface HistoryEntry {
-  url: string;
-  title: string;
-  visitedAt: number;
-}
-
 interface BookmarkEntry {
   id: string;
   url: string;
@@ -44,9 +39,7 @@ interface BookmarkEntry {
 
 // ── Persistence helpers ──────────────────────────────────────────
 
-const HISTORY_KEY = "jambu-browser-history";
 const BOOKMARKS_KEY = "jambu-browser-bookmarks";
-const MAX_HISTORY = 500;
 const MAX_SUGGESTIONS = 8;
 
 function loadJson<T>(key: string, fallback: T): T {
@@ -186,18 +179,9 @@ export function ChromiumPane() {
     info: "text-blue-400 bg-blue-500/10 border-blue-500/30",
   };
 
-  // ── History ──
-  const [history, setHistory] = useState<HistoryEntry[]>(() => loadJson(HISTORY_KEY, []));
-
-  const addToHistory = useCallback((url: string, title: string) => {
-    if (url === "about:blank" || url.startsWith("chrome-")) return;
-    setHistory((prev) => {
-      const filtered = prev.filter((e) => e.url !== url);
-      const next = [{ url, title, visitedAt: Date.now() }, ...filtered].slice(0, MAX_HISTORY);
-      saveJson(HISTORY_KEY, next);
-      return next;
-    });
-  }, []);
+  // ── History (lives in the browsingHistoryStore so HistoryPanel can read it) ──
+  const history = useBrowsingHistoryStore((s) => s.entries);
+  const addToHistory = useBrowsingHistoryStore((s) => s.addEntry);
 
   // ── Bookmarks ──
   const [bookmarks, setBookmarks] = useState<BookmarkEntry[]>(() => loadJson(BOOKMARKS_KEY, []));
