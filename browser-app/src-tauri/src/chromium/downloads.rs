@@ -250,3 +250,155 @@ fn unique_target(dir: &Path, basename: &str) -> PathBuf {
     }
     dir.join(format!("{stem}-{}", unix_now_secs()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn tmp() -> PathBuf {
+        // unix_now_secs() alone collides when tests run in the same
+        // second, so tack on a random 8-hex suffix.
+        use rand::Rng;
+        let suffix: String = rand::thread_rng()
+            .gen::<[u8; 4]>()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let dir = std::env::temp_dir()
+            .join(format!("jambu-test-{}-{}", unix_now_secs(), suffix));
+        let _ = fs::create_dir_all(&dir);
+        dir
+    }
+
+    // ── url_basename ─────────────────────────────────────────────
+
+    #[test]
+    fn url_basename_extracts_last_segment() {
+        assert_eq!(url_basename("https://example.com/path/to/file.pdf"), Some("file.pdf".into()));
+        assert_eq!(url_basename("https://example.com/file.pdf"), Some("file.pdf".into()));
+    }
+
+    #[test]
+    fn url_basename_strips_query_and_fragment() {
+        assert_eq!(url_basename("https://x.com/a.pdf?download=1"), Some("a.pdf".into()));
+        assert_eq!(url_basename("https://x.com/a.pdf#section"), Some("a.pdf".into()));
+        assert_eq!(url_basename("https://x.com/a.pdf?q=1#sec"), Some("a.pdf".into()));
+    }
+
+    #[test]
+    fn url_basename_percent_decodes() {
+        assert_eq!(url_basename("https://x.com/hello%20world.pdf"), Some("hello world.pdf".into()));
+        assert_eq!(url_basename("https://x.com/%E4%B8%AD%E6%96%87.txt"), Some("\u{4e2d}\u{6587}.txt".into()));
+    }
+
+    #[test]
+    fn url_basename_returns_none_for_trailing_slash() {
+        assert_eq!(url_basename("https://x.com/dir/"), None);
+        assert_eq!(url_basename("https://x.com/"), None);
+    }
+
+    // ── unique_target ────────────────────────────────────────────
+
+    #[test]
+    fn unique_target_returns_input_when_free() {
+        let dir = tmp();
+        let target = unique_target(&dir, "fresh.pdf");
+        assert_eq!(target, dir.join("fresh.pdf"));
+    }
+
+    #[test]
+    fn unique_target_suffixes_when_taken() {
+        let dir = tmp();
+        fs::write(dir.join("report.pdf"), b"x").unwrap();
+        let target = unique_target(&dir, "report.pdf");
+        assert_eq!(target, dir.join("report-1.pdf"));
+    }
+
+    #[test]
+    fn unique_target_preserves_extension() {
+        let dir = tmp();
+        fs::write(dir.join("archive.tar.gz"), b"x").unwrap();
+        let target = unique_target(&dir, "archive.tar.gz");
+        // The rsplit_once splits on the LAST '.', so the suffix goes
+        // between 'archive.tar' and '.gz'.
+        assert_eq!(target, dir.join("archive.tar-1.gz"));
+    }
+
+    #[test]
+    fn unique_target_handles_no_extension() {
+        let dir = tmp();
+        fs::write(dir.join("README"), b"x").unwrap();
+        let target = unique_target(&dir, "README");
+        assert_eq!(target, dir.join("README-1"));
+    }
+
+    // ── scan_downloads ───────────────────────────────────────────
+
+    #[test]
+    fn scan_downloads_marks_crdownload_as_in_progress() {
+        let dir = tmp();
+        let p = dir.join("big.pdf.crdownload");
+        fs::write(&p, b"partial").unwrap();
+        let downloads = scan_downloads(&dir);
+        assert_eq!(downloads.len(), 1);
+        assert_eq!(downloads[0].state, DownloadState::InProgress);
+        assert_eq!(downloads[0].filename, "big.pdf.crdownload");
+    }
+
+    #[test]
+    fn scan_downloads_marks_zero_byte_file_as_empty() {
+        let dir = tmp();
+        fs::write(dir.join("empty.pdf"), b"").unwrap();
+        let downloads = scan_downloads(&dir);
+        assert_eq!(downloads.len(), 1);
+        assert_eq!(downloads[0].state, DownloadState::Empty);
+    }
+
+    #[test]
+    fn scan_downloads_marks_real_file_as_complete() {
+        let dir = tmp();
+        fs::write(dir.join("report.pdf"), b"hello").unwrap();
+        let downloads = scan_downloads(&dir);
+        assert_eq!(downloads[0].state, DownloadState::Complete);
+        assert_eq!(downloads[0].size_bytes, 5);
+    }
+
+    #[test]
+    #[ignore = "depends on filesystem mtime resolution; flaky on fast systems"]
+    fn scan_downloads_sorts_newest_first() {
+        // Kept as #[ignore] because the sort uses second-resolution
+        // mtimes. On a filesystem that rounds mtimes to the same
+        // second, both files compare equal and the sort is unstable.
+        // Uncomment locally to spot-check; not worth the CI flake.
+        let dir = tmp();
+        let p1 = dir.join("old.pdf");
+        let p2 = dir.join("new.pdf");
+        fs::write(&p1, b"x").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        fs::write(&p2, b"x").unwrap();
+        let downloads = scan_downloads(&dir);
+        assert_eq!(downloads[0].filename, "new.pdf");
+        assert_eq!(downloads[1].filename, "old.pdf");
+    }
+
+    #[test]
+    fn scan_downloads_returns_empty_for_missing_dir() {
+        let dir = std::env::temp_dir().join(format!("jambu-nonexistent-{}", unix_now_secs()));
+        let _ = fs::remove_dir_all(&dir);
+        let downloads = scan_downloads(&dir);
+        assert!(downloads.is_empty());
+    }
+
+    #[test]
+    fn scan_downloads_skips_subdirectories() {
+        let dir = tmp();
+        fs::create_dir(dir.join("nested")).unwrap();
+        fs::write(dir.join("a.pdf"), b"x").unwrap();
+        let downloads = scan_downloads(&dir);
+        // Only the file, not the directory.
+        assert_eq!(downloads.len(), 1);
+        assert_eq!(downloads[0].filename, "a.pdf");
+    }
+}
