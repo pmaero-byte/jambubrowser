@@ -13,12 +13,18 @@ pub struct AppState {
     /// The Chromium browser engine.
     /// `None` until the browser is fully initialized during setup.
     pub chromium: Arc<Mutex<Option<ChromiumManager>>>,
+    /// Base URL of the Python FastAPI backend (e.g. http://127.0.0.1:8001).
+    /// Configurable via the JAMBU_BACKEND_URL env var; falls back to the
+    /// default that the bundled dev/start scripts use.
+    pub backend_url: String,
 }
 
 impl AppState {
     pub fn new() -> Self {
         Self {
             chromium: Arc::new(Mutex::new(None)),
+            backend_url: std::env::var("JAMBU_BACKEND_URL")
+                .unwrap_or_else(|_| "http://127.0.0.1:8001".to_string()),
         }
     }
 }
@@ -196,6 +202,7 @@ pub fn run() {
             commands::chromium::browser_open_download,
             commands::chromium::browser_remove_download,
             commands::chromium::browser_download_url,
+            commands::chromium::vault_get_credential,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

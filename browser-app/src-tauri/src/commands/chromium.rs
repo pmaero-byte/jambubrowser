@@ -253,3 +253,47 @@ pub async fn browser_remove_download(path: String) -> Result<(), String> {
 pub async fn browser_download_url(url: String) -> Result<String, String> {
     downloads::download_url_to_dir(&url).await
 }
+
+/// Look up a vault credential for a URL. Proxies the Python backend's
+/// /vault/credential/full endpoint over localhost. The backend handles
+/// URL validation, vault unlock, password decryption, and access logging.
+///
+/// Returns Ok(None) when the vault is locked, no credential exists, or
+/// the backend is unreachable. The frontend renders these as the same
+/// "no saved login" state to avoid leaking vault details.
+#[tauri::command]
+pub async fn vault_get_credential(
+    url: String,
+    state: State<'_, AppState>,
+) -> Result<Option<serde_json::Value>, String> {
+    let backend = state.backend_url.clone();
+    let endpoint = format!("{backend}/vault/credential/full?url={}", urlencode(&url));
+    match reqwest::get(&endpoint).await {
+        Ok(resp) if resp.status().is_success() => {
+            let cred: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| format!("vault parse: {e}"))?;
+            Ok(Some(cred))
+        }
+        Ok(resp) if resp.status().as_u16() == 404 => Ok(None),
+        Ok(resp) => Err(format!("vault http {}", resp.status())),
+        Err(e) => Err(format!("vault unreachable: {e}")),
+    }
+}
+
+fn urlencode(s: &str) -> String {
+    // Minimal percent-encoding for the query string. We only need to
+    // escape the chars that the URL parser treats specially — same
+    // approach as chromium/downloads.rs.
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(b as char);
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
