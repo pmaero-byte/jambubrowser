@@ -4,12 +4,13 @@ import { Button } from "../ui/button";
 import {
   ArrowLeft, ArrowRight, RotateCcw, Home, Plus, X,
   Globe, Bug, BugOff, Cpu, Star, Clock, Bookmark,
-  Shield, FileText, Download,
+  Shield, FileText, Download, BookOpen,
 } from "lucide-react";
 import { useAppStore, BrowserTab } from "../../store/appStore";
 import { useDevtoolsStore } from "../../store/devtoolsStore";
 import { DevToolsPanel } from "./DevToolsPanel";
 import { DownloadBar } from "./DownloadBar";
+import { ReaderMode } from "./ReaderMode";
 
 // ── Tauri API detection ──────────────────────────────────────────
 
@@ -405,6 +406,10 @@ export function ChromiumPane() {
     finally { setPdfDownloading(false); }
   }, [activeTab?.url, engineReady]);
 
+  // Reader mode — extract main content via a heuristic script injected
+  // through browser_evaluate and show it in a clean overlay.
+  const [readerOpen, setReaderOpen] = useState(false);
+
   const reload = useCallback(async () => {
     if (!activeTab) return;
     setSpinning(true); setTimeout(() => setSpinning(false), 700);
@@ -553,6 +558,14 @@ export function ChromiumPane() {
               <button type="button" onClick={() => toggleBookmark(activeTab.url, activeTab.title || activeTab.url)}
                 className={`shrink-0 ${isBookmarked(activeTab.url) ? "text-amber-400" : "text-muted-foreground hover:text-foreground"}`}>
                 <Star size={12} fill={isBookmarked(activeTab.url) ? "currentColor" : "none"} />
+              </button>
+            )}
+            {/* Reader mode toggle */}
+            {activeTab?.url && activeTab.url !== "about:blank" && !isPdfUrl(activeTab.url) && (
+              <button type="button" onClick={() => setReaderOpen(true)}
+                title="Reader mode (extract main content)"
+                className={`shrink-0 ${readerOpen ? "text-accent" : "text-muted-foreground hover:text-foreground"}`}>
+                <BookOpen size={12} />
               </button>
             )}
             {/* PDF indicator + download */}
@@ -749,6 +762,13 @@ export function ChromiumPane() {
 
       {/* ── Download Bar ── */}
       <DownloadBar />
+
+      {/* ── Reader Mode Overlay ── */}
+      <ReaderMode
+        tabId={engineReady ? (activeTab?.id ?? null) : null}
+        open={readerOpen}
+        onClose={() => setReaderOpen(false)}
+      />
 
       {/* ── CDP Audit Overlay ── */}
       <AnimatePresence>
