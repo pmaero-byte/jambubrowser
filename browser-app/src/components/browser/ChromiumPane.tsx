@@ -4,7 +4,7 @@ import { Button } from "../ui/button";
 import {
   ArrowLeft, ArrowRight, RotateCcw, Home, Plus, X,
   Globe, Bug, BugOff, Cpu, Star, Clock, Bookmark,
-  Shield, FileText, Download, BookOpen,
+  Shield, FileText, Download, BookOpen, KeyRound,
 } from "lucide-react";
 import { useAppStore, BrowserTab } from "../../store/appStore";
 import { useDevtoolsStore } from "../../store/devtoolsStore";
@@ -410,6 +410,85 @@ export function ChromiumPane() {
   // through browser_evaluate and show it in a clean overlay.
   const [readerOpen, setReaderOpen] = useState(false);
 
+  // Vault autofill — click the key icon, fetch the saved credential for
+  // the current domain from the Python backend (proxied through Tauri),
+  // and fill the page's login form.
+  const [vaultBusy, setVaultBusy] = useState(false);
+  const [vaultToast, setVaultToast] = useState<string | null>(null);
+  const autofillFromVault = useCallback(async () => {
+    if (!activeTab?.url || !isTauri || !engineReady) return;
+    setVaultBusy(true);
+    setVaultToast(null);
+    try {
+      const cred = await invoke("vault_get_credential", { url: activeTab.url }) as
+        | { domain: string; username: string; password: string } | null;
+      if (!cred || !cred.username) {
+        setVaultToast("No saved login for this site");
+        return;
+      }
+      // Inject a script that finds the login form and fills it. The
+      // native value-setter trick is required because React and other
+      // frameworks override the input's value setter to track state
+      // via synthetic events.
+      const safeUser = cred.username.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+      const safePass = cred.password.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+      const script = `(function(){
+const setNative = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+function fill(input, value) { setNative.call(input, value); input.dispatchEvent(new Event('input', { bubbles: true })); input.dispatchEvent(new Event('change', { bubbles: true })); }
+function score(input) {
+  const t = (input.type||'').toLowerCase();
+  const n = (input.name||'').toLowerCase();
+  const i = (input.id||'').toLowerCase();
+  const a = (input.autocomplete||'').toLowerCase();
+  if (t === 'password') return 100;
+  if (a.includes('username') || a.includes('email')) return 80;
+  if (n === 'email' || i === 'email' || n.includes('email') || i.includes('email')) return 70;
+  if (n === 'username' || i === 'username' || n.includes('user') || i.includes('user')) return 60;
+  if (t === 'email') return 50;
+  return 0;
+}
+let bestForm = null, bestPw = null, bestUser = null, bestScore = 0;
+for (const form of document.querySelectorAll('form')) {
+  const inputs = Array.from(form.querySelectorAll('input'));
+  const pw = inputs.find(x => (x.type||'').toLowerCase() === 'password');
+  if (!pw) continue;
+  let user = null, userScore = 0;
+  for (const input of inputs) {
+    if (input === pw) continue;
+    const s = score(input);
+    if (s > userScore) { user = input; userScore = s; }
+  }
+  const total = 100 + userScore;
+  if (total > bestScore) { bestForm = form; bestPw = pw; bestUser = user; bestScore = total; }
+}
+if (!bestPw) return { filled: false, reason: 'no-password-field' };
+if (bestUser) fill(bestUser, '${safeUser}');
+fill(bestPw, '${safePass}');
+return { filled: true, hasUser: !!bestUser, hasPass: true };
+})()`;
+      const result = await invoke("browser_evaluate", {
+        tabId: activeTab.id,
+        expression: script,
+      }) as string;
+      if (result.includes('"filled":true')) {
+        setVaultToast(`Filled login for ${cred.username}`);
+      } else {
+        setVaultToast("No login form found on this page");
+      }
+    } catch (e) {
+      setVaultToast(`Vault error: ${e}`);
+    } finally {
+      setVaultBusy(false);
+    }
+  }, [activeTab?.url, activeTab?.id, engineReady]);
+
+  // Auto-clear the vault toast after a few seconds.
+  useEffect(() => {
+    if (!vaultToast) return;
+    const id = setTimeout(() => setVaultToast(null), 3000);
+    return () => clearTimeout(id);
+  }, [vaultToast]);
+
   const reload = useCallback(async () => {
     if (!activeTab) return;
     setSpinning(true); setTimeout(() => setSpinning(false), 700);
@@ -566,6 +645,16 @@ export function ChromiumPane() {
                 title="Reader mode (extract main content)"
                 className={`shrink-0 ${readerOpen ? "text-accent" : "text-muted-foreground hover:text-foreground"}`}>
                 <BookOpen size={12} />
+              </button>
+            )}
+            {/* Vault autofill */}
+            {activeTab?.url && activeTab.url !== "about:blank" && isTauri && engineReady && (
+              <button type="button" onClick={autofillFromVault} disabled={vaultBusy}
+                title="Autofill saved login"
+                className="shrink-0 text-muted-foreground hover:text-foreground disabled:opacity-50">
+                {vaultBusy
+                  ? <span className="block h-3 w-3 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground" />
+                  : <KeyRound size={11} />}
               </button>
             )}
             {/* PDF indicator + download */}
@@ -769,6 +858,22 @@ export function ChromiumPane() {
         open={readerOpen}
         onClose={() => setReaderOpen(false)}
       />
+
+      {/* ── Vault toast ── */}
+      <AnimatePresence>
+        {vaultToast && (
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 12 }}
+            transition={{ duration: 0.18 }}
+            className="pointer-events-none fixed bottom-12 left-1/2 z-40 -translate-x-1/2 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-foreground shadow-lg"
+            data-testid="vault-toast"
+          >
+            {vaultToast}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ── CDP Audit Overlay ── */}
       <AnimatePresence>
