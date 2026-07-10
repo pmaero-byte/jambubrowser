@@ -88,8 +88,8 @@ interface DevtoolsState {
   /** Whether the devtools panel is open */
   devtoolsOpen: boolean;
 
-  /** Active tab: "network" | "console" | "performance" */
-  activeTab: "network" | "console" | "performance";
+  /** Active tab: "elements" | "network" | "console" | "performance" | "storage" */
+  activeTab: "elements" | "network" | "console" | "performance" | "storage";
 
   /** Network resources (ring buffer: keep last 200) */
   resources: DevtoolsResource[];
@@ -116,7 +116,7 @@ interface DevtoolsState {
 
   // Actions
   setDevtoolsOpen: (open: boolean) => void;
-  setActiveTab: (tab: "network" | "console" | "performance") => void;
+  setActiveTab: (tab: "elements" | "network" | "console" | "performance" | "storage") => void;
 
   addResource: (res: DevtoolsResource) => void;
   addConsoleEntry: (entry: DevtoolsConsoleEntry) => void;

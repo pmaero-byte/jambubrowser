@@ -5,16 +5,22 @@ import {
   Terminal,
   BugOff,
   PanelBottomClose,
+  FileCode,
+  Database,
 } from "lucide-react";
 import { useDevtoolsStore } from "../../store/devtoolsStore";
 import { NetworkTab } from "./NetworkTab";
 import { ConsoleTab } from "./ConsoleTab";
 import { PerformanceTab } from "./PerformanceTab";
+import { ElementsTab } from "./ElementsTab";
+import { StorageTab } from "./StorageTab";
 
 const TABS = [
+  { key: "elements" as const, label: "Elements", icon: FileCode },
   { key: "network" as const, label: "Network", icon: Wifi },
   { key: "console" as const, label: "Console", icon: Terminal },
   { key: "performance" as const, label: "Performance", icon: Activity },
+  { key: "storage" as const, label: "Storage", icon: Database },
 ];
 
 export function DevToolsPanel() {
@@ -97,9 +103,11 @@ export function DevToolsPanel() {
                 transition={{ duration: 0.15 }}
                 className="h-full"
               >
+                {activeTab === "elements" && <ElementsTab />}
                 {activeTab === "network" && <NetworkTab />}
                 {activeTab === "console" && <ConsoleTab />}
                 {activeTab === "performance" && <PerformanceTab />}
+                {activeTab === "storage" && <StorageTab />}
               </motion.div>
             </AnimatePresence>
           </div>
