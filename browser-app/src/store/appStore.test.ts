@@ -213,4 +213,44 @@ describe("appStore - browser tabs", () => {
     const after = useAppStore.getState().browserTabs;
     expect(after).toEqual(before); // unchanged
   });
+
+  it("restoreSession replaces tabs and activeTabId with valid input", () => {
+    const restored = [
+      { id: "r-1", url: "https://r1.com", title: "R1" },
+      { id: "r-2", url: "https://r2.com", title: "R2" },
+    ];
+    useAppStore.getState().restoreSession(restored, "r-2");
+    const s = useAppStore.getState();
+    expect(s.browserTabs).toEqual(restored);
+    expect(s.activeBrowserTabId).toBe("r-2");
+  });
+
+  it("restoreSession falls back to first tab id when activeTabId is unknown", () => {
+    const restored = [
+      { id: "r-1", url: "https://r1.com", title: "R1" },
+      { id: "r-2", url: "https://r2.com", title: "R2" },
+    ];
+    useAppStore.getState().restoreSession(restored, "r-ghost");
+    expect(useAppStore.getState().activeBrowserTabId).toBe("r-1");
+  });
+
+  it("restoreSession rejects empty or non-array tabs", () => {
+    const before = useAppStore.getState().browserTabs;
+    useAppStore.getState().restoreSession([], "x");
+    useAppStore.getState().restoreSession(null as unknown as never, "x");
+    expect(useAppStore.getState().browserTabs).toEqual(before);
+  });
+
+  it("restoreSession rejects tabs with missing or wrong-typed fields", () => {
+    const before = useAppStore.getState().browserTabs;
+    useAppStore.getState().restoreSession(
+      [{ id: 42, url: "https://x.com", title: "X" }] as unknown as never,
+      "x"
+    );
+    useAppStore.getState().restoreSession(
+      [{ id: "ok", url: "https://x.com" } as unknown as never],
+      "x"
+    );
+    expect(useAppStore.getState().browserTabs).toEqual(before);
+  });
 });

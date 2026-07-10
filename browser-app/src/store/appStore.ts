@@ -65,6 +65,7 @@ interface AppState {
   setActiveBrowserTab: (id: string) => void;
   updateBrowserTab: (id: string, patch: Partial<BrowserTab>) => void;
   reorderBrowserTabs: (newOrder: BrowserTab[]) => void;
+  restoreSession: (tabs: BrowserTab[], activeTabId: string) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -135,7 +136,7 @@ export const useAppStore = create<AppState>((set) => ({
     })),
   reorderBrowserTabs: (newOrder) =>
     set((s) => {
-      // Reject malformed reorders: must be a permutation of the current tabs.
+      // Reject malformed reorders: must be a a permutation of the current tabs.
       // Framer Motion's Reorder can briefly fire onReorder with stale arrays
       // (e.g. dropping past the last item), so guards here keep the array
       // shape stable.
@@ -144,5 +145,22 @@ export const useAppStore = create<AppState>((set) => ({
       const newIds = newOrder.map((t) => t.id).sort();
       if (currentIds.some((id, i) => id !== newIds[i])) return {};
       return { browserTabs: newOrder };
+    }),
+  restoreSession: (tabs, activeTabId) =>
+    set(() => {
+      // Validate the incoming session before applying it. We trust the
+      // localStorage payload to be a permutation of valid BrowserTab shapes
+      // (id/url/title) but reject anything that looks empty, malformed, or
+      // references a tab id that doesn't exist.
+      if (!Array.isArray(tabs) || tabs.length === 0) return {};
+      for (const t of tabs) {
+        if (!t || typeof t.id !== "string" || typeof t.url !== "string" || typeof t.title !== "string") {
+          return {};
+        }
+      }
+      const activeTabId_ = tabs.some((t) => t.id === activeTabId)
+        ? activeTabId
+        : tabs[0].id;
+      return { browserTabs: tabs, activeBrowserTabId: activeTabId_ };
     }),
 }));
