@@ -192,6 +192,9 @@ pub fn run() {
             commands::chromium::browser_sync_tab,
             commands::chromium::browser_set_adblock,
             commands::chromium::browser_set_fingerprint,
+            commands::chromium::browser_list_downloads,
+            commands::chromium::browser_open_download,
+            commands::chromium::browser_remove_download,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

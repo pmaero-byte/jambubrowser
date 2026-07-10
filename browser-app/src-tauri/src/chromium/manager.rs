@@ -12,6 +12,7 @@ use tokio::time::{sleep, Duration};
 
 use super::audit::{self, AuditReport};
 use super::cdp::CdpClient;
+use super::downloads;
 use super::extensions::{self, Extension};
 use super::privacy;
 use super::tab::{Tab, TabInfo};
@@ -60,6 +61,9 @@ impl ChromiumManager {
 
         // Spawn Chromium with privacy-focused flags
         let mut cmd = Command::new(chrome_path);
+        // Ensure the download directory exists before passing it to Chrome,
+        // so the OS file browser can find it from the very first download.
+        let download_dir = downloads::ensure_download_dir();
         cmd.args([
             // Remote debugging for CDP
             &format!("--remote-debugging-port={port}"),
@@ -67,6 +71,10 @@ impl ChromiumManager {
             "--remote-allow-origins=*",
             // Isolated profile (no shared cookies/history/extensions)
             &format!("--user-data-dir={}", profile_dir.display()),
+            // Route all downloads into a known directory (see chromium/downloads.rs).
+            // `=downloads::default_download_dir()` doesn't work here because
+            // ensure_download_dir() has the side effect of creating the dir.
+            &format!("--download.default-directory={}", download_dir.display()),
             // Disable first-run wizard
             "--no-first-run",
             "--no-default-browser-check",
