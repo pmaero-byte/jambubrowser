@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
-import { motion, AnimatePresence } from "motion/react";
+import { motion, AnimatePresence, Reorder } from "motion/react";
 import { Button } from "../ui/button";
 import {
   ArrowLeft, ArrowRight, RotateCcw, Home, Plus, X,
@@ -73,6 +73,7 @@ export function ChromiumPane() {
   const {
     browserTabs, activeBrowserTabId, setActiveBrowserTab,
     closeBrowserTab, addBrowserTab, updateBrowserTab,
+    reorderBrowserTabs,
   } = useAppStore();
 
   const activeTab = browserTabs.find((t) => t.id === activeBrowserTabId) || browserTabs[0];
@@ -533,16 +534,24 @@ export function ChromiumPane() {
       </div>
 
       {/* ── Tab strip ── */}
-      <div className="relative flex gap-1 overflow-x-auto border-b border-border bg-card/30 px-2 py-1">
+      <Reorder.Group
+        axis="x"
+        values={browserTabs}
+        onReorder={reorderBrowserTabs}
+        className="relative flex gap-1 overflow-x-auto border-b border-border bg-card/30 px-2 py-1"
+        as="div"
+      >
         {browserTabs.map((tab) => {
           const isActive = tab.id === activeBrowserTabId;
           return (
-            <motion.button
-              key={tab.id} layout
+            <Reorder.Item
+              key={tab.id} value={tab} layout
+              as="button"
               onClick={() => setActiveBrowserTab(tab.id)}
               onMouseDown={(e) => { if (e.button === 1) { e.preventDefault(); handleCloseTab(tab.id); } }}
               whileTap={{ scale: 0.96 }}
-              className={`group relative flex max-w-[180px] items-center gap-1.5 rounded-md pl-2 pr-1 py-1 text-xs ${
+              whileDrag={{ scale: 1.04, zIndex: 10 }}
+              className={`group relative flex max-w-[180px] items-center gap-1.5 rounded-md pl-2 pr-1 py-1 text-xs touch-none cursor-grab active:cursor-grabbing ${
                 isActive ? "text-foreground" : "text-muted-foreground hover:bg-muted"
               }`}
             >
@@ -559,14 +568,15 @@ export function ChromiumPane() {
               <span className="relative truncate">{tab.title || tab.url || "New Tab"}</span>
               {browserTabs.length > 1 && (
                 <span onClick={(e) => { e.stopPropagation(); handleCloseTab(tab.id); }}
+                  onPointerDown={(e) => e.stopPropagation()}
                   className="relative rounded p-0.5 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-muted-foreground/20 ml-auto">
                   <X size={10} />
                 </span>
               )}
-            </motion.button>
+            </Reorder.Item>
           );
         })}
-      </div>
+      </Reorder.Group>
 
       {/* ── Viewport ── */}
       <div className="relative min-h-0 flex-1 bg-background">
