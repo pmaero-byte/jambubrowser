@@ -5,6 +5,7 @@ import { useAppStore } from "./store/appStore";
 import { useAgentWebSocket } from "./utils/useAgentWebSocket";
 import { runAgentStream } from "./utils/agent";
 import { localFetch } from "./utils/api";
+import { useSessionRestore } from "./utils/sessionRestore";
 import type { AgentEvent } from "./utils/types";
 
 // Lazy-loaded panels: each is its own JS chunk and only fetched on first
@@ -76,6 +77,11 @@ export default function App() {
     onboardingOpen,
     setOnboardingOpen,
   } = useAppStore();
+
+  // Restore the previous session's tabs on launch and persist any future
+  // changes back to localStorage. Mount-once effect; no re-subscribe on
+  // re-render.
+  useSessionRestore();
 
   const { clearReasoning } = useAgentWebSocket();
   const [agentEvents, setAgentEvents] = useState<AgentEvent[]>([]);
