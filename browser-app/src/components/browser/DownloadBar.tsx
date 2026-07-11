@@ -54,22 +54,22 @@ export function DownloadBar() {
   if (total === 0 && !error && !loading) return null;
 
   return (
-    <div className="border-t border-border bg-card/95 backdrop-blur">
+    <div className="border-t border-border/50 bg-surface/80 backdrop-blur-sm">
       {/* Collapsed header bar */}
       <button
         onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] transition-colors hover:bg-muted/40"
+        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] transition-all duration-150 hover:bg-muted/30"
         data-testid="download-bar-toggle"
       >
-        <Download size={12} className="shrink-0 text-muted-foreground" />
-        <span className="text-foreground/90">
+        <Download size={12} className="shrink-0 text-muted-foreground/60" />
+        <span className="text-foreground/80">
           {inProgress > 0
             ? `${inProgress} downloading · ${total} total`
             : `${total} download${total === 1 ? "" : "s"}`}
         </span>
-        {loading && <span className="text-muted-foreground">· refreshing…</span>}
-        {error && <span className="text-red-400">· error</span>}
-        <div className="ml-auto flex items-center gap-2 text-muted-foreground">
+        {loading && <span className="text-muted-foreground/50">· refreshing…</span>}
+        {error && <span className="text-red-400/80">· error</span>}
+        <div className="ml-auto flex items-center gap-2 text-muted-foreground/50">
           {expanded ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
         </div>
       </button>
@@ -80,17 +80,17 @@ export function DownloadBar() {
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.18, ease: "easeOut" }}
-            className="overflow-hidden border-t border-border"
+            transition={{ duration: 0.2, ease: [0.23, 1, 0.32, 1] }}
+            className="overflow-hidden border-t border-border/30"
           >
             <div className="max-h-64 overflow-y-auto p-2">
               {error && (
-                <div className="mb-2 rounded bg-red-500/10 px-2 py-1 text-[10px] text-red-400">
+                <div className="mb-2 rounded-md bg-red-500/10 border border-red-500/20 px-2.5 py-1.5 text-[10px] text-red-400/90">
                   {error}
                 </div>
               )}
               {downloads.length === 0 && !loading && (
-                <div className="px-2 py-3 text-center text-[11px] text-muted-foreground">
+                <div className="px-2 py-4 text-center text-[11px] text-muted-foreground/50">
                   No downloads yet.
                 </div>
               )}
@@ -100,24 +100,24 @@ export function DownloadBar() {
                   return (
                     <li
                       key={d.path}
-                      className="group flex items-center gap-2 rounded-md bg-background/40 px-2 py-1.5 text-[11px]"
+                      className="group flex items-center gap-2 rounded-md bg-background/30 px-2 py-1.5 text-[11px] transition-colors duration-150 hover:bg-muted/30"
                     >
-                      <FolderOpen size={12} className="shrink-0 text-muted-foreground" />
+                      <FolderOpen size={12} className="shrink-0 text-muted-foreground/50" />
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-foreground/90" title={d.path}>{d.filename}</div>
+                        <div className="truncate text-foreground/80" title={d.path}>{d.filename}</div>
                         <div className={label.className}>{label.text}</div>
                       </div>
                       <button
                         onClick={() => openDownload(d.path)}
                         title="Open with default app"
-                        className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                        className="rounded-md p-1 text-muted-foreground/50 transition-all duration-150 hover:bg-muted/50 hover:text-foreground"
                       >
                         <ExternalLink size={11} />
                       </button>
                       <button
                         onClick={() => removeDownload(d.path)}
                         title="Remove from disk"
-                        className="rounded p-1 text-muted-foreground transition-colors hover:bg-red-500/20 hover:text-red-400"
+                        className="rounded-md p-1 text-muted-foreground/50 transition-all duration-150 hover:bg-red-500/15 hover:text-red-400"
                       >
                         <X size={11} />
                       </button>
@@ -127,7 +127,7 @@ export function DownloadBar() {
               </ul>
             </div>
             {!initialFetched && (
-              <div className="px-3 py-1 text-[10px] text-muted-foreground">
+              <div className="px-3 py-1 text-[10px] text-muted-foreground/40">
                 Loading first scan…
               </div>
             )}

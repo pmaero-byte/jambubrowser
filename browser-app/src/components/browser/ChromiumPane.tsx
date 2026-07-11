@@ -553,17 +553,17 @@ return { filled: true, hasUser: !!bestUser, hasPass: true };
     <div className="flex h-full flex-col">
       {/* ── Bookmark bar ── */}
       {showBookmarks && bookmarks.length > 0 && (
-        <div className="flex items-center gap-0.5 border-b border-border bg-card/40 px-3 py-1 overflow-x-auto">
+        <div className="flex items-center gap-0.5 border-b border-border/30 bg-surface/40 px-3 py-1 overflow-x-auto">
           {bookmarks.slice(0, 20).map((bm) => (
             <button
               key={bm.id}
               onClick={() => doNavigate(bm.url)}
-              className="flex items-center gap-1 shrink-0 rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground transition-colors max-w-[160px]"
+              className="flex items-center gap-1 shrink-0 rounded-md px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-all duration-150 max-w-[160px]"
               title={bm.url}
             >
               <img src={faviconUrl(bm.url)} alt="" className="w-3.5 h-3.5 rounded-sm" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
               <span className="truncate">{bm.title || bm.url}</span>
-              <X size={10} className="opacity-0 hover:opacity-100 hover:text-red-400 shrink-0 ml-0.5"
+              <X size={10} className="opacity-0 group-hover:opacity-100 hover:text-red-400 shrink-0 ml-0.5"
                 onClick={(e) => { e.stopPropagation(); removeBookmark(bm.id); }} />
             </button>
           ))}
@@ -571,21 +571,21 @@ return { filled: true, hasUser: !!bestUser, hasPass: true };
       )}
 
       {/* ── Address bar + nav ── */}
-      <div className="flex items-center gap-2 border-b border-border bg-card/50 px-2 py-1.5">
-        <div className="flex items-center gap-1">
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={goBack}><ArrowLeft size={14} /></Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={goForward}><ArrowRight size={14} /></Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={reload}>
+      <div className="flex items-center gap-2 border-b border-border/50 bg-surface/80 px-2 py-1.5">
+        <div className="flex items-center gap-0.5">
+          <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all duration-150" onClick={goBack}><ArrowLeft size={14} /></Button>
+          <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all duration-150" onClick={goForward}><ArrowRight size={14} /></Button>
+          <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all duration-150" onClick={reload}>
             <motion.span animate={spinning ? { rotate: 360 } : { rotate: 0 }} transition={{ duration: 0.7, ease: "easeOut" }} className="block">
               <RotateCcw size={14} />
             </motion.span>
           </Button>
-          <Button variant="ghost" size="icon" className={`h-7 w-7 ${devtoolsOpen ? "text-accent" : ""}`}
+          <Button variant="ghost" size="icon" className={`h-7 w-7 transition-all duration-200 ${devtoolsOpen ? "text-accent glow-accent" : "text-muted-foreground hover:text-foreground hover:bg-muted/50"}`}
             onClick={() => setDevtoolsOpen(!devtoolsOpen)}>
             {devtoolsOpen ? <BugOff size={14} /> : <Bug size={14} />}
           </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => doNavigate("about:blank")}><Home size={14} /></Button>
-          <Button variant="ghost" size="icon" className={`h-7 w-7 ${auditOpen ? "text-accent" : ""}`}
+          <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all duration-150" onClick={() => doNavigate("about:blank")}><Home size={14} /></Button>
+          <Button variant="ghost" size="icon" className={`h-7 w-7 transition-all duration-200 ${auditOpen ? "text-accent glow-accent" : "text-muted-foreground hover:text-foreground hover:bg-muted/50"}`}
             onClick={() => {
               if (!auditOpen) { runPageAudit(); }
               else { setAuditOpen(false); setAuditFindings([]); }
@@ -598,15 +598,15 @@ return { filled: true, hasUser: !!bestUser, hasPass: true };
         {/* URL bar with autocomplete */}
         <div className="relative flex-1">
           <motion.form
-            className="flex items-center gap-2 rounded-md border bg-background px-2"
+            className="flex items-center gap-2 rounded-lg border border-border/50 bg-background/60 px-2.5 transition-colors duration-200"
             animate={{
-              borderColor: urlFocused ? "rgba(99,102,241,0.5)" : "rgba(255,255,255,0.1)",
-              boxShadow: urlFocused ? "0 0 0 3px rgba(99,102,241,0.15)" : "none",
+              borderColor: urlFocused ? "oklch(0.65 0.18 265 / 40%)" : "oklch(1 0 0 / 8%)",
+              boxShadow: urlFocused ? "0 0 0 3px oklch(0.65 0.18 265 / 10%), 0 0 16px oklch(0.65 0.18 265 / 8%)" : "0 1px 2px oklch(0 0 0 / 5%)",
             }}
-            transition={{ duration: 0.18 }}
+            transition={{ duration: 0.2 }}
             onSubmit={(e) => { e.preventDefault(); setSuggestionsVisible(false); doNavigate(inputUrl); }}
           >
-            <Globe size={12} className="text-muted-foreground shrink-0" />
+            <Globe size={12} className="text-muted-foreground/60 shrink-0" />
             <input
               ref={inputRef} type="text" value={inputUrl}
               onChange={(e) => { setInputUrl(e.target.value); setSuggestionsVisible(true); setSelectedSuggestion(-1); }}
@@ -614,7 +614,7 @@ return { filled: true, hasUser: !!bestUser, hasPass: true };
               onBlur={() => { setTimeout(() => { setUrlFocused(false); setSuggestionsVisible(false); }, 150); }}
               onKeyDown={handleKeyDown}
               placeholder="Search or enter URL"
-              className="flex-1 bg-transparent py-1 text-xs outline-none placeholder:text-muted-foreground/50"
+              className="flex-1 bg-transparent py-1 text-xs outline-none placeholder:text-muted-foreground/40"
             />
             {/* Bookmark star */}
             {activeTab?.url && activeTab.url !== "about:blank" && (
@@ -684,16 +684,16 @@ return { filled: true, hasUser: !!bestUser, hasPass: true };
           <AnimatePresence>
             {suggestionsVisible && suggestions.length > 0 && (
               <motion.div
-                initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
-                transition={{ duration: 0.12 }}
-                className="absolute top-full left-0 right-0 z-50 mt-1 rounded-md border border-border bg-popover shadow-lg max-h-64 overflow-y-auto"
+                initial={{ opacity: 0, y: -4, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -4, scale: 0.98 }}
+                transition={{ duration: 0.15, ease: "easeOut" }}
+                className="absolute top-full left-0 right-0 z-50 mt-1.5 rounded-lg border border-border/50 bg-surface-elevated shadow-float overflow-hidden"
               >
                 {suggestions.map((s, i) => (
                   <button
                     key={`${s.url}-${i}`}
                     onMouseDown={(e) => { e.preventDefault(); selectSuggestion(s.url, s.title); }}
-                    className={`flex items-center gap-2 w-full px-3 py-2 text-xs text-left hover:bg-muted transition-colors ${
-                      i === selectedSuggestion ? "bg-muted" : ""
+                    className={`flex items-center gap-2 w-full px-3 py-2 text-xs text-left transition-colors duration-100 ${
+                      i === selectedSuggestion ? "bg-muted/60" : "hover:bg-muted/30"
                     }`}
                   >
                     <img src={faviconUrl(s.url)} alt="" className="w-4 h-4 rounded-sm shrink-0"
@@ -725,7 +725,7 @@ return { filled: true, hasUser: !!bestUser, hasPass: true };
         axis="x"
         values={browserTabs}
         onReorder={reorderBrowserTabs}
-        className="relative flex gap-1 overflow-x-auto border-b border-border bg-card/30 px-2 py-1"
+        className="relative flex gap-0.5 overflow-x-auto border-b border-border/30 bg-surface/50 px-2 py-1"
         as="div"
       >
         {browserTabs.map((tab) => {
@@ -739,14 +739,14 @@ return { filled: true, hasUser: !!bestUser, hasPass: true };
               onMouseEnter={(e) => handleTabPreviewEnter(tab, e.currentTarget)}
               onMouseLeave={handleTabPreviewLeave}
               whileTap={{ scale: 0.96 }}
-              whileDrag={{ scale: 1.04, zIndex: 10 }}
-              className={`group relative flex max-w-[180px] items-center gap-1.5 rounded-md pl-2 pr-1 py-1 text-xs touch-none cursor-grab active:cursor-grabbing ${
-                isActive ? "text-foreground" : "text-muted-foreground hover:bg-muted"
+              whileDrag={{ scale: 1.04, zIndex: 10, boxShadow: "0 8px 24px oklch(0 0 0 / 15%)" }}
+              className={`group relative flex max-w-[180px] items-center gap-1.5 rounded-md pl-2 pr-1 py-1 text-xs touch-none cursor-grab active:cursor-grabbing transition-colors duration-150 ${
+                isActive ? "text-foreground" : "text-muted-foreground hover:bg-muted/40 hover:text-foreground/80"
               }`}
             >
               {isActive && (
                 <motion.span layoutId="chromium-tab-indicator"
-                  className="absolute inset-0 rounded-md bg-background shadow-sm"
+                  className="absolute inset-0 rounded-md bg-background shadow-sm border border-border/30"
                   transition={{ type: "spring", stiffness: 380, damping: 30 }} />
               )}
               {/* Favicon */}
@@ -774,29 +774,29 @@ return { filled: true, hasUser: !!bestUser, hasPass: true };
             initial={{ opacity: 0, y: 6, scale: 0.96 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 6, scale: 0.96 }}
-            transition={{ duration: 0.14, ease: "easeOut" }}
+            transition={{ duration: 0.18, ease: [0.23, 1, 0.32, 1] }}
             style={{
               position: "fixed",
               left: Math.max(8, Math.min(preview.x, window.innerWidth - 348)),
               top: Math.max(8, preview.y - 200),
               zIndex: 60,
             }}
-            className="pointer-events-none w-[340px] rounded-lg border border-border bg-card shadow-2xl overflow-hidden"
+            className="pointer-events-none w-[340px] rounded-xl border border-border/50 bg-surface-elevated shadow-float overflow-hidden"
           >
             {preview.loading ? (
-              <div className="flex h-[180px] items-center justify-center bg-muted/30">
+              <div className="flex h-[180px] items-center justify-center bg-muted/20">
                 <motion.div
                   animate={{ rotate: 360 }}
                   transition={{ duration: 1.2, repeat: Infinity, ease: "linear" }}
-                  className="h-5 w-5 rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground"
+                  className="h-5 w-5 rounded-full border-2 border-muted-foreground/20 border-t-accent"
                 />
               </div>
             ) : preview.screenshot ? (
               <img src={preview.screenshot} alt={preview.title} className="block h-[180px] w-full object-cover bg-white" />
             ) : null}
-            <div className="border-t border-border bg-card/95 px-2.5 py-1.5">
+            <div className="border-t border-border/30 bg-surface-elevated/95 px-2.5 py-1.5 backdrop-blur-sm">
               <div className="truncate text-[11px] font-medium text-foreground">{preview.title || "New Tab"}</div>
-              <div className="truncate text-[10px] text-muted-foreground">{preview.url}</div>
+              <div className="truncate text-[10px] text-muted-foreground/70">{preview.url}</div>
             </div>
           </motion.div>
         )}
@@ -818,16 +818,26 @@ return { filled: true, hasUser: !!bestUser, hasPass: true };
           {screenshot && activeTab?.url && activeTab.url !== "about:blank" ? (
             <motion.img key={`ss-${activeBrowserTabId}`} src={screenshot} alt={activeTab.title || "Page"}
               className="h-full w-full object-contain bg-white"
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.22 }} />
+              initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.98 }} transition={{ duration: 0.25, ease: "easeOut" }} />
           ) : (
             <motion.div key="empty"
               className="flex h-full flex-col items-center justify-center text-muted-foreground"
-              initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 4 }} transition={{ duration: 0.2 }}>
-              <motion.div animate={{ scale: [1, 1.06, 1] }} transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}>
-                {engineReady ? <Globe size={32} className="mb-3 text-border" /> : <Cpu size={32} className="mb-3 text-amber-500/50" />}
+              initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }} transition={{ duration: 0.3, ease: "easeOut" }}>
+              <motion.div animate={{ scale: [1, 1.04, 1] }} transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}>
+                {engineReady ? (
+                  <div className="relative">
+                    <Globe size={40} className="mb-4 text-border/60" />
+                    <div className="absolute inset-0 rounded-full bg-accent/5 blur-xl" />
+                  </div>
+                ) : (
+                  <div className="relative">
+                    <Cpu size={40} className="mb-4 text-amber-500/40" />
+                    <div className="absolute inset-0 rounded-full bg-amber-500/5 blur-xl" />
+                  </div>
+                )}
               </motion.div>
               <p className="text-sm font-medium">{isTauri && !engineReady ? "Starting Chromium engine..." : "No page loaded"}</p>
-              <p className="mt-1 text-xs">{isTauri && !engineReady ? "The browser engine is initializing." : "Enter a URL above or open a bookmark."}</p>
+              <p className="mt-1.5 text-xs text-muted-foreground/60">{isTauri && !engineReady ? "The browser engine is initializing." : "Enter a URL above or open a bookmark."}</p>
             </motion.div>
           )}
         </AnimatePresence>
@@ -847,14 +857,17 @@ return { filled: true, hasUser: !!bestUser, hasPass: true };
       <AnimatePresence>
         {vaultToast && (
           <motion.div
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 12 }}
-            transition={{ duration: 0.18 }}
-            className="pointer-events-none fixed bottom-12 left-1/2 z-40 -translate-x-1/2 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-foreground shadow-lg"
+            initial={{ opacity: 0, y: 16, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 16, scale: 0.9 }}
+            transition={{ type: "spring", stiffness: 400, damping: 25 }}
+            className="pointer-events-none fixed bottom-12 left-1/2 z-40 -translate-x-1/2 rounded-full border border-border/50 bg-surface-elevated px-4 py-2 text-xs text-foreground shadow-float backdrop-blur-sm"
             data-testid="vault-toast"
           >
-            {vaultToast}
+            <span className="flex items-center gap-2">
+              <KeyRound size={12} className="text-accent shrink-0" />
+              {vaultToast}
+            </span>
           </motion.div>
         )}
       </AnimatePresence>
@@ -867,23 +880,23 @@ return { filled: true, hasUser: !!bestUser, hasPass: true };
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.18 }}
-            className="shrink-0 overflow-hidden border-t border-border bg-card/60"
+            transition={{ duration: 0.2, ease: "easeOut" }}
+            className="shrink-0 overflow-hidden border-t border-border/50 bg-surface/60 backdrop-blur-sm"
           >
             <div className="max-h-[200px] overflow-y-auto p-3 space-y-1.5">
               <div className="flex items-center gap-2 mb-2">
-                <Shield size={12} className="text-muted-foreground" />
-                <span className="text-[11px] font-medium text-muted-foreground">CDP Page Audit</span>
+                <Shield size={12} className="text-muted-foreground/60" />
+                <span className="text-[11px] font-medium text-muted-foreground/80">CDP Page Audit</span>
                 {auditRunning && (
                   <motion.span animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }} className="inline-block">
                     <RotateCcw size={10} className="text-accent" />
                   </motion.span>
                 )}
                 {!auditRunning && auditFindings.length > 0 && (
-                  <span className="text-[10px] text-muted-foreground">{auditFindings.length} finding(s)</span>
+                  <span className="text-[10px] text-muted-foreground/60">{auditFindings.length} finding(s)</span>
                 )}
                 <div className="flex-1" />
-                <button onClick={() => setAuditOpen(false)} className="text-muted-foreground hover:text-foreground">
+                <button onClick={() => setAuditOpen(false)} className="text-muted-foreground/60 hover:text-foreground transition-colors">
                   <X size={12} />
                 </button>
               </div>

@@ -88,53 +88,56 @@ export function StorageTab() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-2 border-b border-border bg-card/40 px-2 py-1.5">
-        <Database size={11} className="text-muted-foreground" />
-        <span className="text-[11px] text-muted-foreground">Storage</span>
+      <div className="flex items-center gap-2 border-b border-border/30 bg-surface/50 px-2 py-1.5">
+        <Database size={11} className="text-accent/70" />
+        <span className="text-[11px] text-muted-foreground/70 font-medium">Storage</span>
         <div className="flex-1" />
         <button
           onClick={clearKind} disabled={state.loading}
           title={`Clear all ${state.kind}`}
-          className="rounded p-1 text-muted-foreground transition-colors hover:bg-red-500/20 hover:text-red-400 disabled:opacity-50"
+          className="rounded-md p-1 text-muted-foreground/50 transition-all duration-150 hover:bg-red-500/15 hover:text-red-400 disabled:opacity-40"
         >
           <Trash2 size={11} />
         </button>
         <button
           onClick={refresh} disabled={state.loading}
-          className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+          className="rounded-md p-1 text-muted-foreground/50 transition-all duration-150 hover:bg-muted/30 hover:text-foreground disabled:opacity-40"
           title="Refresh"
         >
           <RefreshCw size={11} className={state.loading ? "animate-spin" : ""} />
         </button>
       </div>
-      <div className="flex items-center gap-1 border-b border-border bg-card/30 px-2 py-1">
+      <div className="flex items-center gap-1 border-b border-border/30 bg-surface/30 px-2 py-1">
         <KindButton current={kind} value="localStorage" icon={<HardDrive size={10} />} onClick={setKind} />
         <KindButton current={kind} value="sessionStorage" icon={<Layers size={10} />} onClick={setKind} />
         <KindButton current={kind} value="cookies" icon={<Cookie size={10} />} onClick={setKind} />
       </div>
       <div className="flex-1 overflow-y-auto p-1 text-[11px]">
         {state.error && (
-          <div className="m-2 flex items-start gap-1.5 rounded bg-red-500/10 p-2 text-[10px] text-red-400">
+          <div className="m-2 flex items-start gap-1.5 rounded-md bg-red-500/10 border border-red-500/20 p-2 text-[10px] text-red-400/80">
             <AlertTriangle size={10} className="mt-0.5 shrink-0" />
             <span>{state.error}</span>
           </div>
         )}
         {!state.error && state.data.length === 0 && !state.loading && (
-          <div className="p-2 text-[10px] text-muted-foreground">No entries in {state.kind}.</div>
+          <div className="flex flex-col items-center justify-center py-8 text-muted-foreground/40">
+            <Database size={24} className="mb-2" />
+            <span className="text-[10px]">No entries in {state.kind}.</span>
+          </div>
         )}
         {state.data.length > 0 && (
           <table className="w-full font-mono text-[10px]">
-            <thead className="sticky top-0 bg-card text-[10px] uppercase text-muted-foreground">
+            <thead className="sticky top-0 bg-surface/80 backdrop-blur-sm text-[10px] uppercase text-muted-foreground/60">
               <tr>
-                <th className="px-2 py-1 text-left">Key</th>
-                <th className="px-2 py-1 text-left">Value</th>
+                <th className="px-2 py-1 text-left font-medium">Key</th>
+                <th className="px-2 py-1 text-left font-medium">Value</th>
               </tr>
             </thead>
             <tbody>
               {state.data.map((entry, i) => (
-                <tr key={`${entry.key}-${i}`} className="border-t border-border/40 hover:bg-muted/30">
-                  <td className="max-w-[40%] truncate px-2 py-1 text-amber-300" title={entry.key}>{entry.key}</td>
-                  <td className="max-w-[60%] truncate px-2 py-1 text-foreground/80" title={entry.value}>{entry.value}</td>
+                <tr key={`${entry.key}-${i}`} className="border-t border-border/20 transition-colors duration-100 hover:bg-muted/20">
+                  <td className="max-w-[40%] truncate px-2 py-1 text-amber-300/80" title={entry.key}>{entry.key}</td>
+                  <td className="max-w-[60%] truncate px-2 py-1 text-foreground/75" title={entry.value}>{entry.value}</td>
                 </tr>
               ))}
             </tbody>
@@ -157,8 +160,8 @@ function KindButton({
   return (
     <button
       onClick={() => onClick(value)}
-      className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] transition-colors ${
-        active ? "bg-accent/20 text-foreground" : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+      className={`flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-medium transition-all duration-150 ${
+        active ? "bg-accent/15 text-foreground" : "text-muted-foreground/50 hover:bg-muted/20 hover:text-muted-foreground"
       }`}
     >
       {icon}

@@ -103,14 +103,14 @@ export function ElementsTab() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-2 border-b border-border bg-card/40 px-2 py-1.5">
-        <FileCode size={11} className="text-muted-foreground" />
-        <span className="text-[11px] text-muted-foreground">Elements</span>
+      <div className="flex items-center gap-2 border-b border-border/30 bg-surface/50 px-2 py-1.5">
+        <FileCode size={11} className="text-accent/70" />
+        <span className="text-[11px] text-muted-foreground/70 font-medium">Elements</span>
         <div className="flex-1" />
         <button
           onClick={refresh}
           disabled={state.loading}
-          className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+          className="rounded-md p-1 text-muted-foreground/50 transition-all duration-150 hover:bg-muted/30 hover:text-foreground disabled:opacity-40"
           title="Refresh DOM"
         >
           <RefreshCw size={11} className={state.loading ? "animate-spin" : ""} />
@@ -118,7 +118,7 @@ export function ElementsTab() {
       </div>
       <div className="flex-1 overflow-y-auto p-1 font-mono text-[11px]">
         {state.error && (
-          <div className="m-2 flex items-start gap-1.5 rounded bg-red-500/10 p-2 text-[10px] text-red-400">
+          <div className="m-2 flex items-start gap-1.5 rounded-md bg-red-500/10 border border-red-500/20 p-2 text-[10px] text-red-400/80">
             <AlertTriangle size={10} className="mt-0.5 shrink-0" />
             <span>{state.error}</span>
           </div>
@@ -135,7 +135,10 @@ export function ElementsTab() {
           />
         )}
         {!state.error && !state.root && !state.loading && (
-          <div className="p-2 text-[10px] text-muted-foreground">No DOM to display.</div>
+          <div className="flex flex-col items-center justify-center py-8 text-muted-foreground/40">
+            <FileCode size={24} className="mb-2" />
+            <span className="text-[10px]">No DOM to display.</span>
+          </div>
         )}
       </div>
     </div>
@@ -161,13 +164,13 @@ function Tree({
   if (node.text !== null) {
     return (
       <div
-        className="flex items-start gap-1 truncate py-0.5 text-muted-foreground"
+        className="flex items-start gap-1 truncate py-0.5 text-muted-foreground/60"
         style={{ paddingLeft: 4 + depth * 12 }}
         title={node.text}
       >
-        <span className="shrink-0 text-[10px] text-muted-foreground/60">"</span>
+        <span className="shrink-0 text-[10px] text-muted-foreground/40">"</span>
         <span className="truncate">{node.text.length > 80 ? node.text.slice(0, 80) + "…" : node.text}</span>
-        <span className="shrink-0 text-[10px] text-muted-foreground/60">"</span>
+        <span className="shrink-0 text-[10px] text-muted-foreground/40">"</span>
       </div>
     );
   }
@@ -179,8 +182,8 @@ function Tree({
   return (
     <div>
       <div
-        className={`flex cursor-pointer items-center gap-0.5 rounded-sm py-0.5 text-foreground/90 hover:bg-muted/40 ${
-          isSelected ? "bg-accent/20" : ""
+        className={`flex cursor-pointer items-center gap-0.5 rounded py-0.5 text-foreground/85 transition-colors duration-100 hover:bg-muted/30 ${
+          isSelected ? "bg-accent/15" : ""
         }`}
         style={{ paddingLeft: 4 + depth * 12 }}
         onClick={() => {
@@ -190,15 +193,15 @@ function Tree({
       >
         {hasChildren ? (
           isExpanded
-            ? <ChevronDown size={10} className="shrink-0 text-muted-foreground" />
-            : <ChevronRight size={10} className="shrink-0 text-muted-foreground" />
+            ? <ChevronDown size={10} className="shrink-0 text-muted-foreground/50" />
+            : <ChevronRight size={10} className="shrink-0 text-muted-foreground/50" />
         ) : (
           <span className="inline-block w-[10px] shrink-0" />
         )}
-        <span className="shrink-0 text-blue-400">&lt;{tag}</span>
-        {idPart && <span className="shrink-0 text-amber-300">{idPart}</span>}
-        {classPart && <span className="truncate text-emerald-300">{classPart}</span>}
-        <span className="shrink-0 text-blue-400">&gt;</span>
+        <span className="shrink-0 text-blue-400/80">&lt;{tag}</span>
+        {idPart && <span className="shrink-0 text-amber-300/80">{idPart}</span>}
+        {classPart && <span className="truncate text-emerald-300/80">{classPart}</span>}
+        <span className="shrink-0 text-blue-400/80">&gt;</span>
       </div>
       {isExpanded && hasChildren && (
         <div>

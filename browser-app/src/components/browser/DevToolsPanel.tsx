@@ -40,33 +40,40 @@ export function DevToolsPanel() {
           initial={{ height: 0, opacity: 0 }}
           animate={{ height: 240, opacity: 1 }}
           exit={{ height: 0, opacity: 0 }}
-          transition={{ duration: 0.2, ease: "easeInOut" }}
-          className="flex flex-col overflow-hidden border-t border-border bg-card"
+          transition={{ duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
+          className="flex flex-col overflow-hidden border-t border-border/50 bg-surface"
         >
           {/* Tab bar */}
-          <div className="flex items-center border-b border-border bg-card/50">
+          <div className="flex items-center border-b border-border/30 bg-surface/80">
             <div className="flex items-center gap-0.5 px-1">
               {TABS.map((tab) => (
                 <button
                   key={tab.key}
                   onClick={() => setActiveTab(tab.key)}
-                  className={`flex items-center gap-1.5 rounded-t px-3 py-1.5 text-[11px] font-medium transition-colors ${
+                  className={`relative flex items-center gap-1.5 rounded-t px-3 py-1.5 text-[11px] font-medium transition-all duration-200 ${
                     activeTab === tab.key
-                      ? "border-b-2 border-accent bg-card text-foreground"
-                      : "text-muted-foreground hover:bg-muted/50"
+                      ? "text-foreground bg-surface-elevated"
+                      : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/30"
                   }`}
                 >
-                  <tab.icon size={12} />
+                  <tab.icon size={12} className={activeTab === tab.key ? "text-accent" : ""} />
                   {tab.label}
                   {tab.key === "network" && resources.length > 0 && (
-                    <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">
+                    <span className="rounded-full bg-accent/15 px-1.5 text-[10px] text-accent font-medium">
                       {resources.length}
                     </span>
                   )}
                   {tab.key === "console" && consoleEntries.length > 0 && (
-                    <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">
+                    <span className="rounded-full bg-accent/15 px-1.5 text-[10px] text-accent font-medium">
                       {consoleEntries.length}
                     </span>
+                  )}
+                  {activeTab === tab.key && (
+                    <motion.span
+                      layoutId="devtools-tab-indicator"
+                      className="absolute bottom-0 left-0 right-0 h-0.5 bg-accent rounded-full"
+                      transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                    />
                   )}
                 </button>
               ))}
@@ -77,14 +84,14 @@ export function DevToolsPanel() {
                 onClick={() => {
                   useDevtoolsStore.getState().clearAll();
                 }}
-                className="rounded px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted"
+                className="rounded-md px-2 py-1 text-[11px] text-muted-foreground/60 transition-all duration-150 hover:bg-muted/30 hover:text-foreground"
                 title="Clear all"
               >
                 <BugOff size={12} />
               </button>
               <button
                 onClick={() => setDevtoolsOpen(false)}
-                className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted"
+                className="rounded-md p-1 text-muted-foreground/60 transition-all duration-150 hover:bg-muted/30 hover:text-foreground"
                 title="Close DevTools"
               >
                 <PanelBottomClose size={14} />
@@ -100,7 +107,7 @@ export function DevToolsPanel() {
                 initial={{ opacity: 0, y: 4 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -4 }}
-                transition={{ duration: 0.15 }}
+                transition={{ duration: 0.18, ease: "easeOut" }}
                 className="h-full"
               >
                 {activeTab === "elements" && <ElementsTab />}

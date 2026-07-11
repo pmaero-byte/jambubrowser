@@ -3,16 +3,8 @@ import { motion } from "motion/react";
 import { useAgentWebSocket } from "../../utils/useAgentWebSocket";
 import { useAppStore } from "../../store/appStore";
 
-/**
- * TokenFlow — 5 small bars whose heights oscillate to suggest live token
- * generation. Speed scales with the real `tokens_per_sec` from telemetry
- * (capped), so when the agent is fast the bars wiggle fast; when it pauses
- * they still gently breathe so the status bar never feels dead.
- */
 function TokenFlow({ tokensPerSec }: { tokensPerSec: number | undefined }) {
   const active = (tokensPerSec ?? 0) > 0;
-  // Map [0, 50] tok/s -> [2.2s, 0.4s] period. Clamp so a 1000 tok/s burst
-  // doesn't make the bars look frantic.
   const tps = Math.max(0, Math.min(tokensPerSec ?? 0, 50));
   const period = active ? 2.2 - (tps / 50) * 1.8 : 3.5;
   const bars = [0, 1, 2, 3, 4];
@@ -23,7 +15,7 @@ function TokenFlow({ tokensPerSec }: { tokensPerSec: number | undefined }) {
           key={i}
           className={
             "block w-[2px] rounded-sm " +
-            (active ? "bg-emerald-400" : "bg-muted-foreground/40")
+            (active ? "bg-gradient-to-t from-emerald-500 to-emerald-300" : "bg-muted-foreground/30")
           }
           animate={{ height: ["30%", "90%", "40%", "70%", "30%"] }}
           transition={{
@@ -50,7 +42,7 @@ export function StatusBar() {
   };
 
   return (
-    <footer className="h-8 border-t border-border bg-card px-3 flex items-center justify-between text-xs text-muted-foreground shrink-0">
+    <footer className="h-8 border-t border-border/50 bg-surface px-3 flex items-center justify-between text-xs text-muted-foreground shrink-0">
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-1.5">
           <span className="relative flex h-2 w-2">
@@ -75,28 +67,28 @@ export function StatusBar() {
           <span>{connected ? "WS live" : "WS offline"}</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <Cpu className="h-3 w-3" />
+          <Cpu className="h-3 w-3 text-muted-foreground/60" />
           <span>{telemetry?.model || "idle"}</span>
         </div>
         <div className="hidden sm:flex items-center gap-1.5">
           <TokenFlow tokensPerSec={telemetry?.tokens_per_sec} />
-          <Activity className="h-3 w-3" />
+          <Activity className="h-3 w-3 text-muted-foreground/60" />
           <span>{telemetry?.tokens_per_sec?.toFixed(1) || "0.0"} tok/s</span>
         </div>
       </div>
 
       <div className="flex items-center gap-4">
-        <div className="flex items-center gap-1.5">
-          {privacyMode === "local_only" ? <Lock className="h-3 w-3 text-cyan-400" /> : <Unlock className="h-3 w-3" />}
-          <span>{modeLabels[privacyMode]}</span>
+        <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-muted/30">
+          {privacyMode === "local_only" ? <Lock className="h-3 w-3 text-cyan-400" /> : <Unlock className="h-3 w-3 text-muted-foreground/60" />}
+          <span className="text-[11px]">{modeLabels[privacyMode]}</span>
         </div>
         <div className="hidden sm:flex items-center gap-1.5">
-          <DollarSign className="h-3 w-3" />
+          <DollarSign className="h-3 w-3 text-muted-foreground/60" />
           <span>${(telemetry?.cost_usd ?? 0).toFixed(4)}</span>
         </div>
         <div className="hidden md:flex items-center gap-1.5 capitalize">
-          <span className="text-accent">{agentState?.state || "idle"}</span>
-          {agentState?.zone && <span className="text-muted-foreground">in {agentState.zone}</span>}
+          <span className="text-accent font-medium">{agentState?.state || "idle"}</span>
+          {agentState?.zone && <span className="text-muted-foreground/60">in {agentState.zone}</span>}
         </div>
       </div>
     </footer>
