@@ -40,7 +40,18 @@ jobs:
           JAMBU_VAULT_KEY: "test-key-do-not-use-in-production-32bytes!"
           JAMBU_LLM_PROVIDER: mock
         run: |
-          python -m pytest tests/test_backend.py tests/test_llm_layer.py tests/test_memory_system.py tests/test_agent_loop.py -v --tb=short
+          # Core modules
+          python -m pytest tests/test_backend.py tests/test_llm_layer.py tests/test_memory_system.py tests/test_agent_loop.py -v --tb=short -x
+          # Security middleware stack (9 test files)
+          python -m pytest tests/test_security_headers.py tests/test_body_size_limit.py tests/test_trusted_host.py tests/test_request_id.py tests/test_error_sanitization.py tests/test_request_timeout.py tests/test_security_events.py tests/test_access_log.py tests/test_core_security.py -v --tb=short -x
+          # Security-focused feature modules
+          python -m pytest tests/test_calculator.py tests/test_audit_redaction.py tests/test_privacy.py tests/test_supply_chain.py -v --tb=short -x
+          # Engine runtime + deferred
+          python -m pytest tests/test_engine_runtime.py tests/test_deferred.py tests/test_health_endpoint.py tests/test_form_filler.py tests/test_exec_request.py -v --tb=short -x
+          # MCP server (stdio smoke + schema snapshot; skip live-e2e which needs running engine)
+          python -m pytest tests/test_mcp_server.py::test_mcp_stdio_smoke tests/test_mcp_server.py::test_mcp_tool_schema_snapshot -v --tb=short -x
+          # Other modules (eval, moa, knowledge graph, etc.)
+          python -m pytest tests/test_moa.py tests/test_knowledge_graph.py tests/test_response_cache.py -v --tb=short -x
 
   frontend:
     name: Frontend build + lint
