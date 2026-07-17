@@ -54,6 +54,8 @@ jobs:
           python -m pytest tests/test_moa.py tests/test_knowledge_graph.py tests/test_response_cache.py tests/test_mission_diff.py tests/test_proxy_log.py -v --tb=short -x
           # Eval + CLI (headless, no live services needed)
           python -m pytest tests/test_eval.py tests/test_eval_cli.py tests/test_cli_jambu.py tests/test_mcp_docs_generator.py -v --tb=short -x
+          # AI Employee tests (6 specialist auditors, base classes, parsing)
+          python -m pytest tests/test_employees.py -v --tb=short -x
 
   frontend:
     name: Frontend build + lint

@@ -31,7 +31,9 @@ class Severity(str, Enum):
     INFO = "info"
 
     @classmethod
-    def from_str(cls, value: str) -> "Severity":
+    def from_str(cls, value: str | None) -> "Severity":
+        if not value:
+            return cls.MEDIUM
         try:
             return cls(value.lower().strip())
         except ValueError:
@@ -79,13 +81,13 @@ class Finding:
     def from_dict(cls, d: dict[str, Any]) -> "Finding":
         return cls(
             id=d.get("id", uuid.uuid4().hex[:12]),
-            employee=str(d.get("employee", "")),
+            employee=str(d.get("employee") or ""),
             severity=Severity.from_str(d.get("severity", "medium")),
-            category=str(d.get("category", "")),
-            title=str(d.get("title", "")),
-            description=str(d.get("description", "")),
-            fix_suggestion=str(d.get("fix_suggestion", "")),
-            evidence_snippet=str(d.get("evidence_snippet", "")),
+            category=str(d.get("category") or ""),
+            title=str(d.get("title") or ""),
+            description=str(d.get("description") or ""),
+            fix_suggestion=str(d.get("fix_suggestion") or ""),
+            evidence_snippet=str(d.get("evidence_snippet") or ""),
             wcag_criterion=d.get("wcag_criterion"),
             score_impact=d.get("score_impact"),
         )
