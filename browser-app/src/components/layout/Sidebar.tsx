@@ -13,8 +13,9 @@ import {
   Wallet,
   Sparkles,
   Users,
-  FileText,
   Puzzle,
+  FileText,
+  Bot,
 } from "lucide-react";
 import { useAppStore, type CanvasTab } from "../../store/appStore";
 import { useAgentWebSocket } from "../../utils/useAgentWebSocket";
@@ -28,6 +29,7 @@ const workspaceNav: { id: CanvasTab; label: string; icon: React.ElementType }[] 
   { id: "knowledge", label: "Knowledge", icon: Brain },
   { id: "missions", label: "Missions", icon: FolderKanban },
   { id: "history", label: "History", icon: History },
+  { id: "agent", label: "Agent", icon: Bot },
 ];
 
 const systemNav: { id: CanvasTab; label: string; icon: React.ElementType }[] = [

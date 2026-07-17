@@ -1,0 +1,218 @@
+/**
+ * Agent Room — pixel-art aesthetic.
+ *
+ * Locked to a 16-color NES/Game Boy-inspired palette. All keyframes are
+ * named `px-*` to keep them easy to find and easy to override.
+ */
+
+:root {
+  --px-bg:        #1a1c2c;
+  --px-bg-2:      #29366f;
+  --px-floor:     #3b5dc9;
+  --px-floor-2:   #29366f;
+  --px-wood:      #a04a1c;
+  --px-wood-2:    #6b3010;
+  --px-paper:     #f4f4f4;
+  --px-paper-2:   #b8b8b8;
+  --px-monitor:   #41a6f6;
+  --px-robot:     #94b0c2;
+  --px-robot-2:   #566c86;
+  --px-accent:    #ffcd75;
+  --px-accent-2:  #ef7d57;
+  --px-success:   #a7f070;
+  --px-error:     #b13e53;
+  --px-white:     #ffffff;
+  --px-black:     #000000;
+}
+
+/* ──────────── Robot animation keyframes ──────────── */
+
+/* Idle: gentle bob up/down + slow blink */
+@keyframes px-idle-bob {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-1px); }
+}
+
+@keyframes px-blink {
+  0%, 92%, 100% { opacity: 1; }
+  94%, 98%      { opacity: 0; }
+}
+
+/* Walking: horizontal sway + tiny vertical bounce */
+@keyframes px-walk-side {
+  0%, 100% { transform: translateX(0); }
+  25%      { transform: translateX(-1px); }
+  75%      { transform: translateX(1px); }
+}
+
+@keyframes px-walk-bob {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-1px); }
+}
+
+/* Wheel spin (decorative overlay; rendered behind the body) */
+@keyframes px-wheel-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* Reading: subtle sway, paper drift */
+@keyframes px-read-sway {
+  0%, 100% { transform: rotate(-2deg); }
+  50%      { transform: rotate(2deg); }
+}
+
+@keyframes px-paper-float {
+  0%, 100% { transform: translateY(0) rotate(-1deg); }
+  50%      { transform: translateY(-1px) rotate(1deg); }
+}
+
+/* Writing: body sway + sparkle pulse */
+@keyframes px-write-sway {
+  0%, 100% { transform: rotate(-1deg); }
+  50%      { transform: rotate(1deg); }
+}
+
+@keyframes px-sparkle {
+  0%, 100% { opacity: 0.0; transform: scale(0.6); }
+  50%      { opacity: 1.0; transform: scale(1.0); }
+}
+
+/* Thinking: antenna pulse fast, eye flicker */
+@keyframes px-antenna-pulse {
+  0%, 100% { transform: scale(1);    filter: brightness(1); }
+  50%      { transform: scale(1.4);  filter: brightness(1.5); }
+}
+
+@keyframes px-eye-flicker {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.4; }
+}
+
+/* Searching: head sweep left-right */
+@keyframes px-search-sweep {
+  0%, 100% { transform: translateX(0) rotate(0deg); }
+  25%      { transform: translateX(-1px) rotate(-3deg); }
+  75%      { transform: translateX(1px) rotate(3deg); }
+}
+
+/* Error: shake + red flash */
+@keyframes px-shake {
+  0%, 100% { transform: translateX(0); }
+  20%      { transform: translateX(-1px); }
+  40%      { transform: translateX(1px); }
+  60%      { transform: translateX(-1px); }
+  80%      { transform: translateX(1px); }
+}
+
+@keyframes px-red-flash {
+  0%, 100% { filter: none; }
+  50%      { filter: brightness(1.5) hue-rotate(-30deg); }
+}
+
+/* Screen noise on the monitor — subtle pixel flicker */
+@keyframes px-screen-noise {
+  0%, 100% { opacity: 0.85; }
+  50%      { opacity: 1; }
+}
+
+/* Coffee mug steam */
+@keyframes px-steam {
+  0%   { opacity: 0;   transform: translate(0, 0); }
+  50%  { opacity: 0.6; transform: translate(1px, -2px); }
+  100% { opacity: 0;   transform: translate(2px, -4px); }
+}
+
+/* ──────────── Layout helpers ──────────── */
+
+.px-stage {
+  position: relative;
+  background: var(--px-bg);
+  image-rendering: pixelated;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.px-stage svg {
+  shape-rendering: crispEdges;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Robot container — applies the state class to choose animation. */
+.px-robot {
+  position: absolute;
+  width: 64px;       /* 16 grid cells × 4 scale */
+  height: 72px;
+  transition: transform 600ms cubic-bezier(0.45, 0, 0.55, 1);
+}
+
+.px-robot--idle     { animation: px-idle-bob 2s ease-in-out infinite; }
+.px-robot--walking  .px-robot-body { animation: px-walk-bob 0.4s ease-in-out infinite; }
+.px-robot--walking  .px-robot-shadow { animation: px-walk-side 0.8s ease-in-out infinite; }
+.px-robot--reading  .px-robot-body { animation: px-read-sway 1.5s ease-in-out infinite; }
+.px-robot--writing  .px-robot-body { animation: px-write-sway 0.6s ease-in-out infinite; }
+.px-robot--thinking .px-robot-antenna { transform-origin: 50% 100%; animation: px-antenna-pulse 0.5s ease-in-out infinite; }
+.px-robot--thinking .px-robot-eyes { animation: px-eye-flicker 0.4s ease-in-out infinite; }
+.px-robot--searching .px-robot-body { animation: px-search-sweep 0.8s ease-in-out infinite; transform-origin: 50% 80%; }
+.px-robot--error    .px-robot-body { animation: px-shake 0.3s linear infinite; }
+.px-robot--error    .px-robot-svg  { animation: px-red-flash 0.6s ease-in-out infinite; }
+
+.px-blink {
+  animation: px-blink 4s ease-in-out infinite;
+}
+
+/* Sparkles around the robot when writing */
+.px-sparkle {
+  position: absolute;
+  width: 2px;
+  height: 2px;
+  background: var(--px-accent);
+  animation: px-sparkle 0.8s ease-in-out infinite;
+}
+
+/* Zone labels */
+.px-zone-label {
+  position: absolute;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 8px;
+  color: var(--px-paper-2);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Monitor screen noise overlay */
+.px-monitor-screen {
+  animation: px-screen-noise 0.25s steps(2) infinite;
+}
+
+/* Coffee steam puffs */
+.px-steam-puff {
+  position: absolute;
+  width: 2px;
+  height: 2px;
+  background: var(--px-paper-2);
+  opacity: 0;
+  animation: px-steam 2.4s ease-out infinite;
+}
+
+/* Status pill */
+.px-status {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--px-paper);
+  background: rgba(0, 0, 0, 0.4);
+  padding: 4px 8px;
+  border: 1px solid var(--px-bg-2);
+  border-radius: 2px;
+}
+
+/* Zone highlight when robot is present */
+.px-zone-active {
+  filter: brightness(1.1);
+}
