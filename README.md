@@ -344,47 +344,20 @@ All components live in `browser-app/src/` and are shared between the desktop (Ta
 ## Testing
 
 ```bash
-# Run all tests (575 pass, 33 known failures in legacy phase2-5 tests)
-python3 -m pytest tests/test_backend.py tests/test_engine.py tests/test_e2e.py \
-                   tests/test_llm_layer.py tests/test_memory_system.py tests/test_agent_loop.py \
-                   tests/test_core_security.py tests/test_engine_runtime.py \
-                   tests/test_security_headers.py tests/test_body_size_limit.py \
-                   tests/test_trusted_host.py tests/test_request_id.py \
-                   tests/test_error_sanitization.py tests/test_request_timeout.py \
-                   tests/test_security_events.py tests/test_access_log.py \
-                   tests/test_calculator.py tests/test_audit_redaction.py \
-                   tests/test_health_endpoint.py tests/test_privacy.py \
-                   tests/test_supply_chain.py tests/test_exec_request.py -v
+# Run the full suite (673+ pass, 11 skipped, 1 env-dependent — see CI workflow)
+python3 -m pytest tests/ --ignore=tests/test_e2e.py --ignore=tests/test_real_llm_integration.py \
+                   --ignore=tests/test_search_integration.py --ignore=tests/test_socks.py \
+                   -v --tb=short
 
-# Unit tests (~22)
-python3 -m pytest tests/test_backend.py -v
-
-# LLM layer (28)
-python3 -m pytest tests/test_llm_layer.py -v
-
-# Memory system (25)
-python3 -m pytest tests/test_memory_system.py -v
-
-# Agent loop (25)
-python3 -m pytest tests/test_agent_loop.py -v
-
-# Security middleware (9 test files, ~120 tests)
-python3 -m pytest tests/test_security_headers.py tests/test_body_size_limit.py \
-                   tests/test_trusted_host.py tests/test_request_id.py \
-                   tests/test_error_sanitization.py tests/test_request_timeout.py \
-                   tests/test_security_events.py tests/test_access_log.py \
-                   tests/test_core_security.py -v
-
-# Security-focused modules (calculator, audit, privacy, supply chain)
-python3 -m pytest tests/test_calculator.py tests/test_audit_redaction.py \
-                   tests/test_privacy.py tests/test_supply_chain.py -v
-
-# E2E tests (30, requires running backend)
-python3 -m pytest tests/test_e2e.py -v
-
-# Frontend build + typecheck + lint + test
+# Frontend build + typecheck + lint + test (104 Vitest tests)
 cd browser-app && npm run build && npm run typecheck && npm run lint && npm test
 ```
+
+The CI workflow (`.github/workflows/test.yml`) runs all passing test categories on every push:
+core backend, LLM layer, memory, agent loop, security middleware stack (9 files),
+engine runtime, MCP server (stdio), eval, CLI, AI employees (6 specialist auditors),
+and more. Tests requiring live services (E2E, real LLM, SearXNG, SOCKS proxy)
+are excluded from CI — run those manually when the corresponding service is up.
 
 ---
 
