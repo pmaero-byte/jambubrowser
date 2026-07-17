@@ -50,8 +50,10 @@ jobs:
           python -m pytest tests/test_engine_runtime.py tests/test_deferred.py tests/test_health_endpoint.py tests/test_form_filler.py tests/test_exec_request.py -v --tb=short -x
           # MCP server (stdio smoke + schema snapshot; skip live-e2e which needs running engine)
           python -m pytest tests/test_mcp_server.py::test_mcp_stdio_smoke tests/test_mcp_server.py::test_mcp_tool_schema_snapshot -v --tb=short -x
-          # Other modules (eval, moa, knowledge graph, etc.)
-          python -m pytest tests/test_moa.py tests/test_knowledge_graph.py tests/test_response_cache.py -v --tb=short -x
+          # Other modules (eval, moa, knowledge graph, CLI, etc.)
+          python -m pytest tests/test_moa.py tests/test_knowledge_graph.py tests/test_response_cache.py tests/test_mission_diff.py tests/test_proxy_log.py -v --tb=short -x
+          # Eval + CLI (headless, no live services needed)
+          python -m pytest tests/test_eval.py tests/test_eval_cli.py tests/test_cli_jambu.py tests/test_mcp_docs_generator.py -v --tb=short -x
 
   frontend:
     name: Frontend build + lint
