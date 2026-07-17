@@ -11,6 +11,7 @@ export interface AgentTelemetry {
   model: string;
   action: string;
   file_path?: string;
+  task_id?: string;
   tokens_generated?: number;
   tokens_per_sec?: number;
   context_size?: number;
@@ -40,6 +41,16 @@ export interface TaskEnd {
   timestamp: number;
 }
 
+/**
+ * Live task — combines start metadata with the most-recent end event (if any).
+ * Multiple live tasks can exist simultaneously when the swarm dispatches
+ * parallel agents.
+ */
+export interface LiveTask {
+  start: TaskStart;
+  end?: TaskEnd;
+}
+
 function wsUrl(): string {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   return `${proto}//${location.hostname}:8001/ws/default`;
@@ -51,7 +62,7 @@ export function useAgentWebSocket() {
   const [agentState, setAgentState] = useState<AgentState | null>(null);
   const [telemetry, setTelemetry] = useState<AgentTelemetry | null>(null);
   const [reasoning, setReasoning] = useState<string>("");
-  const [currentTask, setCurrentTask] = useState<TaskStart | null>(null);
+  const [liveTasks, setLiveTasks] = useState<Record<string, LiveTask>>({});
   const [lastTaskEnd, setLastTaskEnd] = useState<TaskEnd | null>(null);
 
   useEffect(() => {
@@ -84,12 +95,19 @@ export function useAgentWebSocket() {
               setReasoning((prev) => prev + data.delta);
               break;
             case "agent.task_start":
-              setCurrentTask(data);
+              setLiveTasks((prev) => ({
+                ...prev,
+                [data.task_id]: { start: data },
+              }));
               setReasoning("");
               break;
             case "agent.task_end":
               setLastTaskEnd(data);
-              setCurrentTask(null);
+              setLiveTasks((prev) => {
+                const existing = prev[data.task_id];
+                if (!existing) return prev;
+                return { ...prev, [data.task_id]: { ...existing, end: data } };
+              });
               break;
           }
         } catch {
@@ -118,12 +136,21 @@ export function useAgentWebSocket() {
 
   const clearReasoning = useCallback(() => setReasoning(""), []);
 
+  // Derived: the "primary" task is the most recent still-running one.
+  const activeTasks = Object.values(liveTasks)
+    .filter((t) => !t.end)
+    .sort((a, b) => b.start.timestamp - a.start.timestamp);
+
+  const currentTask = activeTasks[0]?.start ?? null;
+
   return {
     connected,
     agentState,
     telemetry,
     reasoning,
     currentTask,
+    activeTasks,
+    liveTasks,
     lastTaskEnd,
     clearReasoning,
   };
