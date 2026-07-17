@@ -10,6 +10,10 @@ fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 pydantic>=2.0.0
 starlette>=0.27.0
+# Required by FastAPI for any endpoint that accepts application/x-www-form-urlencoded
+# or multipart/form-data (login, vault unlock, file uploads). Without this,
+# import-time fixture setup raises and 20+ tests fail with RuntimeError.
+python-multipart>=0.0.6
 
 # HTTP client
 httpx>=0.25.0

@@ -164,6 +164,17 @@ class TestRateLimiterEndpoints:
         """Verify middleware returns 429 when rate limit exceeded."""
         from backend.core.rate_limiter import get_limiter
         limiter = get_limiter()
-        limiter.set_endpoint_limit("/stats", 0.001, 0)  # Tiny limit, no burst
-        response = client.get("/stats")
-        assert response.status_code in (200, 429)
+        # Snapshot the previous /stats limit so we can restore it after this
+        # test — the limiter is a module-level singleton and the aggressive
+        # setting would otherwise leak into test_engine.py::TestStatsEndpoint
+        # and cause a 429 there.
+        prev_stats_limit = limiter._endpoint_limits.get("/stats")
+        try:
+            limiter.set_endpoint_limit("/stats", 0.001, 0)  # Tiny limit, no burst
+            response = client.get("/stats")
+            assert response.status_code in (200, 429)
+        finally:
+            if prev_stats_limit is None:
+                limiter._endpoint_limits.pop("/stats", None)
+            else:
+                limiter._endpoint_limits["/stats"] = prev_stats_limit

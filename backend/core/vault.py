@@ -532,12 +532,20 @@ class CredentialVault:
     def secure_delete_all(self) -> bool:
         """
         Securely delete all credentials and clear memory.
+
+        VACUUM is intentionally run outside the DELETE transaction — SQLite
+        refuses VACUUM from within an open transaction ("cannot VACUUM from
+        within a transaction"). get_db_cursor() commits on context exit, so
+        the DELETE is durable before we issue VACUUM.
         """
         self._check_lock()
 
         try:
             with get_db_cursor() as cursor:
                 cursor.execute("DELETE FROM credential_vault")
+            # VACUUM must run in its own connection because it cannot
+            # execute inside a transaction.
+            with get_db_cursor() as cursor:
                 cursor.execute("VACUUM")
 
             # Clear access log

@@ -143,6 +143,13 @@ class RateLimiter:
             'endpoint_limits': len(self._endpoint_limits),
         }
 
+    def reset(self) -> None:
+        """Clear all per-client buckets. Used by tests to start each test
+        with a fresh token budget — otherwise the module-level singleton
+        leaks tokens consumed by earlier tests, and later tests get 429s.
+        """
+        self._buckets.clear()
+
 
 class RateLimitMiddleware:
     """

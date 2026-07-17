@@ -96,9 +96,13 @@ class TestBaseTypes:
 
 class TestConfig:
     def test_default_config(self, monkeypatch):
-        # Neutralize JAMBU_LLM_PROVIDER so we assert the true code default,
-        # not whatever the calling environment (CI sets "mock") overrides it to.
+        # Neutralize JAMBU_LLM_PROVIDER and JAMBU_LLM_FALLBACK_CHAIN so we
+        # assert the true code defaults, not whatever the calling environment
+        # (.env, CI) overrides them to. Without the fallback-chain delenv,
+        # a harness run that exports JAMBU_LLM_FALLBACK_CHAIN=minimax in
+        # .env leaks into this test when it runs after a mutating test.
         monkeypatch.delenv("JAMBU_LLM_PROVIDER", raising=False)
+        monkeypatch.delenv("JAMBU_LLM_FALLBACK_CHAIN", raising=False)
         from backend.llm import reload_config
         c = reload_config()
         assert c.default_provider == "auto"

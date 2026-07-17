@@ -14,6 +14,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["JAMBU_DB_PATH"] = ":memory:"  # Use in-memory DB for tests
 os.environ["JAMBU_VAULT_KEY"] = "test-key-do-not-use-in-production-32bytes!"  # 32-byte test key
 
+# Default-skip network-dependent tests. test_search_integration.py boots a
+# subprocess and hits a live SearXNG — if SearXNG isn't running locally the
+# engine's /search endpoint 404s and the tests fail for the wrong reason.
+# Run with `JAMBU_SKIP_NETWORK_TESTS=0 pytest` to opt in.
+os.environ.setdefault("JAMBU_SKIP_NETWORK_TESTS", "1")
+
 
 # ---------------------------------------------------------------------------
 # Real-LLM integration test gate
@@ -78,6 +84,21 @@ def test_client():
     from backend.engine import app
     with TestClient(app) as client:
         yield client
+
+
+@pytest.fixture(autouse=True)
+def _isolate_module_singletons():
+    """Reset cross-test module singletons that would otherwise leak state.
+
+    - Rate limiter buckets (otherwise tests 100+ get 429)
+    - LLM config singleton (otherwise .env overrides leak between tests)
+    """
+    from backend.core.rate_limiter import get_limiter
+    from backend.llm import reload_config
+    get_limiter().reset()
+    reload_config()
+    yield
+    get_limiter().reset()
 
 
 @pytest.fixture

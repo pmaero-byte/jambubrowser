@@ -30,6 +30,24 @@ def _unlock_vault():
     vault.lock()
 
 
+@pytest.fixture(autouse=True)
+def _clear_vault_credentials():
+    """Wipe the vault before every test in this module.
+
+    Other test files (test_engine.py::TestCredentialVault) POST to /login
+    which stores credentials in the same module-level vault singleton.
+    Without this fixture, the form-fill tests run against a vault that's
+    already populated with `example.com/login` and assertFalse fails.
+    """
+    vault = get_vault()
+    try:
+        vault.secure_delete_all()
+    except Exception:
+        # Vault may be locked if running in isolation; ignore.
+        pass
+    yield
+
+
 # ── Sample HTML fixtures ─────────────────────────────────────────────────────
 
 LOGIN_HTML = """

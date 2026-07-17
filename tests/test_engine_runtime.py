@@ -80,8 +80,17 @@ class TestResolveLLMConfig:
         result = _resolve_llm_config({"provider": "anthropic", "modelId": "claude-3"})
         assert result.get("modelId") == "claude-3"
 
-    def test_cloud_provider_preset_applied(self):
-        # Reset config singleton to avoid ordering issues
+    def test_cloud_provider_preset_applied(self, monkeypatch):
+        # Neutralize env so .env's JAMBU_LLM_PROVIDER=minimax + matching
+        # provider-specific model doesn't leak in and make mlx lookups
+        # return "MiniMax-M3" instead of "gemma4:12b".
+        for key in (
+            "JAMBU_LLM_PROVIDER",
+            "JAMBU_LLM_MINIMAX_MODEL",
+            "JAMBU_LLM_MINIMAX_BASE_URL",
+            "JAMBU_LLM_FALLBACK_CHAIN",
+        ):
+            monkeypatch.delenv(key, raising=False)
         from backend.llm import reload_config
         reload_config()
         from backend.engine_runtime import _resolve_llm_config
