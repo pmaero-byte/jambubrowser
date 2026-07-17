@@ -20,6 +20,7 @@ Capabilities exposed:
 
 import asyncio
 import json
+import logging
 import time
 import os
 from typing import Optional, List, Dict
@@ -33,6 +34,12 @@ except ImportError:
     make_async_client = httpx.AsyncClient
 
 from backend.core.database import get_db_cursor
+from backend.engine_runtime import (
+    broadcast_agent_state,
+    broadcast_agent_telemetry,
+)
+
+log = logging.getLogger("jambu.harness_bridge")
 
 
 # ---- Configuration ----
@@ -117,7 +124,8 @@ class HarnessBridge:
 
     async def research_swarm(self, query: str,
                               connectors: List[str] = None,
-                              judge: bool = True) -> Dict:
+                              judge: bool = True,
+                              client_id: str = "default") -> Dict:
         """
         Delegate research to Harness's multi-agent swarm.
         Sends the query to all specified AI agents in parallel,
@@ -127,6 +135,7 @@ class HarnessBridge:
             query: Research question or task
             connectors: List of Harness connectors (hermes, claude, codex, opencode)
             judge: Whether to have Harness judge and pick the best result
+            client_id: WebSocket client_id for state/telemetry broadcasts
 
         Returns:
             Dict with results from each agent + judge verdict
@@ -135,6 +144,11 @@ class HarnessBridge:
             return {"status": "unavailable", "message": "Harness gateway not reachable"}
 
         connectors = connectors or DEFAULT_CONNECTORS
+        await broadcast_agent_state(client_id, "searching", zone="pile")
+        await broadcast_agent_telemetry(
+            client_id,
+            action=f"Dispatching swarm to {len(connectors)} connectors",
+        )
 
         client = await self._get_client()
         try:
@@ -150,6 +164,10 @@ class HarnessBridge:
 
             if resp.status_code == 200:
                 data = resp.json()
+                await broadcast_agent_state(client_id, "reading", zone="cabinet")
+                await broadcast_agent_telemetry(
+                    client_id, action="Swarm synthesis received"
+                )
                 return {
                     "status": "success",
                     "query": query,
@@ -158,6 +176,10 @@ class HarnessBridge:
                     "results": data,
                 }
 
+            await broadcast_agent_state(client_id, "error")
+            await broadcast_agent_telemetry(
+                client_id, action=f"Swarm error: HTTP {resp.status_code}"
+            )
             return {
                 "status": "error",
                 "message": f"Harness returned status {resp.status_code}",
@@ -165,11 +187,18 @@ class HarnessBridge:
             }
 
         except httpx.TimeoutException:
+            await broadcast_agent_state(client_id, "error")
+            await broadcast_agent_telemetry(client_id, action="Swarm timeout")
             return {"status": "timeout", "message": "Research swarm timed out"}
         except Exception as e:
+            await broadcast_agent_state(client_id, "error")
+            await broadcast_agent_telemetry(
+                client_id, action=f"Swarm exception: {str(e)[:80]}"
+            )
             return {"status": "error", "message": str(e)[:200]}
 
-    async def research_single(self, query: str, connector: str = "hermes") -> Dict:
+    async def research_single(self, query: str, connector: str = "hermes",
+                              client_id: str = "default") -> Dict:
         """
         Delegate research to a single Harness connector.
 
@@ -234,7 +263,8 @@ class HarnessBridge:
     # ---- Playwright MCP Browser Automation ----
 
     async def browse(self, url: str, action: str = "scrape",
-                      selector: str = None, value: str = None) -> Dict:
+                      selector: str = None, value: str = None,
+                      client_id: str = "default") -> Dict:
         """
         Use Harness's Playwright MCP for browser automation.
         Replaces Crawl4AI for production-grade browsing.
@@ -261,6 +291,11 @@ class HarnessBridge:
 
         prompt = prompts.get(action, prompts["scrape"])
 
+        await broadcast_agent_state(client_id, "searching", zone="pile")
+        await broadcast_agent_telemetry(
+            client_id, action=f"Browser action: {action}", file_path=url
+        )
+
         client = await self._get_client()
         try:
             resp = await client.post(
@@ -271,6 +306,8 @@ class HarnessBridge:
             )
 
             if resp.status_code == 200:
+                await broadcast_agent_state(client_id, "reading", zone="cabinet")
+                await broadcast_agent_telemetry(client_id, action=f"Browser {action} complete")
                 return {
                     "status": "success",
                     "url": url,
@@ -278,9 +315,20 @@ class HarnessBridge:
                     "content": resp.json(),
                 }
 
-            return {"status": "error", "message": f"Status {resp.status_code}"}
+            await broadcast_agent_state(client_id, "error")
+            await broadcast_agent_telemetry(
+                client_id, action=f"Browser {action} error: HTTP {resp.status_code}"
+            )
+            return {
+                "status": "error",
+                "message": f"Status {resp.status_code}",
+            }
 
         except Exception as e:
+            await broadcast_agent_state(client_id, "error")
+            await broadcast_agent_telemetry(
+                client_id, action=f"Browser {action} exception: {str(e)[:80]}"
+            )
             return {"status": "error", "message": str(e)[:200]}
 
     # ---- LLM Access via harnessGPT Bridge ----
@@ -405,7 +453,8 @@ class HarnessBridge:
 
     async def jambu_research(self, query: str,
                               use_swarm: bool = True,
-                              domain: str = "general") -> Dict:
+                              domain: str = "general",
+                              client_id: str = "default") -> Dict:
         """
         Jambubrowser's primary research entry point via Harness.
         Combines multi-agent swarm with domain-specific routing.
@@ -414,11 +463,16 @@ class HarnessBridge:
             query: Research question
             use_swarm: Use parallel agents (True) or single agent (False)
             domain: Research domain for routing (general, academic, coding, security)
+            client_id: WebSocket client_id for state/telemetry broadcasts
 
         Returns:
             Synthesized research results
         """
         if not await self.is_available():
+            await broadcast_agent_state(client_id, "error")
+            await broadcast_agent_telemetry(
+                client_id, action="Harness unavailable, fallback to built-in"
+            )
             return {
                 "status": "unavailable",
                 "message": "Harness not available. Using built-in research engine.",
@@ -433,11 +487,15 @@ class HarnessBridge:
         }
 
         connectors = domain_connectors.get(domain, DEFAULT_CONNECTORS)
+        await broadcast_agent_telemetry(
+            client_id,
+            action=f"Routing to {domain} swarm ({len(connectors)} connectors)",
+        )
 
         if use_swarm:
-            result = await self.research_swarm(query, connectors, judge=True)
+            result = await self.research_swarm(query, connectors, judge=True, client_id=client_id)
         else:
-            result = await self.research_single(query, connectors[0])
+            result = await self.research_single(query, connectors[0], client_id=client_id)
 
         # Store the research context in shared memory
         if result.get("status") == "success":

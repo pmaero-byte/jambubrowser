@@ -1,10 +1,20 @@
 """V2 LLM chat and Agent endpoints."""
+import logging
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from backend.engine_runtime import (
+    _new_task_id,
+    broadcast_agent_state,
+    broadcast_agent_telemetry,
+    broadcast_task_start,
+    broadcast_task_end,
+)
+
 router = APIRouter(tags=["v2"])
+log = logging.getLogger("jambu.routes.v2")
 
 
 class LLMChatRequest(BaseModel):
@@ -139,6 +149,11 @@ async def agent_run(req: AgentRunRequest):
     from backend.agent import get_agent
     from backend.memory import get_memory, retrieve_relevant, format_context
 
+    task_id = _new_task_id()
+    await broadcast_task_start(req.user_id, req.query, task_id)
+    await broadcast_agent_state(req.user_id, "thinking")
+    await broadcast_agent_telemetry(req.user_id, action="Running ReAct agent loop")
+
     try:
         hits = retrieve_relevant(req.query, user_id=req.user_id, k=5)
         context_str = format_context(hits) if hits else ""
@@ -162,12 +177,29 @@ async def agent_run(req: AgentRunRequest):
             try:
                 async for event in agent.run(req.query, user_id=req.user_id, context=context_str):
                     yield event.to_sse()
+                await broadcast_agent_state(req.user_id, "reading", zone="cabinet")
+                await broadcast_task_end(req.user_id, task_id, status="completed")
             except Exception as e:
-                yield f"event: error\ndata: {{\"error\": \"{e}\"}}\n\n"
+                log.warning("[v2/agent/run] stream failed: %r", e)
+                await broadcast_task_end(req.user_id, task_id, status="failed", result_preview=str(e))
+                raise
+            finally:
+                await broadcast_agent_state(req.user_id, "idle")
         return StreamingResponse(gen(), media_type="text/event-stream")
     else:
-        result = await agent.run_to_completion(req.query, user_id=req.user_id, context=context_str)
-        return result.to_dict()
+        try:
+            result = await agent.run_to_completion(req.query, user_id=req.user_id, context=context_str)
+            await broadcast_agent_state(req.user_id, "reading", zone="cabinet")
+            await broadcast_task_end(
+                req.user_id, task_id, status="completed", result_preview=result.answer[:200]
+            )
+            return result.to_dict()
+        except Exception as e:
+            log.warning("[v2/agent/run] run_to_completion failed: %r", e)
+            await broadcast_task_end(req.user_id, task_id, status="failed", result_preview=str(e))
+            raise HTTPException(status_code=500, detail=str(e))
+        finally:
+            await broadcast_agent_state(req.user_id, "idle")
 
 
 @router.get("/v2/agent/tools")
