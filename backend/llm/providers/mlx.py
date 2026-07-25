@@ -25,9 +25,9 @@ from ..config import LLMConfig
 
 NAME = "mlx"
 MODELS = [
-    "gemma-4-12b-it-4bit",
-    "gemma-4-12b-it-8bit",
-    "gemma-4-9b-it-4bit",
+    "gemma-3-12b-it-4bit",
+    "gemma-3-12b-it-8bit",
+    "gemma-3-4b-it-4bit",
     "llama-3.2-11b-vision-instruct-4bit",
 ]
 supports_tools = False

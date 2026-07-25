@@ -11,7 +11,18 @@ Refactored with connection pooling and context manager support.
 """
 
 import sqlite3
-import sqlite_vec
+
+try:
+    import sqlite_vec
+except ImportError as e:
+    raise ImportError(
+        "The 'sqlite-vec' package is required for Jambubrowser's vector memory "
+        "store but is not installed. Install it with:\n"
+        "    pip install sqlite-vec\n"
+        "or reinstall the project dependencies:\n"
+        "    pip install -r requirements.txt"
+    ) from e
+
 import os
 import threading
 from contextlib import contextmanager

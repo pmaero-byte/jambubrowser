@@ -1,5 +1,14 @@
 # Evaluation Harness
 
+> **⚠️ Disclaimer — read before quoting any numbers from this harness.**
+> The 9 suites shipped here (`smoke`, `gaia`, `gaia-mini`, `webarena-mini`,
+> `webshop`, `swebench`, `memory`, `privacy`, `alfworld` — 77 tasks total)
+> are **inspired-by, self-contained QA pairs graded with fuzzy/substring
+> matching**. They are **NOT** the official GAIA, WebArena, SWE-bench,
+> WebShop, or ALFWorld benchmarks, and results from this harness are **not
+> comparable** to published leaderboard numbers for those benchmarks. Never
+> present a score from this harness as a GAIA/WebArena/SWE-bench result.
+
 A lightweight benchmark framework for measuring Jambubrowser's research-agent
 quality across LLM providers. Inspired by GAIA (multi-step reasoning) and
 WebArena (browser-based task completion) but built as small, self-contained
@@ -34,7 +43,11 @@ python -m backend.eval report --run-id <id> --format json
 |-------|-------|-------------|
 | `smoke` | 5 | Fast sanity check (~30s). Use as a CI gate. |
 | `gaia-mini` | 10 | Multi-step reasoning, arithmetic, common sense. |
+| `gaia` | 12 | GAIA-style factual lookup / reasoning (inspired-by, not official). |
 | `webarena-mini` | 8 | Browser-based task completion via the agent loop. |
+| `webshop` | 11 | Shopping-task-inspired tool-use QA pairs. |
+| `swebench` | 10 | Software-engineering-inspired QA pairs (not the real SWE-bench). |
+| `alfworld` | 9 | Household-task-inspired instruction QA pairs. |
 | `privacy` | 7 | PII redaction + prompt injection resistance. |
 | `memory` | 5 | v3 memory system: recall, procedural, store+recall round-trip. |
 
@@ -87,7 +100,11 @@ backend/eval/
 └── tasks/
     ├── smoke.py           # 5 fast sanity tasks
     ├── gaia_mini.py       # 10 reasoning tasks
+    ├── gaia.py            # 12 GAIA-inspired tasks
     ├── webarena_mini.py   # 8 browser tasks
+    ├── webshop.py         # 11 shopping-inspired tasks
+    ├── swebench.py        # 10 SWE-inspired tasks
+    ├── alfworld.py        # 9 household-inspired tasks
     ├── privacy.py         # 7 PII/injection tasks
     └── memory.py          # 5 memory layer tasks
 ```

@@ -54,7 +54,7 @@ class VisionModel:
     """
 
     def __init__(self, base_url: str = "http://localhost:8080/v1", 
-                 model_id: str = "gemma-4-12b", api_key: str = ""):
+                 model_id: str = "gemma-3-12b", api_key: str = ""):
         self.base_url = base_url.rstrip('/')
         self.model_id = model_id
         self.api_key = api_key
@@ -276,7 +276,7 @@ def get_vision_model(base_url: str = None, model_id: str = None,
     if _vision_model is None:
         _vision_model = VisionModel(
             base_url=base_url or "http://localhost:8080/v1",
-            model_id=model_id or "gemma-4-12b",
+            model_id=model_id or "gemma-3-12b",
             api_key=api_key or "",
         )
     return _vision_model

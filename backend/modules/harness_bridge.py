@@ -1,6 +1,13 @@
 """
 Harness Bridge — Jambubrowser ↔ Harness Integration
 =====================================================
+EXPERIMENTAL — delegates to an external "Harness Gateway" at
+http://localhost:9090 that is NOT part of this repo (not in docker-compose
+either); with no gateway running, every call fails. The `/harness/*` routes
+(and the MCP tools that call them) are gated behind
+JAMBU_ENABLE_EXPERIMENTAL=1 and return 501 by default.
+See docs/FEATURE_MAP.md.
+
 Connects Jambubrowser to the Harness meta-agent gateway,
 enabling multi-AI-agent research, Playwright-grade browser
 automation, multi-model LLM access, shared context, and
@@ -12,7 +19,7 @@ HarnessGPT Bridge: http://localhost:9090/v1 (LLM proxy)
 Capabilities exposed:
 - Multi-agent research swarm (Hermes + Claude + OpenCode in parallel)
 - Playwright MCP browser automation (replace Crawl4AI)
-- Multi-provider LLM (local Gemma 4 + cloud models)
+- Multi-provider LLM (local Gemma 3 + cloud models)
 - Shared persistent context across agents
 - YAML workflow automation for research pipelines
 - Telemetry and observability spans
@@ -333,7 +340,7 @@ class HarnessBridge:
 
     # ---- LLM Access via harnessGPT Bridge ----
 
-    async def llm_chat(self, prompt: str, model: str = "gemma4:12b",
+    async def llm_chat(self, prompt: str, model: str = "gemma3:12b",
                         system_msg: str = "You are a helpful research assistant.",
                         temperature: float = 0.7) -> Dict:
         """
@@ -342,7 +349,7 @@ class HarnessBridge:
 
         Args:
             prompt: User message
-            model: Model ID (gemma4:12b, gpt-4o, claude-3.5-sonnet, etc.)
+            model: Model ID (gemma3:12b, gpt-4o, claude-3.5-sonnet, etc.)
             system_msg: System instructions
             temperature: Creativity (0.0-1.0)
 

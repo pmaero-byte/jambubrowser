@@ -2,6 +2,12 @@
 Co-Evolution Subsystem — Phase 4 of HarnessX Integration
 ==========================================================
 
+EXPERIMENTAL — not wired into the shipped product: no route, CLI command,
+MCP tool, or engine startup path invokes this module. It is importable as a
+library (used by tests/benchmarks and re-exported from `backend.agent`),
+but nothing in the running product executes a co-evolution run.
+See docs/FEATURE_MAP.md.
+
 Implements the harness-model co-evolution loop from HarnessX paper §5:
 harness adaptation (non-parametric) and model training (parametric / GRPO)
 as complementary optimization levers, operating simultaneously.
@@ -268,7 +274,7 @@ class GRPOTrainer:
     The model is trained on the task level (query → success), not action level.
     This is task-level alignment via harness preference.
 
-    When MLX is available on Apple Silicon, uses LoRA fine-tuning on Gemma 4.
+    When MLX is available on Apple Silicon, uses LoRA fine-tuning on Gemma 3.
     Falls back to a training-signal log when no local training backend is available
     (useful for cloud-provider setups where training happens externally).
     """
@@ -281,7 +287,7 @@ class GRPOTrainer:
         min_advantage: float = 0.1,
         learning_rate: float = 1e-5,
         lora_rank: int = 8,
-        model_name: str = "mlx-community/gemma-4-12B-it-4bit",
+        model_name: str = "mlx-community/gemma-3-12b-it-4bit",
     ):
         self.buffer = buffer
         self.min_pairs_per_query = min_pairs_per_query
@@ -407,7 +413,7 @@ class GRPOTrainer:
         return result
 
     async def _train_mlx_lora(self, examples: list[TrainingExample]) -> dict:
-        """Fine-tune Gemma 4 with LoRA on the preference pairs.
+        """Fine-tune Gemma 3 with LoRA on the preference pairs.
 
         This uses the MLX LM library for efficient Apple Silicon training.
         Implements a preference-based loss: -log(sigmoid(logit_chosen - logit_rejected))

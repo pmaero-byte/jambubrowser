@@ -97,8 +97,8 @@ The core engine. FastAPI app serving 76+ endpoints across ~20 route modules.
 | `providers/anthropic.py` | Anthropic Claude provider (Claude Sonnet 4). |
 | `providers/openai.py` | OpenAI provider (GPT-4o). Supports custom base URLs (vLLM, Together, etc.). |
 | `providers/ollama.py` | Ollama local LLM provider. |
-| `providers/mlx.py` | Apple Silicon MLX provider (Gemma 4 12B via mlx-vlm). |
-| `providers/minimax.py` | **MiniMax cloud provider** (203 lines). OpenAI-compatible `/v1/chat/completions`. Models: MiniMax-M2.7, M3, Text-01. Supports tools/function-calling. Streaming via SSE. Auth via `MINIMAX_API_KEY`. SOCKS-aware HTTP client. Error types: timeout → `ProviderTimeout`, connection refused → `ProviderUnavailable`, 401/403 → `ProviderAuthError`, 429 → `ProviderRateLimit`. |
+| `providers/mlx.py` | Apple Silicon MLX provider (Gemma 3 12B via mlx-vlm). |
+| `providers/minimax.py` | **MiniMax cloud provider** (203 lines). OpenAI-compatible `/v1/chat/completions`. Models: MiniMax-M2, M1, Text-01. Supports tools/function-calling. Streaming via SSE. Auth via `MINIMAX_API_KEY`. SOCKS-aware HTTP client. Error types: timeout → `ProviderTimeout`, connection refused → `ProviderUnavailable`, 401/403 → `ProviderAuthError`, 429 → `ProviderRateLimit`. |
 | `providers/mock.py` | Mock provider for testing — returns canned responses. |
 
 ### `backend/agent/` — ReAct/Plan-Execute Agent Loop (v3 pillar)
@@ -163,7 +163,7 @@ The core engine. FastAPI app serving 76+ endpoints across ~20 route modules.
 | `knowledge_graph.py` | Entity extraction, relationship inference, topic clustering, graph storage/retrieval. |
 | `missions.py` | Cron-based background research mission scheduler. |
 | `consensus_engine.py` | Multi-node voting protocol: propose, vote, tally, resolve. |
-| `mlx_provider.py` | **Apple Silicon MLX integration** (528 lines). Model registry for Gemma 4 variants (4-bit, MXFP4, 6-bit, 8-bit) with RAM/disk requirements. Server lifecycle: start/stop OpenAI-compatible VLM server on port 8080. Direct inference via `mlx_lm.generate()`. Model download from HuggingFace. Cache management. `is_mlx_available()` checks for MLX Python package. SOCKS-aware HTTP. |
+| `mlx_provider.py` | **Apple Silicon MLX integration** (528 lines). Model registry for Gemma 3 variants (4-bit, MXFP4, 6-bit, 8-bit) with RAM/disk requirements. Server lifecycle: start/stop OpenAI-compatible VLM server on port 8080. Direct inference via `mlx_lm.generate()`. Model download from HuggingFace. Cache management. `is_mlx_available()` checks for MLX Python package. SOCKS-aware HTTP. |
 | `form_filler.py` | Auto-fill web forms with vault credentials (detect → match → fill). |
 | `p2p_discovery.py` | UDP broadcast peer discovery for multi-node research mesh. |
 | `federated_rag.py` | Federated RAG — query trusted peers for answers. |
@@ -183,7 +183,7 @@ The core engine. FastAPI app serving 76+ endpoints across ~20 route modules.
 
 | File | Purpose |
 |---|---|
-| `mlx_vlm_server.py` | Standalone FastAPI server for MLX VLM inference (OpenAI-compatible). Runs Gemma 4 12B on Apple Silicon. |
+| `mlx_vlm_server.py` | Standalone FastAPI server for MLX VLM inference (OpenAI-compatible). Runs Gemma 3 12B on Apple Silicon. |
 
 ### `backend/plugins/`
 
@@ -333,17 +333,9 @@ The canonical frontend. Single React 19 app for both web (`npm run dev`) and des
 
 ---
 
-## `frontend/` — Legacy (Deprecated)
-
-| File | Purpose |
-|---|---|
-| `jambubrowser-ui/` | Old React 18 frontend. **Removed/archived** — use `browser-app/` instead. |
-
----
-
 ## `tests/` — Python Test Suite
 
-575+ passing tests. Organised by module:
+Organised by module (run `python3 -m pytest tests/` for the current pass count):
 
 | File | What It Tests |
 |---|---|
@@ -378,6 +370,7 @@ The canonical frontend. Single React 19 app for both web (`npm run dev`) and des
 | `test_search_integration.py` | Search engine integration tests. |
 | `test_research_integration.py` | Research pipeline integration tests. |
 | `test_deferred.py` | Deferred execution tests. |
+| `test_tor_sessions.py` | Tor session isolation tests (also runnable standalone). |
 | `test_phase2.py` | Phase 2 legacy tests. |
 | `test_phase3.py` | Phase 3 legacy tests. |
 | `test_phase4.py` | Phase 4 legacy tests. |
@@ -396,12 +389,8 @@ The canonical frontend. Single React 19 app for both web (`npm run dev`) and des
 
 | File | Purpose |
 |---|---|
-| `calculator.py` | A simple calculator tool (used by the agent loop). |
-| `test_calculator.py` | Tests for the calculator tool. |
+| `calculator.py` | A simple calculator tool (used by the agent loop). Tests live at `tests/test_calculator.py`. |
 | `mcp/` | MCP server tool implementations. |
-| `test_exec_tool.py` | Tests for execution tool. |
-| `test_tool_123.py` | Generic tool test. |
-| `test_tor_sessions.py` | Tor session isolation tests. |
 
 ---
 

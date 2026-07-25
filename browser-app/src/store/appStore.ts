@@ -2,13 +2,11 @@ import { create } from "zustand";
 
 export type CanvasTab =
   | "chat"
-  | "plan"
   | "browser"
   | "logs"
   | "missions"
   | "history"
   | "memory"
-  | "knowledge"
   | "privacy"
   | "audit"
   | "vault"

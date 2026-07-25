@@ -374,13 +374,13 @@ TOOLS: list[Tool] = [
     ),
     Tool(
         name="jambu_mlx_generate",
-        description="Generate text using MLX local LLM (Gemma 4 on Apple Silicon).",
+        description="Generate text using MLX local LLM (Gemma 3 on Apple Silicon).",
         inputSchema={
             "type": "object",
             "required": ["prompt"],
             "properties": {
                 "prompt": {"type": "string", "description": "Text prompt"},
-                "model": {"type": "string", "default": "gemma4:12b", "description": "Model ID"},
+                "model": {"type": "string", "default": "gemma3:12b", "description": "Model ID"},
                 "max_tokens": {"type": "integer", "default": 512},
                 "temperature": {"type": "number", "default": 0.7},
             },
@@ -877,7 +877,7 @@ TOOLS: list[Tool] = [
     ),
     Tool(
         name="jambu_models_available",
-        description="List available Gemma 4 models with specs.",
+        description="List available Gemma 3 models with specs.",
         inputSchema={"type": "object", "properties": {}},
     ),
     Tool(
@@ -1363,7 +1363,7 @@ async def _handle(tool_name: str, args: dict) -> list[TextContent]:
         elif tool_name == "jambu_mlx_generate":
             return _ok(await _post("/mlx/generate", {
                 "prompt": args["prompt"],
-                "model": args.get("model", "gemma4:12b"),
+                "model": args.get("model", "gemma3:12b"),
                 "max_tokens": args.get("max_tokens", 512),
                 "temperature": args.get("temperature", 0.7),
             }))

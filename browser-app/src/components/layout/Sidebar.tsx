@@ -11,7 +11,6 @@ import {
   FolderKanban,
   Shield,
   Wallet,
-  Sparkles,
   Users,
   Puzzle,
   FileText,
@@ -22,11 +21,9 @@ import { useAgentWebSocket } from "../../utils/useAgentWebSocket";
 
 const workspaceNav: { id: CanvasTab; label: string; icon: React.ElementType }[] = [
   { id: "chat", label: "Research", icon: MessageSquare },
-  { id: "plan", label: "Plan", icon: Sparkles },
   { id: "browser", label: "Browser", icon: Globe },
   { id: "logs", label: "Logs", icon: FileText },
   { id: "memory", label: "Memory", icon: Brain },
-  { id: "knowledge", label: "Knowledge", icon: Brain },
   { id: "missions", label: "Missions", icon: FolderKanban },
   { id: "history", label: "History", icon: History },
   { id: "agent", label: "Agent", icon: Bot },

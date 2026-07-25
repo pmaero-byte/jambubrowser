@@ -2,6 +2,11 @@
 Consensus Engine
 ================
 
+NOTE — single-node in practice: proposals and votes work locally (persisted
+to a JSON file), but "multi-node" consensus only means anything when peers
+from `p2p_discovery` participate; on a single-node install the local node
+votes alone. See docs/FEATURE_MAP.md.
+
 Multi-node consensus for governance decisions in the sovereign browser
 mesh. Supports proposal creation, weighted voting, and tie-breaking by
 average confidence.

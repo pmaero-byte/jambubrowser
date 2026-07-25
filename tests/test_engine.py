@@ -7,6 +7,7 @@ Uses FastAPI TestClient for in-process testing.
 
 import pytest
 import json
+import os
 from fastapi.testclient import TestClient
 
 
@@ -167,6 +168,16 @@ class TestMissionEndpoint:
 
 class TestToolManagement:
     """Tests for /tool/save, /tools, /tool/exec endpoints."""
+
+    @pytest.fixture(autouse=True)
+    def cleanup_saved_tool_files(self):
+        """Remove tools/*.py files written by /tool/save so tests don't pollute the repo."""
+        yield
+        tools_dir = os.path.join(os.path.dirname(__file__), "..", "tools")
+        for name in ("test_tool_123", "test_exec_tool"):
+            path = os.path.join(tools_dir, f"{name}.py")
+            if os.path.exists(path):
+                os.remove(path)
 
     def test_save_and_list_tool(self, client):
         tool_code = "def run(**kwargs):\n    return 'test result'"

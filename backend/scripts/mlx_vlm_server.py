@@ -1,11 +1,11 @@
 """
 MLX VLM OpenAI-Compatible Server
 =================================
-Custom FastAPI server that wraps mlx_vlm for Gemma 4 and other VLM models.
+Custom FastAPI server that wraps mlx_vlm for Gemma 3 and other VLM models.
 Exposes OpenAI-compatible chat completions endpoint.
 
 Usage:
-    python3 backend/scripts/mlx_vlm_server.py --model mlx-community/gemma-4-12B-it-4bit --port 8080
+    python3 backend/scripts/mlx_vlm_server.py --model mlx-community/gemma-3-12b-it-4bit --port 8080
 """
 
 import argparse
@@ -175,8 +175,8 @@ async def health():
 
 def main():
     parser = argparse.ArgumentParser(description="MLX VLM OpenAI-Compatible Server")
-    parser.add_argument("--model", default="mlx-community/gemma-4-12B-it-4bit",
-                        help="HuggingFace model path (default: mlx-community/gemma-4-12B-it-4bit)")
+    parser.add_argument("--model", default="mlx-community/gemma-3-12b-it-4bit",
+                        help="HuggingFace model path (default: mlx-community/gemma-3-12b-it-4bit)")
     parser.add_argument("--host", default="127.0.0.1", help="Bind host")
     parser.add_argument("--port", type=int, default=8080, help="Bind port")
     parser.add_argument("--preload", action="store_true", default=True,

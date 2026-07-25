@@ -83,7 +83,7 @@ class TestResolveLLMConfig:
     def test_cloud_provider_preset_applied(self, monkeypatch):
         # Neutralize env so .env's JAMBU_LLM_PROVIDER=minimax + matching
         # provider-specific model doesn't leak in and make mlx lookups
-        # return "MiniMax-M3" instead of "gemma4:12b".
+        # return "MiniMax-M2" instead of "gemma3:12b".
         for key in (
             "JAMBU_LLM_PROVIDER",
             "JAMBU_LLM_MINIMAX_MODEL",

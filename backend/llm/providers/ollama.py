@@ -26,7 +26,8 @@ from ..config import LLMConfig
 
 NAME = "ollama"
 MODELS = [
-    "gemma4:12b-it-qat",
+    "gemma3:4b",
+    "gemma3:12b-it-qat",
     "gemma3:27b",
     "llama3.2:latest",
     "qwen2.5:14b",

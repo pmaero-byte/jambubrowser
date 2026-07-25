@@ -17,7 +17,6 @@ import {
   Shield,
   Wallet,
   FileText,
-  Sparkles,
   Zap,
   Lock,
   Unlock,
@@ -32,11 +31,9 @@ import { useEffect } from "react";
 
 const navActions: { id: CanvasTab; label: string; icon: React.ElementType; shortcut?: string }[] = [
   { id: "chat", label: "Research Chat", icon: MessageSquare, shortcut: "Meta+1" },
-  { id: "plan", label: "Plan Surface", icon: Sparkles },
   { id: "browser", label: "Browser", icon: Globe, shortcut: "Meta+T" },
   { id: "logs", label: "Logs / Audit", icon: FileText, shortcut: "Meta+L" },
   { id: "memory", label: "Memory", icon: Brain, shortcut: "Meta+Shift+M" },
-  { id: "knowledge", label: "Knowledge Graph", icon: Brain },
   { id: "missions", label: "Missions", icon: FolderKanban },
   { id: "privacy", label: "Privacy Controls", icon: Shield, shortcut: "Meta+Shift+P" },
   { id: "audit", label: "Audit Log", icon: ScrollText },

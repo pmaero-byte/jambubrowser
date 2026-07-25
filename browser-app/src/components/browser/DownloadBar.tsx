@@ -14,8 +14,22 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
-function stateLabel(d: Dl): { text: string; className: string } {
-  if (d.state === "in_progress") return { text: "Downloading…", className: "text-amber-400" };
+/** Display name for a download: strips the `.crdownload` partial-file
+ *  suffix so the user sees the final filename while it's still coming in. */
+export function displayName(d: Dl): string {
+  if (d.state === "in_progress" && d.filename.endsWith(".crdownload")) {
+    return d.filename.slice(0, -".crdownload".length);
+  }
+  return d.filename;
+}
+
+/** Status line under the filename. In-progress downloads show the bytes
+ *  received so far — the 3s poll makes this a coarse but honest progress
+ *  indicator (no total size is available without CDP download events). */
+export function stateLabel(d: Dl): { text: string; className: string } {
+  if (d.state === "in_progress") {
+    return { text: `Downloading… ${formatBytes(d.size_bytes)}`, className: "text-amber-400" };
+  }
   if (d.state === "empty") return { text: "Empty", className: "text-muted-foreground" };
   return { text: formatBytes(d.size_bytes), className: "text-muted-foreground" };
 }
@@ -104,7 +118,7 @@ export function DownloadBar() {
                     >
                       <FolderOpen size={12} className="shrink-0 text-muted-foreground/50" />
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-foreground/80" title={d.path}>{d.filename}</div>
+                        <div className="truncate text-foreground/80" title={d.path}>{displayName(d)}</div>
                         <div className={label.className}>{label.text}</div>
                       </div>
                       <button

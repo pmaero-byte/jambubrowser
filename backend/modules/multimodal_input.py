@@ -57,7 +57,7 @@ class MultimodalProcessor:
     def __init__(self, llm_config: dict = None):
         self.llm_config = llm_config or {
             "baseUrl": "http://localhost:8080/v1",
-            "modelId": "gemma-4-12b",
+            "modelId": "gemma-3-12b",
             "apiKey": "",
         }
         self._http_client: Optional[httpx.AsyncClient] = None
@@ -100,7 +100,7 @@ class MultimodalProcessor:
         prompt = prompts.get(task, prompts['analyze'])
 
         base_url = self.llm_config.get("baseUrl", "http://localhost:8080/v1")
-        model_id = self.llm_config.get("modelId", "gemma-4-12b")
+        model_id = self.llm_config.get("modelId", "gemma-3-12b")
         api_key = self.llm_config.get("apiKey", "")
 
         messages = [{

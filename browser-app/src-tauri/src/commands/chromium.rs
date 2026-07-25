@@ -108,6 +108,71 @@ pub async fn browser_evaluate(
     mgr.evaluate(&tab_id, &expression).await
 }
 
+/// Forward a mouse event to the page in a tab.
+///
+/// Coordinates are CSS pixels in the page's viewport — the frontend
+/// translates from the scaled screenshot before invoking this.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn browser_mouse_event(
+    tab_id: String,
+    event_type: String,
+    x: f64,
+    y: f64,
+    button: String,
+    click_count: i32,
+    delta_x: f64,
+    delta_y: f64,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mgr = state.chromium.lock().await;
+    let mgr = mgr.as_ref().ok_or("Browser engine not initialized")?;
+    mgr.dispatch_mouse_event(&tab_id, &event_type, x, y, &button, click_count, delta_x, delta_y)
+        .await
+}
+
+/// Forward a keyboard event to the page in a tab.
+///
+/// `event_type` is `rawKeyDown` / `keyUp` / `char`; `text` is set for
+/// `char` events; `modifiers` is the CDP bitmask (Alt=1, Ctrl=2, Meta=4,
+/// Shift=8).
+#[tauri::command]
+pub async fn browser_key_event(
+    tab_id: String,
+    event_type: String,
+    key: String,
+    code: String,
+    text: Option<String>,
+    windows_virtual_key_code: Option<i32>,
+    modifiers: i32,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mgr = state.chromium.lock().await;
+    let mgr = mgr.as_ref().ok_or("Browser engine not initialized")?;
+    mgr.dispatch_key_event(
+        &tab_id,
+        &event_type,
+        &key,
+        &code,
+        text.as_deref(),
+        windows_virtual_key_code,
+        modifiers,
+    )
+    .await
+}
+
+/// Insert text into the page's focused editable element (Input.insertText).
+#[tauri::command]
+pub async fn browser_type_text(
+    tab_id: String,
+    text: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mgr = state.chromium.lock().await;
+    let mgr = mgr.as_ref().ok_or("Browser engine not initialized")?;
+    mgr.insert_text(&tab_id, &text).await
+}
+
 /// List all open tabs.
 #[tauri::command]
 pub async fn browser_list_tabs(
@@ -173,6 +238,45 @@ pub async fn browser_list_extensions(
     let mgr = state.chromium.lock().await;
     let mgr = mgr.as_ref().ok_or("Browser engine not initialized")?;
     Ok(mgr.list_extensions())
+}
+
+/// Enable or disable an extension. Persisted to browser-settings.json;
+/// takes effect on the next browser (re)launch because Chrome can only
+/// load/unload unpacked extensions at startup. Call `browser_restart`
+/// to apply immediately.
+#[tauri::command]
+pub async fn browser_set_extension_enabled(
+    id: String,
+    enabled: bool,
+) -> Result<(), String> {
+    crate::chromium::settings::set_extension_enabled(&id, enabled)?;
+    Ok(())
+}
+
+/// Read the persisted browser settings (extension states, profile mode).
+#[tauri::command]
+pub async fn browser_get_settings() -> Result<crate::chromium::settings::BrowserSettings, String> {
+    Ok(crate::chromium::settings::load())
+}
+
+/// Opt in/out of a persistent Chrome profile (cookies and logins survive
+/// restarts). Default off = fresh ephemeral profile wiped on exit.
+/// Takes effect on the next browser (re)launch; call `browser_restart`
+/// to apply immediately.
+#[tauri::command]
+pub async fn browser_set_persistent_profile(enabled: bool) -> Result<(), String> {
+    crate::chromium::settings::set_persistent_profile(enabled)?;
+    Ok(())
+}
+
+/// Restart the Chromium engine now, re-reading persisted settings.
+/// Used by the UI's "Restart browser now" action after changing
+/// extension or profile settings. Same code path as the crash watchdog.
+#[tauri::command]
+pub async fn browser_restart(state: State<'_, AppState>) -> Result<(), String> {
+    let mut mgr = state.chromium.lock().await;
+    let mgr = mgr.as_mut().ok_or("Browser engine not initialized")?;
+    mgr.restart().await
 }
 
 /// Run a page audit on the active tab (perf, a11y, SEO, security).

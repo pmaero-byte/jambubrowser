@@ -6,10 +6,11 @@
 //! filesystem changes, we read the directory on demand. This is simpler and
 //! survives Chromium restarts without bookkeeping.
 //!
-//! Trade-off: we can't surface in-progress `.crdownload` files as live
-//! progress bars. The frontend shows them as "in progress" with an
-//! indeterminate state and they re-appear as "complete" once Chrome
-//! renames them to their final filename.
+//! Trade-off: without a long-lived CDP event subscription (cdp.rs uses
+//! per-call WebSocket connections), we can't show true progress bars or
+//! total sizes. The frontend instead shows in-progress `.crdownload`
+//! files with their bytes-downloaded-so-far, which grows between polls —
+//! a coarse but honest progress indicator.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};

@@ -32,7 +32,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt || pip install fastapi uvicorn[standard] pydantic httpx psutil pycryptodome sentence-transformers pytest pytest-asyncio anyio websockets
+          pip install -r requirements.txt || pip install fastapi uvicorn[standard] pydantic httpx psutil pycryptodome sentence-transformers sqlite-vec pytest pytest-asyncio anyio websockets
 
       - name: Run unit + integration tests
         env:

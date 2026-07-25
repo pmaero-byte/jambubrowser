@@ -355,7 +355,7 @@ async def vision_grounding(req: VisionGroundRequest):
     await manager.broadcast(cid, "👁️ Performing visual grounding pass...")
 
     base_url = LATEST_LLM_CONFIG.get("baseUrl", "http://localhost:8080/v1")
-    model_id = LATEST_LLM_CONFIG.get("modelId", "gemma-4-12b")
+    model_id = LATEST_LLM_CONFIG.get("modelId", "gemma-3-12b")
 
     try:
         async with make_async_client() as cl:

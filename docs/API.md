@@ -77,7 +77,7 @@ Database and system statistics.
 
 ### GET /models/available
 
-List available Gemma 4 models.
+List available Gemma 3 models.
 
 ### GET /models/installed
 
@@ -95,7 +95,7 @@ Get status of a specific model.
 Pull a model via Ollama.
 
 **Parameters:**
-- `model` (string, optional): Model name (default: gemma4:12b)
+- `model` (string, optional): Model name (default: gemma3:12b)
 
 ### GET /models/recommend
 
@@ -103,7 +103,7 @@ Get recommended model based on available RAM.
 
 ### POST /models/setup
 
-One-click Gemma 4 setup.
+One-click Gemma 3 setup.
 
 **Parameters:**
 - `model_size` (string, optional): "7b" or "12b" (default: "12b")
@@ -995,7 +995,7 @@ Real-time agent state updates.
 **Messages received:**
 ```json
 {"type": "agent.state", "state": "thinking", "zone": "pile", "task_id": "abc123", "timestamp": 1780924565.98}
-{"type": "agent.telemetry", "model": "gemma4:12b-it-qat", "action": "Planning research", "tokens_per_sec": 42.5, "timestamp": 1780924565.98}
+{"type": "agent.telemetry", "model": "gemma3:4b", "action": "Planning research", "tokens_per_sec": 42.5, "timestamp": 1780924565.98}
 {"type": "agent.reasoning", "delta": "Based on the research...", "task_id": "abc123", "timestamp": 1780924565.98}
 {"type": "agent.task_start", "task_id": "abc123", "query": "What is...", "timestamp": 1780924565.98}
 {"type": "agent.task_end", "task_id": "abc123", "status": "completed", "tokens_generated": 150, "elapsed_sec": 5.2, "timestamp": 1780924565.98}
@@ -1084,7 +1084,7 @@ Unified chat against the configured default provider, or a specific one via `pro
 {
   "messages": [{"role": "user", "content": "Hello!"}],
   "provider": "anthropic",
-  "model": "claude-sonnet-4-6",
+  "model": "claude-sonnet-4-5",
   "max_tokens": 1024,
   "temperature": 0.3,
   "tools": null,
@@ -1096,7 +1096,7 @@ Unified chat against the configured default provider, or a specific one via `pro
 ```json
 {
   "content": "Hello! How can I help?",
-  "model": "claude-sonnet-4-6",
+  "model": "claude-sonnet-4-5",
   "provider": "anthropic",
   "usage": {"prompt_tokens": 8, "completion_tokens": 12, "total_tokens": 20, "cost_usd": 0.0002},
   "finish_reason": "stop",
@@ -1117,7 +1117,7 @@ List all discovered providers, their models, and the current fallback chain.
   "fallback_chain": ["ollama", "mlx", "anthropic", "openai", "minimax"],
   "providers": ["anthropic", "openai", "ollama", "mlx", "minimax", "mock"],
   "models": {
-    "anthropic": ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+    "anthropic": ["claude-opus-4-5", "claude-sonnet-4-5", "claude-haiku-4-5-20251001"],
     "openai": ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "o1", "o1-mini", "o3-mini"]
   }
 }

@@ -27,6 +27,24 @@ export function ExtensionsPanel() {
   const [extensions, setExtensions] = useState<ExtensionManifest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // True once a toggle has been persisted but not yet applied (Chrome
+  // only loads/unloads unpacked extensions at launch).
+  const [pendingRestart, setPendingRestart] = useState(false);
+  const [restarting, setRestarting] = useState(false);
+
+  const refresh = () => {
+    setLoading(true);
+    setError(null);
+    invoke("browser_list_extensions")
+      .then((data) => {
+        setExtensions(data as ExtensionManifest[]);
+        setLoading(false);
+      })
+      .catch((e) => {
+        setError(String(e));
+        setLoading(false);
+      });
+  };
 
   useEffect(() => {
     if (!isTauri) {
@@ -45,6 +63,30 @@ export function ExtensionsPanel() {
       });
   }, []);
 
+  const toggleExtension = (ext: ExtensionManifest) => {
+    const next = !ext.enabled;
+    // Optimistic update; roll back on failure.
+    setExtensions((xs) => xs.map((x) => (x.id === ext.id ? { ...x, enabled: next } : x)));
+    invoke("browser_set_extension_enabled", { id: ext.id, enabled: next })
+      .then(() => setPendingRestart(true))
+      .catch((e) => {
+        setExtensions((xs) => xs.map((x) => (x.id === ext.id ? { ...x, enabled: !next } : x)));
+        setError(String(e));
+      });
+  };
+
+  const restartNow = () => {
+    setRestarting(true);
+    setError(null);
+    invoke("browser_restart")
+      .then(() => {
+        setPendingRestart(false);
+        refresh();
+      })
+      .catch((e) => setError(String(e)))
+      .finally(() => setRestarting(false));
+  };
+
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <div className="shrink-0 border-b border-white/10 p-4">
@@ -60,23 +102,25 @@ export function ExtensionsPanel() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => {
-              setLoading(true);
-              setError(null);
-              invoke("browser_list_extensions")
-                .then((data) => {
-                  setExtensions(data as ExtensionManifest[]);
-                  setLoading(false);
-                })
-                .catch((e) => {
-                  setError(String(e));
-                  setLoading(false);
-                });
-            }}
+            onClick={refresh}
           >
             <RefreshCw className="mr-1 h-4 w-4" /> Refresh
           </Button>
         </div>
+        {pendingRestart && (
+          <div className="mt-3 flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+            <span className="flex-1">Extension changes apply after a browser restart.</span>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={restarting}
+              onClick={restartNow}
+              data-testid="restart-browser-now"
+            >
+              {restarting ? "Restarting…" : "Restart now"}
+            </Button>
+          </div>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto p-4">
@@ -137,8 +181,10 @@ export function ExtensionsPanel() {
                   </span>
                 </div>
                 <button
+                  onClick={() => toggleExtension(ext)}
                   className={`shrink-0 mt-1 ${ext.enabled ? "text-emerald-400" : "text-muted-foreground"}`}
-                  title={ext.enabled ? "Enabled" : "Disabled"}
+                  title={ext.enabled ? "Enabled — click to disable (applies after restart)" : "Disabled — click to enable (applies after restart)"}
+                  data-testid={`ext-toggle-${ext.id}`}
                 >
                   {ext.enabled ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}
                 </button>

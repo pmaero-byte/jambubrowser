@@ -22,7 +22,7 @@ async def ask_ai(prompt: str, config: Dict, system_msg: str = "You are a helpful
     - system_msg: Gives the AI its 'Personality'.
     """
     base_url = config.get("baseUrl", "http://localhost:8080/v1")
-    model_id = config.get("modelId", "gemma-4-12b")
+    model_id = config.get("modelId", "gemma-3-12b")
     api_key = config.get("apiKey", "")
     
     endpoint = f"{base_url.rstrip('/')}/chat/completions"

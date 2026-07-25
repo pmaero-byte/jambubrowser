@@ -5,6 +5,7 @@ import {
   ArrowLeft, ArrowRight, RotateCcw, Home, Plus, X,
   Globe, Bug, BugOff, Cpu, Star, Clock, Bookmark,
   Shield, FileText, Download, BookOpen, KeyRound,
+  EllipsisVertical, FileDown, FileUp,
 } from "lucide-react";
 import { useAppStore, BrowserTab } from "../../store/appStore";
 import { useBrowsingHistoryStore } from "../../store/browsingHistoryStore";
@@ -12,6 +13,13 @@ import { useDevtoolsStore } from "../../store/devtoolsStore";
 import { DevToolsPanel } from "./DevToolsPanel";
 import { DownloadBar } from "./DownloadBar";
 import { ReaderMode } from "./ReaderMode";
+import { FindBar } from "./FindBar";
+import {
+  buildFindExpression, buildClearFindExpression, FindDirection, FindResult,
+} from "./findInPage";
+import {
+  BookmarkEntry, toNetscapeBookmarksHtml, parseNetscapeBookmarksHtml, mergeBookmarks,
+} from "./bookmarksIO";
 
 // ── Tauri API detection ──────────────────────────────────────────
 
@@ -28,14 +36,7 @@ if (isTauri) {
 }
 
 // ── Types ────────────────────────────────────────────────────────
-
-interface BookmarkEntry {
-  id: string;
-  url: string;
-  title: string;
-  folder: string;
-  addedAt: number;
-}
+// BookmarkEntry is shared with the import/export helpers in bookmarksIO.ts.
 
 // ── Persistence helpers ──────────────────────────────────────────
 
@@ -72,6 +73,84 @@ export function isPdfUrl(url: string): boolean {
   return noQuery.toLowerCase().endsWith(".pdf");
 }
 
+// ── URL-bar helpers ──────────────────────────────────────────────
+
+// Search fallback for URL-bar input that isn't a URL. Uses the local
+// SearXNG metasearch instance (docker-compose maps it to localhost:8888;
+// see SEARXNG_URL in backend/modules/search.py).
+const SEARCH_FALLBACK_URL = "http://localhost:8888/search";
+
+export function normalizeUrl(raw: string): string {
+  if (!raw.trim()) return "about:blank";
+  if (/^(https?:|file:|about:)/i.test(raw)) return raw;
+  if (raw.includes(".") && !raw.includes(" ")) return `https://${raw}`;
+  return `${SEARCH_FALLBACK_URL}?q=${encodeURIComponent(raw)}`;
+}
+
+// ── Input forwarding helpers ─────────────────────────────────────
+
+export interface PagePoint {
+  x: number;
+  y: number;
+}
+
+/**
+ * Translate client (screen) coordinates into page viewport coordinates.
+ *
+ * The screenshot is drawn into the container with `object-contain`, so the
+ * image content is letterboxed and centered: the content rect is the
+ * natural capture size scaled by min(rect.w/natW, rect.h/natH). Returns
+ * null when the point falls in the letterbox margin, so clicks on the
+ * empty bars don't hit page elements at the viewport edges.
+ */
+export function clientToPageCoords(
+  clientX: number,
+  clientY: number,
+  rect: { left: number; top: number; width: number; height: number },
+  naturalWidth: number,
+  naturalHeight: number,
+): PagePoint | null {
+  if (!naturalWidth || !naturalHeight || !rect.width || !rect.height) return null;
+  const scale = Math.min(rect.width / naturalWidth, rect.height / naturalHeight);
+  const contentW = naturalWidth * scale;
+  const contentH = naturalHeight * scale;
+  const offsetX = rect.left + (rect.width - contentW) / 2;
+  const offsetY = rect.top + (rect.height - contentH) / 2;
+  const x = (clientX - offsetX) / scale;
+  const y = (clientY - offsetY) / scale;
+  if (x < 0 || y < 0 || x > naturalWidth || y > naturalHeight) return null;
+  return { x: Math.round(x), y: Math.round(y) };
+}
+
+// Windows virtual key codes for non-text keys, sent as CDP
+// windowsVirtualKeyCode/nativeVirtualKeyCode so the page's key handlers
+// see the same codes a real keyboard produces.
+const SPECIAL_KEY_CODES: Record<string, number> = {
+  Backspace: 8,
+  Tab: 9,
+  Enter: 13,
+  Escape: 27,
+  PageUp: 33,
+  PageDown: 34,
+  End: 35,
+  Home: 36,
+  ArrowLeft: 37,
+  ArrowUp: 38,
+  ArrowRight: 39,
+  ArrowDown: 40,
+  Delete: 46,
+};
+
+// CDP modifier bitmask: Alt=1, Ctrl=2, Meta=4, Shift=8.
+function cdpModifiers(e: React.KeyboardEvent | React.MouseEvent): number {
+  return (e.altKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.metaKey ? 4 : 0) | (e.shiftKey ? 8 : 0);
+}
+
+// CDP button name for a DOM MouseEvent.button value.
+function cdpButton(button: number): string {
+  return button === 1 ? "middle" : button === 2 ? "right" : "left";
+}
+
 // ── Main Component ───────────────────────────────────────────────
 
 const SCREENSHOT_INTERVAL = 1000;
@@ -98,6 +177,12 @@ export function ChromiumPane() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const screenshotRef = useRef<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Input forwarding: focusable viewport container + the screenshot image
+  // (its natural size is the CDP capture viewport used for coordinate math).
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
+  const lastMouseMoveRef = useRef(0);
+  const inputRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Tab preview (hover thumbnail) ──
   // Positioned absolutely above the hovered tab. Cache by tabId so re-hovering
@@ -210,6 +295,85 @@ export function ChromiumPane() {
 
   const isBookmarked = useCallback((url: string) => bookmarks.some((b) => b.url === url), [bookmarks]);
 
+  // ── Bookmarks import/export (Netscape HTML, Chrome/Firefox-compatible) ──
+  const [bmMenuOpen, setBmMenuOpen] = useState(false);
+  const importInputRef = useRef<HTMLInputElement>(null);
+
+  const exportBookmarks = useCallback(() => {
+    setBmMenuOpen(false);
+    if (bookmarks.length === 0) return;
+    const html = toNetscapeBookmarksHtml(bookmarks);
+    const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "jambu-bookmarks.html";
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [bookmarks]);
+
+  const importBookmarks = useCallback(async (file: File) => {
+    setBmMenuOpen(false);
+    try {
+      const imported = parseNetscapeBookmarksHtml(await file.text());
+      setBookmarks((prev) => {
+        const { merged } = mergeBookmarks(prev, imported);
+        saveJson(BOOKMARKS_KEY, merged);
+        return merged;
+      });
+    } catch { /* unreadable file — leave bookmarks untouched */ }
+  }, []);
+
+  // ── Find in page (Ctrl/Cmd+F) ──
+  // The find logic itself runs inside the page: findInPageCore is
+  // serialized into a browser_evaluate expression (see findInPage.ts).
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [findResult, setFindResult] = useState<FindResult | null>(null);
+  const [findFocusToken, setFindFocusToken] = useState(0);
+
+  const runFind = useCallback(async (query: string, direction: FindDirection) => {
+    if (!isTauri || !engineReady || !activeTab || !query.trim()) return;
+    try {
+      const raw = await invoke("browser_evaluate", {
+        tabId: activeTab.id,
+        expression: buildFindExpression(query, direction),
+      }) as string;
+      setFindResult(JSON.parse(raw) as FindResult);
+    } catch { /* tab closing or Chrome restarting */ }
+  }, [activeTab, engineReady]);
+
+  const closeFind = useCallback(() => {
+    setFindOpen(false);
+    setFindQuery("");
+    setFindResult(null);
+    if (isTauri && engineReady && activeTab) {
+      invoke("browser_evaluate", {
+        tabId: activeTab.id,
+        expression: buildClearFindExpression(),
+      }).catch(() => { /* tab closing */ });
+    }
+  }, [activeTab, engineReady]);
+
+  const openFind = useCallback(() => {
+    setFindOpen(true);
+    setFindFocusToken((t) => t + 1); // refocus the input even if already open
+  }, []);
+
+  // Debounced re-scan on query change; also re-run after tab switches and
+  // navigations (the highlights live in the old page and are gone).
+  useEffect(() => {
+    if (!findOpen) return;
+    if (!findQuery.trim()) { setFindResult(null); return; }
+    const id = setTimeout(() => runFind(findQuery, "init"), 200);
+    return () => clearTimeout(id);
+  }, [findOpen, findQuery, runFind]);
+
+  // Switching tabs abandons the find — each tab has its own page state.
+  useEffect(() => {
+    closeFind();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab?.id]);
+
   // ── Suggestions from history + bookmarks ──
   const suggestions = useMemo(() => {
     if (!inputUrl.trim() || inputUrl === activeTab?.url) return [];
@@ -252,29 +416,42 @@ export function ChromiumPane() {
   }, [activeTab?.url, activeBrowserTabId]);
 
   // ── Screenshot + title/URL polling ──
+  // Shared by the 1s interval and the post-input refresh, so clicks and
+  // keystrokes show their effect immediately instead of at the next tick.
+  const poll = useCallback(async () => {
+    if (!activeTab) return;
+    try {
+      const dataUrl = await invoke("browser_capture_screenshot", { tabId: activeTab.id }) as string;
+      if (dataUrl && dataUrl !== screenshotRef.current) {
+        screenshotRef.current = dataUrl;
+        setScreenshot(dataUrl);
+      }
+      // Also sync tab title and URL from the live page (via CDP Runtime.evaluate)
+      const tabInfo = await invoke("browser_sync_tab", { tabId: activeTab.id }) as { url: string; title: string };
+      if (tabInfo && (tabInfo.title !== activeTab.title || tabInfo.url !== activeTab.url)) {
+        updateBrowserTab(activeTab.id, { title: tabInfo.title, url: tabInfo.url });
+      }
+    } catch { /* tab closing or Chrome restarting */ }
+  }, [activeTab, updateBrowserTab]);
+
   useEffect(() => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
     if (!isTauri || !engineReady || !activeTab?.url || activeTab.url === "about:blank") {
       setScreenshot(null); return;
     }
-    const poll = async () => {
-      try {
-        const dataUrl = await invoke("browser_capture_screenshot", { tabId: activeTab.id }) as string;
-        if (dataUrl && dataUrl !== screenshotRef.current) {
-          screenshotRef.current = dataUrl;
-          setScreenshot(dataUrl);
-        }
-        // Also sync tab title and URL from the live page (via CDP Runtime.evaluate)
-        const tabInfo = await invoke("browser_sync_tab", { tabId: activeTab.id }) as { url: string; title: string };
-        if (tabInfo && (tabInfo.title !== activeTab.title || tabInfo.url !== activeTab.url)) {
-          updateBrowserTab(activeTab.id, { title: tabInfo.title, url: tabInfo.url });
-        }
-      } catch { /* tab closing or Chrome restarting */ }
-    };
     poll();
     pollRef.current = setInterval(poll, SCREENSHOT_INTERVAL);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [activeTab?.id, activeTab?.url, engineReady, updateBrowserTab]);
+  }, [activeTab?.id, activeTab?.url, engineReady, poll]);
+
+  // Debounced screenshot refresh right after a forwarded input event.
+  const scheduleInputRefresh = useCallback((delayMs = 250) => {
+    if (inputRefreshTimerRef.current) clearTimeout(inputRefreshTimerRef.current);
+    inputRefreshTimerRef.current = setTimeout(() => {
+      inputRefreshTimerRef.current = null;
+      poll();
+    }, delayMs);
+  }, [poll]);
 
   // ── Window title sync ──
   useEffect(() => {
@@ -292,13 +469,6 @@ export function ChromiumPane() {
   }, [activeTab?.title, activeTab?.url, activeTab?.id, engineReady]);
 
   // ── Navigation helpers ──
-  const normalizeUrl = (raw: string) => {
-    if (!raw.trim()) return "about:blank";
-    if (/^(https?:|file:|about:)/i.test(raw)) return raw;
-    if (raw.includes(".") && !raw.includes(" ")) return `https://${raw}`;
-    return `https://www.google.com/search?q=${encodeURIComponent(raw)}`;
-  };
-
   const doNavigate = useCallback(async (url: string) => {
     const next = normalizeUrl(url);
     if (!activeTab) return;
@@ -515,6 +685,7 @@ return { filled: true, hasUser: !!bestUser, hasPass: true };
         case "l": e.preventDefault(); inputRef.current?.focus(); inputRef.current?.select(); break;
         case "d": e.preventDefault(); activeTab?.url && toggleBookmark(activeTab.url, activeTab.title || activeTab.url); break;
         case "r": e.preventDefault(); reload(); break;
+        case "f": e.preventDefault(); openFind(); break;
         case "[": e.preventDefault(); goBack(); break;
         case "]": e.preventDefault(); goForward(); break;
         case "b": if (e.shiftKey) { e.preventDefault(); setShowBookmarks((v) => !v); } break;
@@ -522,7 +693,7 @@ return { filled: true, hasUser: !!bestUser, hasPass: true };
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [browserTabs, activeTab, handleNewTab, handleCloseTab, toggleBookmark, reload, goBack, goForward, setActiveBrowserTab]);
+  }, [browserTabs, activeTab, handleNewTab, handleCloseTab, toggleBookmark, reload, goBack, goForward, setActiveBrowserTab, openFind]);
 
   const selectSuggestion = useCallback((url: string, title: string) => {
     setInputUrl(url);
@@ -548,12 +719,122 @@ return { filled: true, hasUser: !!bestUser, hasPass: true };
     }
   }, [suggestionsVisible, suggestions, selectedSuggestion, selectSuggestion]);
 
+  // ── Input forwarding (CDP Input domain) ──
+  // The viewport is a screenshot of the page; these handlers translate
+  // DOM events on the image into CDP input events on the live page.
+  // Vault autofill uses Runtime.evaluate (JS injection) instead, so the
+  // two paths never touch the same input channel.
+
+  // Screenshot img natural size = the CDP capture viewport; the img
+  // element fills the container and letterboxes via object-contain.
+  const toPageCoords = useCallback((clientX: number, clientY: number): PagePoint | null => {
+    const img = imgRef.current;
+    if (!img || !img.naturalWidth || !img.naturalHeight) return null;
+    return clientToPageCoords(clientX, clientY, img.getBoundingClientRect(), img.naturalWidth, img.naturalHeight);
+  }, []);
+
+  const sendMouseEvent = useCallback((
+    eventType: string,
+    clientX: number,
+    clientY: number,
+    button: string,
+    clickCount: number,
+    deltaX = 0,
+    deltaY = 0,
+  ) => {
+    if (!isTauri || !engineReady || !activeTab) return;
+    const pt = toPageCoords(clientX, clientY);
+    if (!pt) return; // letterbox margin — not part of the page
+    invoke("browser_mouse_event", {
+      tabId: activeTab.id, eventType, x: pt.x, y: pt.y,
+      button, clickCount, deltaX, deltaY,
+    }).catch(() => { /* tab closing */ });
+  }, [activeTab, engineReady, toPageCoords]);
+
+  const handleViewportMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault(); // no image drag / text selection on the screenshot
+    // Move keyboard focus to the page so typing goes to the page, not the URL bar.
+    viewportRef.current?.focus();
+    // e.detail is the native click count (1 = single, 2 = double, ...).
+    sendMouseEvent("mousePressed", e.clientX, e.clientY, cdpButton(e.button), Math.max(1, e.detail));
+  }, [sendMouseEvent]);
+
+  const handleViewportMouseUp = useCallback((e: React.MouseEvent) => {
+    sendMouseEvent("mouseReleased", e.clientX, e.clientY, cdpButton(e.button), Math.max(1, e.detail));
+    scheduleInputRefresh(200);
+  }, [sendMouseEvent, scheduleInputRefresh]);
+
+  // Throttled to 10 Hz — each CDP call opens a fresh WebSocket, and hover
+  // feedback isn't worth 60 connections/second.
+  const handleViewportMouseMove = useCallback((e: React.MouseEvent) => {
+    const now = Date.now();
+    if (now - lastMouseMoveRef.current < 100) return;
+    lastMouseMoveRef.current = now;
+    sendMouseEvent("mouseMoved", e.clientX, e.clientY, "none", 0);
+  }, [sendMouseEvent]);
+
+  // Non-passive wheel listener: React attaches onWheel as passive, which
+  // would ignore preventDefault and log a dev warning.
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      sendMouseEvent("mouseWheel", e.clientX, e.clientY, "none", 0, e.deltaX, e.deltaY);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [sendMouseEvent]);
+
+  const sendKeyEvent = useCallback((
+    eventType: string,
+    key: string,
+    code: string,
+    text: string | null,
+    modifiers: number,
+  ) => {
+    if (!isTauri || !engineReady || !activeTab) return;
+    invoke("browser_key_event", {
+      tabId: activeTab.id, eventType, key, code, text,
+      windowsVirtualKeyCode: SPECIAL_KEY_CODES[key] ?? null,
+      modifiers,
+    }).catch(() => { /* tab closing */ });
+  }, [activeTab, engineReady]);
+
+  const handleViewportKeyDown = useCallback((e: React.KeyboardEvent) => {
+    // Cmd/Ctrl combos belong to the app chrome (Cmd+L, Cmd+T, Cmd+R, ...) —
+    // let the global shortcut handler see them instead of the page.
+    if (e.metaKey || e.ctrlKey) return;
+    if (!isTauri || !engineReady || !activeTab) return;
+    e.preventDefault();
+    const modifiers = cdpModifiers(e);
+    if (e.key.length === 1) {
+      // Text-producing key: a `char` event carries the character directly.
+      sendKeyEvent("char", e.key, e.code, e.key, modifiers);
+    } else if (SPECIAL_KEY_CODES[e.key] !== undefined) {
+      sendKeyEvent("rawKeyDown", e.key, e.code, null, modifiers);
+      // Many pages only react to Enter when a text event follows the keydown.
+      if (e.key === "Enter") sendKeyEvent("char", e.key, e.code, "\r", modifiers);
+    }
+    scheduleInputRefresh(300);
+  }, [activeTab, engineReady, sendKeyEvent, scheduleInputRefresh]);
+
+  const handleViewportKeyUp = useCallback((e: React.KeyboardEvent) => {
+    if (e.metaKey || e.ctrlKey) return;
+    sendKeyEvent("keyUp", e.key, e.code, null, cdpModifiers(e));
+  }, [sendKeyEvent]);
+
   // ── Render ──
   return (
     <div className="flex h-full flex-col">
       {/* ── Bookmark bar ── */}
-      {showBookmarks && bookmarks.length > 0 && (
+      {showBookmarks && (
         <div className="flex items-center gap-0.5 border-b border-border/30 bg-surface/40 px-3 py-1 overflow-x-auto">
+          {bookmarks.length === 0 && (
+            <span className="text-[10px] text-muted-foreground/50">
+              No bookmarks yet — press ⌘D to bookmark this page, or import a bookmarks file.
+            </span>
+          )}
           {bookmarks.slice(0, 20).map((bm) => (
             <button
               key={bm.id}
@@ -567,6 +848,59 @@ return { filled: true, hasUser: !!bestUser, hasPass: true };
                 onClick={(e) => { e.stopPropagation(); removeBookmark(bm.id); }} />
             </button>
           ))}
+          {/* Import/export menu */}
+          <div className="relative ml-auto shrink-0">
+            <button
+              type="button"
+              onClick={() => setBmMenuOpen((v) => !v)}
+              title="Bookmark options"
+              className={`rounded-md p-1 transition-all duration-150 ${bmMenuOpen ? "text-accent" : "text-muted-foreground/60 hover:bg-muted/50 hover:text-foreground"}`}
+            >
+              <EllipsisVertical size={12} />
+            </button>
+            <AnimatePresence>
+              {bmMenuOpen && (
+                <>
+                  {/* Backdrop closes the menu on any outside click. */}
+                  <div className="fixed inset-0 z-40" onClick={() => setBmMenuOpen(false)} />
+                  <motion.div
+                    initial={{ opacity: 0, y: -4, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -4, scale: 0.98 }}
+                    transition={{ duration: 0.15, ease: "easeOut" }}
+                    className="absolute right-0 top-full z-50 mt-1 w-48 rounded-lg border border-border/50 bg-surface-elevated shadow-float overflow-hidden"
+                  >
+                    <button
+                      type="button"
+                      onClick={exportBookmarks}
+                      disabled={bookmarks.length === 0}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-xs text-left transition-colors duration-100 hover:bg-muted/30 disabled:opacity-40"
+                    >
+                      <FileDown size={12} className="shrink-0 text-muted-foreground" />
+                      Export bookmarks (HTML)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => importInputRef.current?.click()}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-xs text-left transition-colors duration-100 hover:bg-muted/30"
+                    >
+                      <FileUp size={12} className="shrink-0 text-muted-foreground" />
+                      Import bookmarks (HTML)
+                    </button>
+                  </motion.div>
+                </>
+              )}
+            </AnimatePresence>
+          </div>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".html,.htm,text/html"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) importBookmarks(f);
+              e.target.value = ""; // allow re-importing the same file
+            }}
+          />
         </div>
       )}
 
@@ -803,7 +1137,34 @@ return { filled: true, hasUser: !!bestUser, hasPass: true };
       </AnimatePresence>
 
       {/* ── Viewport ── */}
-      <div className="relative min-h-0 flex-1 bg-background">
+      {/* Focusable so keyboard input forwards to the page; click anywhere
+          in the pane moves focus here (see handleViewportMouseDown). */}
+      <div
+        ref={viewportRef}
+        tabIndex={0}
+        role="application"
+        aria-label="Web page viewport"
+        onMouseDown={handleViewportMouseDown}
+        onMouseUp={handleViewportMouseUp}
+        onMouseMove={handleViewportMouseMove}
+        onKeyDown={handleViewportKeyDown}
+        onKeyUp={handleViewportKeyUp}
+        className="relative min-h-0 flex-1 bg-background outline-none transition-shadow duration-200 focus:shadow-[inset_0_0_0_1px_oklch(0.65_0.18_265/50%),inset_0_0_16px_oklch(0.65_0.18_265/10%)]"
+      >
+        {/* ── Find-in-page bar (Ctrl/Cmd+F) ── */}
+        <AnimatePresence>
+          {findOpen && (
+            <FindBar
+              query={findQuery}
+              result={findResult}
+              focusToken={findFocusToken}
+              onQueryChange={setFindQuery}
+              onNext={() => runFind(findQuery, "next")}
+              onPrev={() => runFind(findQuery, "prev")}
+              onClose={closeFind}
+            />
+          )}
+        </AnimatePresence>
         <AnimatePresence mode="wait">
           {errorMsg && (
             <motion.div key="error" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -817,7 +1178,8 @@ return { filled: true, hasUser: !!bestUser, hasPass: true };
           )}
           {screenshot && activeTab?.url && activeTab.url !== "about:blank" ? (
             <motion.img key={`ss-${activeBrowserTabId}`} src={screenshot} alt={activeTab.title || "Page"}
-              className="h-full w-full object-contain bg-white"
+              ref={imgRef} draggable={false}
+              className="h-full w-full object-contain bg-white select-none"
               initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.98 }} transition={{ duration: 0.25, ease: "easeOut" }} />
           ) : (
             <motion.div key="empty"

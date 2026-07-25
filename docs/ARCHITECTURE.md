@@ -144,7 +144,7 @@ Two WebSocket endpoints:
 **`/ws/{client_id}`** - Agent state broadcasts:
 ```json
 {"type": "agent.state", "state": "thinking", "zone": "pile", "task_id": "abc123"}
-{"type": "agent.telemetry", "model": "gemma4:12b-it-qat", "tokens_per_sec": 42.5}
+{"type": "agent.telemetry", "model": "gemma3:4b", "tokens_per_sec": 42.5}
 {"type": "agent.reasoning", "delta": "Based on the research..."}
 {"type": "agent.task_start", "task_id": "abc123", "query": "What is..."}
 {"type": "agent.task_end", "task_id": "abc123", "status": "completed"}
@@ -157,60 +157,59 @@ Two WebSocket endpoints:
 
 ## Frontend Architecture
 
+The current UI is the v4 AppShell design (see `UI_REDESIGN_v4.md`), a single
+React 19 + Vite + Tailwind app in `browser-app/src/` shipped inside a Tauri 2
+shell. The old Header/split-view layout and the separate
+`frontend/jambubrowser-ui/` app are gone.
+
 ### Component Tree
 
 ```
-App
-├── Header (Navigation tabs, Full Power toggle)
-├── AgentStatusBar (WebSocket-powered live state)
-└── Main Layout (split-view)
-    ├── Sidebar (30%)
-    │   ├── MetricsPanel (nodes, tokens, RAM)
-    │   ├── Welcome / MessageList (chat messages)
-    │   └── CommandBar (input, domain selector)
-    └── Browser Area (70%)
-        ├── TabSystem (multi-tab management)
-        ├── BrowserPane (iframe / blank placeholder)
-        └── Overlays (AnimatePresence)
-            ├── PrivacyControls
-            ├── AuditLogViewer
-            ├── VaultUnlock
-            └── History Panel
+App (src/App.tsx)
+└── AppShell (src/components/layout/)
+    ├── TopBar (workspace, model selector, ⌘K palette trigger)
+    ├── Sidebar (collapsible navigation, ⌘B)
+    ├── Main Canvas (active panel, lazy-loaded per tab)
+    │   ├── ChatPane (eager — default landing tab)
+    │   ├── BrowserPane / ChromiumPane
+    │   ├── AgentView, MissionsPanel, MemoryPanel, HistoryPanel
+    │   ├── AuditPanel / AuditLogViewer, PrivacyControls, VaultUnlock
+    │   ├── InspectorPanel, TeamPanel, ExtensionsPanel, SettingsPanel
+    │   └── OnboardingWizard, CommandPalette (cmdk)
+    └── StatusBar (tokens/s, provider, privacy mode, health)
 ```
+
+Every panel except `ChatPane` is its own lazy-loaded JS chunk, fetched on
+first navigation.
 
 ### State Management
 
-All state lives in `App.tsx` via React hooks:
-- `tabs[]` - Browser tab state
-- `activeTabId` - Currently active tab
-- `messages[]` - Chat message history
-- `input` - Current input text
-- `isLoading` - Research in progress
-- `fullPower` - Brain-only vs full research mode
-- `activeTab` - Active overlay (chat/privacy/audit/vault)
-- `metrics` - Performance metrics
-- `history[]` - Browser visit history
+State lives in zustand stores under `src/store/` (`appStore`,
+`devtoolsStore`, `browsingHistoryStore`, `downloadsStore`,
+`roomLayoutStore`) — not in a single `App.tsx` hook tree.
 
 ### API Communication
 
 ```typescript
-// api.ts - HTTP requests with 30s timeout
+// utils/api.ts - HTTP requests
 localFetch("/research", { method: "POST", body: JSON.stringify({...}) })
 
-// useAgentWebSocket.ts - Real-time agent state
+// utils/useAgentWebSocket.ts - Real-time agent state
 const { connected, agentState, telemetry } = useAgentWebSocket()
 ```
 
 ### Keyboard Shortcuts
 
+Registered in `AppShell.tsx` via `utils/useKeyboardShortcuts.ts`:
+
 | Shortcut | Action |
 |----------|--------|
-| Cmd+K | Focus input field |
-| Cmd+P | Open Privacy tab |
-| Cmd+L | Open Audit tab |
-| Cmd+1 | Return to Research tab |
-| Cmd+T | New browser tab |
-| Escape | Close overlay, return to chat |
+| Cmd/Ctrl+K | Open command palette |
+| Cmd/Ctrl+B | Toggle sidebar |
+| Cmd/Ctrl+L | Open Logs tab |
+| Cmd/Ctrl+Shift+P | Open Privacy tab |
+| Cmd/Ctrl+Shift+M | Open Memory tab |
+| Cmd/Ctrl+T | New browser tab |
 
 ## Database Schema
 

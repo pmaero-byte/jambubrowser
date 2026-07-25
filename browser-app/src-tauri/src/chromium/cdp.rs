@@ -233,6 +233,89 @@ impl CdpClient {
         Ok(data)
     }
 
+    // ── Input dispatch (mouse / keyboard) ────────────────────────
+
+    /// Dispatch a mouse event via Input.dispatchMouseEvent.
+    ///
+    /// `event_type` is one of `mousePressed`, `mouseReleased`, `mouseMoved`,
+    /// `mouseWheel`. Coordinates are CSS pixels in the page's viewport (the
+    /// frontend translates from scaled screenshot coordinates). `button` is
+    /// `left` / `right` / `middle` / `none`; wheel events carry `delta_x` /
+    /// `delta_y` and use `button: "none"`, `click_count: 0`.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn dispatch_mouse_event(
+        &self,
+        tab: &Tab,
+        event_type: &str,
+        x: f64,
+        y: f64,
+        button: &str,
+        click_count: i32,
+        delta_x: f64,
+        delta_y: f64,
+    ) -> Result<(), String> {
+        let mut params = json!({
+            "type": event_type,
+            "x": x,
+            "y": y,
+            "button": button,
+            "clickCount": click_count,
+        });
+        if event_type == "mouseWheel" {
+            params["deltaX"] = json!(delta_x);
+            params["deltaY"] = json!(delta_y);
+        }
+        self.send_cdp(&tab.ws_url, "Input.dispatchMouseEvent", params)
+            .await?;
+        Ok(())
+    }
+
+    /// Dispatch a key event via Input.dispatchKeyEvent.
+    ///
+    /// `event_type` is `rawKeyDown` (non-text keys), `keyUp`, or `char`
+    /// (text-producing keys — `text` carries the character). `modifiers` is
+    /// the CDP bitmask: Alt=1, Ctrl=2, Meta=4, Shift=8.
+    pub async fn dispatch_key_event(
+        &self,
+        tab: &Tab,
+        event_type: &str,
+        key: &str,
+        code: &str,
+        text: Option<&str>,
+        windows_virtual_key_code: Option<i32>,
+        modifiers: i32,
+    ) -> Result<(), String> {
+        let mut params = json!({
+            "type": event_type,
+            "key": key,
+            "code": code,
+            "modifiers": modifiers,
+        });
+        if let Some(text) = text {
+            params["text"] = json!(text);
+        }
+        if let Some(vk) = windows_virtual_key_code {
+            params["windowsVirtualKeyCode"] = json!(vk);
+            params["nativeVirtualKeyCode"] = json!(vk);
+        }
+        self.send_cdp(&tab.ws_url, "Input.dispatchKeyEvent", params)
+            .await?;
+        Ok(())
+    }
+
+    /// Insert text via Input.insertText — IME-safe text entry that goes
+    /// through the page's focused editable element without synthesizing
+    /// individual key events.
+    pub async fn insert_text(&self, tab: &Tab, text: &str) -> Result<(), String> {
+        self.send_cdp(
+            &tab.ws_url,
+            "Input.insertText",
+            json!({"text": text}),
+        )
+        .await?;
+        Ok(())
+    }
+
     // ── Privacy & fingerprinting ──────────────────────────────────
 
     /// Block a list of URL patterns via Network.setBlockedURLs.

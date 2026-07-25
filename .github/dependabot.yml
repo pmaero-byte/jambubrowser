@@ -21,21 +21,6 @@ updates:
       include: "scope"
 
   - package-ecosystem: "npm"
-    directory: "/frontend/jambubrowser-ui"
-    schedule:
-      interval: "weekly"
-    groups:
-      frontend-deps:
-        patterns: ["*"]
-    open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
-      - "frontend"
-    commit-message:
-      prefix: "deps"
-      include: "scope"
-
-  - package-ecosystem: "npm"
     directory: "/browser-app"
     schedule:
       interval: "weekly"

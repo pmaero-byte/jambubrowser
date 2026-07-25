@@ -29,19 +29,19 @@ GLOBAL_VPN_PROXY = os.environ.get("AGENT_VPN_PROXY", None)
 LATEST_LLM_CONFIG: dict = {
     "provider": "ollama",
     "baseUrl": "http://localhost:11434/v1",
-    "modelId": "gemma4:12b-it-qat",
+    "modelId": "gemma3:4b",
     "apiKey": "",
 }
 
 CLOUD_PROVIDERS: dict = {
     "minimax": {
         "baseUrl": "https://api.minimax.io/v1",
-        "modelId": "MiniMax-M2.7",
+        "modelId": "MiniMax-M2",
         "apiKey": os.environ.get("MINIMAX_API_KEY", ""),
     },
     "mlx": {
         "baseUrl": "http://127.0.0.1:8080/v1",
-        "modelId": "gemma4:12b",
+        "modelId": "gemma-3-12b-it-4bit",
         "apiKey": "",
     },
 }
@@ -369,7 +369,7 @@ async def broadcast_agent_telemetry(
 ) -> None:
     payload = {
         "type": "agent.telemetry",
-        "model": LATEST_LLM_CONFIG.get("modelId", "gemma4:12b-it-qat"),
+        "model": LATEST_LLM_CONFIG.get("modelId", "gemma3:4b"),
         "action": action,
         "file_path": file_path,
         "tokens_generated": tokens_generated,

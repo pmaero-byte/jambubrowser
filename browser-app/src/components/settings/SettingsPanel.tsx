@@ -1,9 +1,18 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Settings, Cpu, Shield, Globe, RefreshCw, Check, AlertCircle } from "lucide-react";
+import { Settings, Cpu, Shield, Globe, RefreshCw, Check, AlertCircle, HardDrive } from "lucide-react";
 import { Button } from "../ui/button";
 import { localFetch } from "../../utils/api";
 import { useAppStore } from "../../store/appStore";
+
+const isTauri = typeof window !== "undefined" && "__TAURI__" in window;
+let tauriInvoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+if (isTauri) {
+  const tauri = (window as unknown as Record<string, unknown>).__TAURI__ as {
+    core: { invoke: typeof tauriInvoke };
+  };
+  tauriInvoke = tauri.core.invoke.bind(tauri.core);
+}
 
 interface ProviderInfo {
   default_provider: string;
@@ -12,11 +21,34 @@ interface ProviderInfo {
   models: Record<string, string[]>;
 }
 
+interface BrowserSettings {
+  persistent_profile: boolean;
+  disabled_extensions: string[];
+}
+
 export function SettingsPanel() {
   const { privacyMode, setPrivacyMode } = useAppStore();
   const [providers, setProviders] = useState<ProviderInfo | null>(null);
   const [engineOnline, setEngineOnline] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(false);
+  // null = not loaded yet (or not a Tauri host)
+  const [persistentProfile, setPersistentProfile] = useState<boolean | null>(null);
+  const [profilePendingRestart, setProfilePendingRestart] = useState(false);
+
+  useEffect(() => {
+    if (!isTauri) return;
+    tauriInvoke("browser_get_settings")
+      .then((s) => setPersistentProfile((s as BrowserSettings).persistent_profile))
+      .catch(() => setPersistentProfile(null));
+  }, []);
+
+  const togglePersistentProfile = () => {
+    const next = !persistentProfile;
+    setPersistentProfile(next);
+    tauriInvoke("browser_set_persistent_profile", { enabled: next })
+      .then(() => setProfilePendingRestart(true))
+      .catch(() => setPersistentProfile(!next));
+  };
 
   const loadAll = async () => {
     setLoading(true);
@@ -117,6 +149,35 @@ export function SettingsPanel() {
                 )}
               </div>
             </div>
+
+            {persistentProfile !== null && (
+              <div className="rounded-md border border-border bg-card p-3">
+                <div className="mb-2 flex items-center gap-1.5 text-xs font-medium">
+                  <HardDrive size={14} />
+                  <span>Browser Profile</span>
+                </div>
+                <button
+                  onClick={togglePersistentProfile}
+                  className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-xs transition-colors text-muted-foreground hover:bg-muted/50"
+                  data-testid="persistent-profile-toggle"
+                >
+                  <div className="text-left">
+                    <span className="font-medium text-foreground">Persistent profile</span>
+                    <span className="ml-2 text-[10px]">
+                      Keep cookies &amp; logins across restarts
+                    </span>
+                  </div>
+                  {persistentProfile && <Check size={12} className="text-emerald-400" />}
+                </button>
+                <p className="mt-1 px-2 text-[10px] text-muted-foreground">
+                  Off by default: every launch uses a fresh throwaway profile that is
+                  wiped on exit (forensic safety).
+                  {profilePendingRestart && (
+                    <span className="text-amber-400"> Applies after a browser restart.</span>
+                  )}
+                </p>
+              </div>
+            )}
 
             <div className="rounded-md border border-border bg-card p-3">
               <div className="mb-2 flex items-center gap-1.5 text-xs font-medium">

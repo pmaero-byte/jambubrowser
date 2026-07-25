@@ -247,7 +247,12 @@ async def shield_stats():
 
 @router.post("/shadow/start")
 async def start_shadow_browser():
-    """Start the autonomous shadow browser background loop."""
+    """Start the autonomous shadow browser background loop.
+
+    EXPERIMENTAL — gated behind JAMBU_ENABLE_EXPERIMENTAL=1 (501 otherwise).
+    """
+    from backend.core.experimental import require_experimental
+    require_experimental("Shadow browser")
     try:
         from backend.modules.shadow_browser import get_shadow_browser
         await get_shadow_browser().start()
@@ -288,7 +293,12 @@ async def remove_shadow_interest(name: str):
 
 @router.post("/shadow/stop")
 async def stop_shadow_browser():
-    """Stop the shadow browser background loop."""
+    """Stop the shadow browser background loop.
+
+    EXPERIMENTAL — gated behind JAMBU_ENABLE_EXPERIMENTAL=1 (501 otherwise).
+    """
+    from backend.core.experimental import require_experimental
+    require_experimental("Shadow browser")
     try:
         from backend.modules.shadow_browser import get_shadow_browser
         await get_shadow_browser().stop()

@@ -111,7 +111,10 @@ release closes every P2 item from the most recent improvement audit.
 - Exposes all Jambubrowser features as MCP tools for AI assistants.
   stdio + HTTP/SSE transports.
 
-**Tests — 336 pass at time of release (575 pass / 33 fail as of Jun 2026, with 26 legacy failures in phase2-5 tests)**
+**Tests — 336 passed at the time of this release.** The suite has grown
+substantially since; run `python3 -m pytest tests/` for the current
+pass/fail count (see README → Testing) instead of relying on any number
+recorded here.
 | File | Tests | Coverage |
 |---|---|---|
 | `test_core_security.py` | 41 | `is_safe_url`, `safe_filename`, etc. |

@@ -168,14 +168,19 @@ async def agent_run(req: AgentRunRequest):
         context_str = ""
 
     agent = get_agent()
-    agent.max_steps = req.max_steps
-    agent.max_tokens = req.max_tokens
-    agent.max_seconds = req.max_seconds
+    # Budgets are passed per run (not set on the shared singleton) so each
+    # request's limits apply only to its own run and concurrent requests
+    # cannot clobber each other.
+    budgets = {
+        "max_steps": req.max_steps,
+        "max_tokens": req.max_tokens,
+        "max_seconds": req.max_seconds,
+    }
 
     if req.stream:
         async def gen():
             try:
-                async for event in agent.run(req.query, user_id=req.user_id, context=context_str):
+                async for event in agent.run(req.query, user_id=req.user_id, context=context_str, **budgets):
                     yield event.to_sse()
                 await broadcast_agent_state(req.user_id, "reading", zone="cabinet")
                 await broadcast_task_end(req.user_id, task_id, status="completed")
@@ -188,7 +193,7 @@ async def agent_run(req: AgentRunRequest):
         return StreamingResponse(gen(), media_type="text/event-stream")
     else:
         try:
-            result = await agent.run_to_completion(req.query, user_id=req.user_id, context=context_str)
+            result = await agent.run_to_completion(req.query, user_id=req.user_id, context=context_str, **budgets)
             await broadcast_agent_state(req.user_id, "reading", zone="cabinet")
             await broadcast_task_end(
                 req.user_id, task_id, status="completed", result_preview=result.answer[:200]

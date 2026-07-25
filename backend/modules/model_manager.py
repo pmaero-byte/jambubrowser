@@ -2,18 +2,18 @@
 Local Model Manager
 ====================
 Pull, manage, and monitor local AI models with a focus on
-Google Gemma 4 models for fully local intelligence.
+Google Gemma 3 models for fully local intelligence.
 
 Supports:
-- Ollama (recommended): `ollama pull gemma4:12b`
+- Ollama (recommended): `ollama pull gemma3:12b`
 - llama.cpp: via llama-server with GGUF files
 - HuggingFace Hub: direct GGUF downloads
 
-Gemma 4 variants available locally:
-- gemma4:1b  (lightweight, ~0.8GB)
-- gemma4:4b  (balanced, ~2.4GB)
-- gemma4:12b (recommended, ~7GB)
-- gemma4:27b (powerful, ~16GB)
+Gemma 3 variants available locally:
+- gemma3:1b  (lightweight, ~0.8GB)
+- gemma3:4b  (balanced, ~2.4GB)
+- gemma3:12b (recommended, ~7GB)
+- gemma3:27b (powerful, ~16GB)
 """
 
 import asyncio
@@ -35,47 +35,47 @@ except ImportError:
     make_async_client = httpx.AsyncClient
 
 
-# Gemma 4 model definitions
+# Gemma 3 model definitions
 GEMMA4_MODELS = {
-    "gemma4:1b": {
-        "name": "gemma4:1b",
-        "family": "gemma4",
+    "gemma3:1b": {
+        "name": "gemma3:1b",
+        "family": "gemma3",
         "size": "1B",
         "disk_gb": 0.8,
         "ram_gb": 2,
         "context": 8192,
         "quantization": "Q4_K_M",
-        "description": "Lightweight Gemma 4 - ideal for quick queries and edge devices",
+        "description": "Lightweight Gemma 3 - ideal for quick queries and edge devices",
     },
-    "gemma4:4b": {
-        "name": "gemma4:4b",
-        "family": "gemma4",
+    "gemma3:4b": {
+        "name": "gemma3:4b",
+        "family": "gemma3",
         "size": "4B",
         "disk_gb": 2.4,
         "ram_gb": 4,
         "context": 8192,
         "quantization": "Q4_K_M",
-        "description": "Balanced Gemma 4 - good for general research tasks",
+        "description": "Balanced Gemma 3 - good for general research tasks",
     },
-    "gemma4:12b": {
-        "name": "gemma4:12b",
-        "family": "gemma4",
+    "gemma3:12b": {
+        "name": "gemma3:12b",
+        "family": "gemma3",
         "size": "12B",
         "disk_gb": 7.0,
         "ram_gb": 8,
         "context": 8192,
         "quantization": "Q4_K_M",
-        "description": "Recommended Gemma 4 - excellent reasoning and research capabilities",
+        "description": "Recommended Gemma 3 - excellent reasoning and research capabilities",
     },
-    "gemma4:27b": {
-        "name": "gemma4:27b",
-        "family": "gemma4",
+    "gemma3:27b": {
+        "name": "gemma3:27b",
+        "family": "gemma3",
         "size": "27B",
         "disk_gb": 16.0,
         "ram_gb": 20,
         "context": 8192,
         "quantization": "Q4_K_M",
-        "description": "Powerful Gemma 4 - maximum intelligence for complex analysis",
+        "description": "Powerful Gemma 3 - maximum intelligence for complex analysis",
     },
 }
 
@@ -115,16 +115,16 @@ class ModelManager:
     @staticmethod
     def get_default_model() -> str:
         """Get the recommended default model."""
-        return os.environ.get("JAMBU_DEFAULT_MODEL", "gemma4:12b")
+        return os.environ.get("JAMBU_DEFAULT_MODEL", "gemma3:12b")
 
     @staticmethod
     def get_vision_model() -> str:
         """Get the recommended vision-capable model."""
-        return os.environ.get("JAMBU_VISION_MODEL", "gemma4:12b")
+        return os.environ.get("JAMBU_VISION_MODEL", "gemma3:12b")
 
     @staticmethod
     def get_available_models() -> List[dict]:
-        """Get all available Gemma 4 model definitions."""
+        """Get all available Gemma 3 model definitions."""
         return [
             {
                 "name": m["name"],
@@ -175,7 +175,7 @@ class ModelManager:
         Pull a model using Ollama.
 
         Args:
-            model_name: e.g. 'gemma4:12b', 'gemma4:4b', 'gemma4:1b'
+            model_name: e.g. 'gemma3:12b', 'gemma3:4b', 'gemma3:1b'
 
         Returns:
             dict with status, progress, and model info
@@ -342,7 +342,7 @@ class ModelManager:
         llamacpp_models = await self.get_llamacpp_models()
         all_models = ollama_models + llamacpp_models
 
-        # Add Gemma 4 models that aren't installed yet
+        # Add Gemma 3 models that aren't installed yet
         installed_names = {m.name for m in all_models}
         for name, info in GEMMA4_MODELS.items():
             if name not in installed_names:
@@ -382,9 +382,9 @@ class ModelManager:
             "message": f"Model '{model_name}' not found",
         }
 
-    async def setup_gemma4(self, model_size: str = "12b") -> Dict:
+    async def setup_gemma3(self, model_size: str = "12b") -> Dict:
         """
-        One-click Gemma 4 setup. Pulls the recommended model.
+        One-click Gemma 3 setup. Pulls the recommended model.
 
         Args:
             model_size: '1b', '4b', '12b', or '27b'
@@ -392,12 +392,12 @@ class ModelManager:
         Returns:
             Setup result dict
         """
-        model_name = f"gemma4:{model_size}"
+        model_name = f"gemma3:{model_size}"
 
         if model_name not in GEMMA4_MODELS:
             return {
                 "status": "error",
-                "message": f"Unknown Gemma 4 size: {model_size}. Use: 1b, 4b, 12b, 27b",
+                "message": f"Unknown Gemma 3 size: {model_size}. Use: 1b, 4b, 12b, 27b",
             }
 
         # Check if Ollama is available
@@ -409,8 +409,8 @@ class ModelManager:
                 "setup_steps": [
                     "1. Install Ollama: curl -fsSL https://ollama.com/install.sh | sh",
                     "2. Start Ollama: ollama serve",
-                    "3. Pull model: ollama pull gemma4:12b",
-                    "4. Test: ollama run gemma4:12b 'Hello'",
+                    "3. Pull model: ollama pull gemma3:12b",
+                    "4. Test: ollama run gemma3:12b 'Hello'",
                 ],
             }
 
@@ -428,7 +428,7 @@ class ModelManager:
 
     async def recommend_model(self, available_ram_gb: float = None) -> Dict:
         """
-        Recommend the best Gemma 4 model based on available RAM.
+        Recommend the best Gemma 3 model based on available RAM.
 
         Args:
             available_ram_gb: Available system RAM (auto-detected if None)
@@ -444,8 +444,8 @@ class ModelManager:
                 available_ram_gb = 8  # Conservative default
 
         recommendations = [
-            ("gemma4:27b", 20), ("gemma4:12b", 8),
-            ("gemma4:4b", 4), ("gemma4:1b", 2),
+            ("gemma3:27b", 20), ("gemma3:12b", 8),
+            ("gemma3:4b", 4), ("gemma3:1b", 2),
         ]
 
         for model_name, min_ram in recommendations:
@@ -462,7 +462,7 @@ class ModelManager:
                     ],
                 }
 
-        return {"recommended": "gemma4:1b", "reason": "Minimum viable model"}
+        return {"recommended": "gemma3:1b", "reason": "Minimum viable model"}
 
     async def close(self):
         if self._http_client:

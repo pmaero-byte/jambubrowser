@@ -33,8 +33,8 @@ from ..config import LLMConfig
 
 NAME = "minimax"
 MODELS = [
-    "MiniMax-M2.7",
-    "MiniMax-M3",
+    "MiniMax-M2",
+    "MiniMax-M1",
     "MiniMax-Text-01",
 ]
 supports_tools = True

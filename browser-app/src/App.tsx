@@ -174,7 +174,6 @@ export default function App() {
   const renderCanvas = () => {
     switch (activeTab) {
       case "chat":
-      case "plan":
         return <ChatPane agentEvents={agentEvents} onSend={handleSend} onStop={handleStop} />;
       case "browser":
         return (typeof window !== "undefined" && "__TAURI__" in window)
@@ -183,7 +182,6 @@ export default function App() {
       case "logs":
         return <AuditLogViewer />;
       case "memory":
-      case "knowledge":
         return <MemoryPanel />;
       case "missions":
         return <MissionsPanel />;

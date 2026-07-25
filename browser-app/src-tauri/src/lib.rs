@@ -160,10 +160,9 @@ pub fn run() {
                 let chrome_path = find_chrome();
                 eprintln!("[jambu] Using Chrome at: {}", chrome_path);
 
-                let profile_dir = std::env::temp_dir()
-                    .join(format!("jambubrowser-chrome-profile-{}", chromium::manager::uuid_v4_like()));
+                let (profile_dir, persistent) = chromium::manager::initial_profile_dir();
 
-                match ChromiumManager::launch(&chrome_path, 9222, profile_dir).await {
+                match ChromiumManager::launch(&chrome_path, 9222, profile_dir, persistent).await {
                     Ok(mgr) => {
                         eprintln!("[jambu] Chromium engine started on port 9222");
                         let mut locked = state.lock().await;
@@ -196,12 +195,19 @@ pub fn run() {
             commands::chromium::browser_close_tab,
             commands::chromium::browser_capture_screenshot,
             commands::chromium::browser_evaluate,
+            commands::chromium::browser_mouse_event,
+            commands::chromium::browser_key_event,
+            commands::chromium::browser_type_text,
             commands::chromium::browser_list_tabs,
             commands::chromium::browser_get_tab_info,
             commands::chromium::browser_get_cookies,
             commands::chromium::browser_clear_cookies,
             commands::chromium::browser_delete_cookie,
             commands::chromium::browser_list_extensions,
+            commands::chromium::browser_set_extension_enabled,
+            commands::chromium::browser_get_settings,
+            commands::chromium::browser_set_persistent_profile,
+            commands::chromium::browser_restart,
             commands::chromium::browser_run_audit,
             commands::chromium::browser_sync_tab,
             commands::chromium::browser_set_adblock,

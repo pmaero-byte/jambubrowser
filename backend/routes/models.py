@@ -11,7 +11,7 @@ router = APIRouter(tags=["models"])
 
 @router.get("/models/available")
 async def list_available_models():
-    """List available Gemma 4 models with specs."""
+    """List available Gemma 3 models with specs."""
     from backend.modules.model_manager import get_model_manager
     mgr = get_model_manager()
     return mgr.list_available()
@@ -50,7 +50,7 @@ async def recommend_model():
 
 
 @router.post("/models/setup")
-async def setup_gemma4(model_size: str = "12b"):
+async def setup_gemma3(model_size: str = "12b"):
     """One-click model setup."""
     from backend.modules.model_manager import get_model_manager
     mgr = get_model_manager()
@@ -77,7 +77,7 @@ async def mlx_status():
 
 
 @router.post("/mlx/server/start")
-async def mlx_start(model: str = "gemma4:12b", port: int = 8080):
+async def mlx_start(model: str = "gemma3:12b", port: int = 8080):
     """Start the MLX LM server."""
     from backend.modules.mlx_provider import get_mlx_provider
     provider = get_mlx_provider()
@@ -101,7 +101,7 @@ async def mlx_models():
 
 
 @router.post("/mlx/models/download")
-async def mlx_download(model_id: str = "gemma4:12b"):
+async def mlx_download(model_id: str = "gemma3:12b"):
     """Download an MLX model from HuggingFace."""
     from backend.modules.mlx_provider import get_mlx_provider
     provider = get_mlx_provider()
@@ -112,7 +112,7 @@ async def mlx_download(model_id: str = "gemma4:12b"):
 async def mlx_generate_endpoint(
     prompt: str,
     system: Optional[str] = None,
-    model: str = "gemma4:12b",
+    model: str = "gemma3:12b",
     max_tokens: int = 500,
     temperature: float = 0.7,
 ):

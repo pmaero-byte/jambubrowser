@@ -1,6 +1,11 @@
 """
 P2P Discovery & Mesh Networking
 ================================
+NOTE — single-node in practice: this works, but only finds peers when other
+Jambubrowser nodes run on the same LAN; on a typical single-node install
+discovery returns nothing and the mesh features are inert.
+See docs/FEATURE_MAP.md.
+
 Real peer-to-peer node discovery using mDNS/Zeroconf (Bonjour on macOS).
 Enables Jambubrowser nodes to find each other on the local network
 and exchange capabilities.
@@ -85,7 +90,7 @@ class P2PDiscovery:
             "missions", "knowledge_graph", "rag",
         ]
         self._version = "2.0.0"
-        self._model_name = "gemma-4-12b"
+        self._model_name = "gemma-3-12b"
         self._http_client: Optional[httpx.AsyncClient] = None
 
     async def _get_client(self) -> httpx.AsyncClient:

@@ -1,6 +1,11 @@
 """
 Federated RAG - Privacy-First P2P Knowledge Sharing
 =====================================================
+NOTE — single-node in practice: queries go to trusted peers discovered via
+`p2p_discovery`; with no other Jambubrowser nodes on the LAN there are no
+peers and federated queries return empty results.
+See docs/FEATURE_MAP.md.
+
 Privacy-preserving peer-to-peer vector search that enables
 knowledge sharing across Jambubrowser nodes without exposing
 raw data.

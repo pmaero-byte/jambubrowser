@@ -168,9 +168,21 @@ class Agent:
         user_id: str = "default",
         context: str = "",
         run_id: Optional[str] = None,
+        max_steps: Optional[int] = None,
+        max_tokens: Optional[int] = None,
+        max_seconds: Optional[float] = None,
     ) -> AsyncIterator[AgentEvent]:
-        """Run the agent loop, yielding events as it goes."""
+        """Run the agent loop, yielding events as it goes.
+
+        Per-run budget overrides (max_steps/max_tokens/max_seconds) apply to
+        THIS run only; when omitted, the instance defaults are used. They are
+        resolved into locals so concurrent runs on a shared Agent instance
+        never mutate each other's budgets.
+        """
         run_id = run_id or uuid.uuid4().hex[:12]
+        max_steps = self.max_steps if max_steps is None else max_steps
+        max_tokens = self.max_tokens if max_tokens is None else max_tokens
+        max_seconds = self.max_seconds if max_seconds is None else max_seconds
         started = time.monotonic()
         total_usage = Usage()
         steps_executed = 0
@@ -197,7 +209,7 @@ class Agent:
                 query,
                 available_tools=self.tools.list_names(),
                 user_context=context,
-                max_steps=self.max_steps,
+                max_steps=max_steps,
                 prompt_template=(
                     self._prompts.planner_user_template if self._prompts else None
                 ),
@@ -211,15 +223,15 @@ class Agent:
         # Step 1..N: Execute the plan
         answer_produced = False
         for step_idx, step in enumerate(plan.steps):
-            if steps_executed >= self.max_steps:
-                yield log_event(run_id, "warn", f"max_steps={self.max_steps} reached")
+            if steps_executed >= max_steps:
+                yield log_event(run_id, "warn", f"max_steps={max_steps} reached")
                 break
             elapsed = time.monotonic() - started
-            if elapsed > self.max_seconds:
-                yield log_event(run_id, "warn", f"max_seconds={self.max_seconds} exceeded")
+            if elapsed > max_seconds:
+                yield log_event(run_id, "warn", f"max_seconds={max_seconds} exceeded")
                 break
-            if total_usage.total_tokens >= self.max_tokens:
-                yield log_event(run_id, "warn", f"max_tokens={self.max_tokens} reached")
+            if total_usage.total_tokens >= max_tokens:
+                yield log_event(run_id, "warn", f"max_tokens={max_tokens} reached")
                 break
 
             step.status = StepStatus.RUNNING
@@ -247,7 +259,7 @@ class Agent:
                     step,
                     {"error": str(e)},
                     available_tools=self.tools.list_names(),
-                    max_steps=self.max_steps - steps_executed,
+                    max_steps=max_steps - steps_executed,
                     prompt_template=(
                         self._prompts.replanner_user_template if self._prompts else None
                     ),
@@ -266,7 +278,7 @@ class Agent:
                     step,
                     {"error": tool_result.error},
                     available_tools=self.tools.list_names(),
-                    max_steps=self.max_steps - steps_executed,
+                    max_steps=max_steps - steps_executed,
                     prompt_template=(
                         self._prompts.replanner_user_template if self._prompts else None
                     ),
@@ -321,7 +333,7 @@ class Agent:
                 new_plan = await replan(
                     query, step, verdict.to_dict(),
                     available_tools=self.tools.list_names(),
-                    max_steps=self.max_steps - steps_executed,
+                    max_steps=max_steps - steps_executed,
                     prompt_template=(
                         self._prompts.replanner_user_template if self._prompts else None
                     ),
@@ -378,10 +390,24 @@ class Agent:
         user_id: str = "default",
         context: str = "",
         run_id: Optional[str] = None,
+        max_steps: Optional[int] = None,
+        max_tokens: Optional[int] = None,
+        max_seconds: Optional[float] = None,
     ) -> AgentRunResult:
-        """Run to completion, returning the final AgentRunResult."""
+        """Run to completion, returning the final AgentRunResult.
+
+        Budget overrides are forwarded to run() and apply to this run only.
+        """
         result: Optional[AgentRunResult] = None
-        async for event in self.run(query, user_id=user_id, context=context, run_id=run_id):
+        async for event in self.run(
+            query,
+            user_id=user_id,
+            context=context,
+            run_id=run_id,
+            max_steps=max_steps,
+            max_tokens=max_tokens,
+            max_seconds=max_seconds,
+        ):
             if event.type == EventType.RUN_COMPLETED:
                 # Get the most recent result
                 if self._run_history:
@@ -489,10 +515,11 @@ def get_agent() -> "Agent":
 
     The singleton owns the in-memory ``_run_history`` list, so consecutive
     requests via ``/v2/agent/run`` accumulate history that ``/v2/agent/history``
-    can read. The per-request max_steps/max_tokens/max_seconds passed to
-    ``Agent(...)`` apply to the FIRST run only — subsequent runs use whatever
-    the singleton was constructed with. The first call to this function
-    establishes the configuration.
+    can read. Per-request budgets (max_steps/max_tokens/max_seconds) must be
+    passed as keyword arguments to ``run()`` / ``run_to_completion()`` — they
+    apply to that run only. Do NOT mutate ``agent.max_steps`` etc. on the
+    singleton: that races concurrent requests and leaks one request's budget
+    into the next.
     """
     global _agent_instance
     if _agent_instance is None:

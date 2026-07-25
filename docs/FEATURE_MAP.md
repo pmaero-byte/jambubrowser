@@ -46,8 +46,11 @@ verifier) with shared memory and budgets, instead of trusting a single model.
 - **4-store memory** (`backend/memory/`, ~500 LOC) — user profile, session,
   semantic (embeddings), procedural (success rates). Hybrid retrieval
   (60% vector + 30% recency + 10% FTS).
-- **HarnessX orchestrator** (`backend/agent/harness.py`) — multi-agent
-  AEGIS pipeline, co-evolution, digester, evolution.
+- **HarnessX orchestrator** (`backend/agent/harness.py`) — typed harness
+  configs, edit algebra, config store. The AEGIS evolution pipeline
+  (`backend/agent/evolution.py`) and co-evolution trainer
+  (`backend/agent/coevolution.py`) are EXPERIMENTAL: not wired into any
+  route, CLI command, or MCP tool — importable as a library only.
 - **6 AI Employees** (`backend/employees/`, 8 files) — SecurityAuditor,
   PerformanceInspector, UXUIReviewer, SEOAnalyzer, AccessibilityAuditor,
   CodeQualityScout. Parallel dispatch from `backend/routes/audit.py`.
@@ -80,6 +83,18 @@ verifier) with shared memory and budgets, instead of trusting a single model.
    zero; procedural memory exists but isn't consulted on plan generation.
 3. **Goal orchestrator has 593 LOC but no visible UI surface** beyond
    `/goal/*` routes — users can't see goals in the app.
+4. **AEGIS evolution / co-evolution pipeline is experimental and unwired**
+   (`backend/agent/evolution.py`, `backend/agent/coevolution.py`, ~1.8k
+   LOC) — no route, CLI, or MCP surface invokes it; only tests and
+   benchmarks import it. Either wire it in or move it out of the shipped
+   package.
+5. **Harness bridge targets infrastructure that isn't shipped**
+   (`backend/modules/harness_bridge.py`) — every `/harness/*` endpoint
+   delegates to an external "Harness Gateway" at `localhost:9090` that
+   doesn't exist in this repo or docker-compose. The endpoints (and the
+   MCP tools calling them) are now gated behind
+   `JAMBU_ENABLE_EXPERIMENTAL=1` and return 501 by default instead of
+   failing against a dead gateway.
 
 ---
 
@@ -160,14 +175,18 @@ federation — the information-access surface a normal browser can't offer.
   extraction, relationship inference, topic clustering, persistence.
   Exposed via `/knowledge/*` (ingest, graph, search, stats, entity,
   clusters).
-- **P2P discovery** (`backend/modules/p2p_discovery.py`) — UDP broadcast
-  peer discovery for multi-node research mesh.
+- **P2P discovery** (`backend/modules/p2p_discovery.py`) — mDNS/UDP
+  peer discovery for a multi-node research mesh. Single-node in practice:
+  finds nothing unless other Jambubrowser nodes run on the same LAN.
 - **Federated RAG** (`backend/modules/federated_rag.py`) — query trusted
-  peers for answers; routes at `/p2p/*`.
+  peers for answers; routes at `/p2p/*`. Returns empty results with no
+  peers on the LAN.
 - **Risk shield** (`backend/modules/risk_shield.py`) — URL risk
   assessment before visiting.
 - **Shadow browser** (`backend/modules/shadow_browser.py`) — autonomous
-  background research without user interaction.
+  background research without user interaction. Nothing starts it on a
+  schedule; `POST /shadow/start` and `/shadow/stop` are gated behind
+  `JAMBU_ENABLE_EXPERIMENTAL=1` (501 by default).
 - **Privacy manager** (`backend/core/privacy.py`, 433 LOC) — 4 modes
   (Standard / Enhanced / Maximum / Local-Only), PII detection,
   tracking protection, network isolation.
@@ -193,6 +212,12 @@ federation — the information-access surface a normal browser can't offer.
    "trusted" but the user can't see or revoke.
 3. **Missions have no results browser** — you can schedule them but
    seeing what they collected requires diving into the DB.
+4. **P2P / federated / consensus features are single-node in practice** —
+   the routes and MCP tools work, but with no second Jambubrowser node on
+   the LAN discovery finds no peers, federated queries return empty, and
+   consensus votes are local-only. They remain enabled (they are
+   functional, just inert alone); consider hiding them in the UI until a
+   peer is actually discovered.
 
 ---
 

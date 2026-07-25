@@ -5,7 +5,9 @@
 ```
 jambubrowser/
 ├── backend/
-│   ├── engine.py              # FastAPI app + all endpoints (3500+ lines)
+│   ├── engine.py              # FastAPI app factory (~320 lines): middleware + router includes
+│   ├── routes/                # Domain route modules (research, browser, vault, knowledge, ...)
+│   ├── engine_runtime.py      # Shared runtime state (ConnectionManager, broadcast helpers)
 │   ├── core/
 │   │   ├── database.py        # SQLite + migrations + memory
 │   │   ├── privacy.py         # PII detection + network isolation
@@ -38,19 +40,19 @@ jambubrowser/
 │       ├── federated_rag.py   # Federated RAG
 │       ├── harness_bridge.py  # Harness integration
 │       └── youtube.py         # YouTube analysis
-├── frontend/jambubrowser-ui/
+├── browser-app/               # Tauri 2 desktop app + web UI (React 19 + Vite + Tailwind)
 │   ├── src/
-│   │   ├── App.tsx            # Main layout + state
-│   │   ├── App.css            # All styles
+│   │   ├── App.tsx            # AppShell layout + lazy-loaded panels
 │   │   ├── main.tsx           # Entry point
-│   │   ├── components/        # 13 React components
+│   │   ├── components/        # Feature panels (chat, browser, audit, vault, knowledge, ...)
+│   │   │   └── layout/        # AppShell, Sidebar, TopBar, StatusBar
+│   │   ├── store/             # Zustand app state
 │   │   └── utils/
-│   │       ├── api.ts         # HTTP + WebSocket helpers
-│   │       ├── useAgentWebSocket.ts  # Agent state hook
-│   │       └── useKeyboardShortcuts.ts  # Keyboard shortcuts
+│   │       ├── api.ts         # HTTP helpers
+│   │       └── useAgentWebSocket.ts  # Agent state hook
+│   ├── src-tauri/             # Rust shell: orchestrator, deep links, auto-updater
 │   ├── package.json
-│   ├── vite.config.ts
-│   └── tsconfig.json
+│   └── vite.config.ts
 ├── tests/
 │   ├── test_backend.py        # 22 unit tests
 │   └── test_e2e.py            # 30 E2E tests
@@ -61,7 +63,7 @@ jambubrowser/
 │   ├── FEATURES.md            # Feature map
 │   └── DEVELOPER_GUIDE.md     # This file
 └── models/
-    └── gemma-4-12b-it-Q4_K_M.gguf  # Local LLM
+    └── gemma-3-12b-it-Q4_K_M.gguf  # Local LLM
 ```
 
 ## Setup
@@ -85,9 +87,9 @@ python3 -m uvicorn backend.engine:app --host 127.0.0.1 --port 8001
 
 ### Frontend Setup
 ```bash
-cd frontend/jambubrowser-ui
+cd browser-app
 npm install
-npm run dev    # Development server on port 5173
+npm run dev    # Development server on port 1420
 npm run build  # Production build to dist/
 ```
 
@@ -96,8 +98,8 @@ npm run build  # Production build to dist/
 # Install Ollama
 curl -fsSL https://ollama.com/install.sh | sh
 
-# Pull Gemma 4 model
-ollama pull gemma4:12b-it-qat
+# Pull Gemma 3 model
+ollama pull gemma3:4b
 
 # Start Ollama
 ollama serve
@@ -125,22 +127,22 @@ python3 -m pytest tests/test_e2e.py -v
 
 ### Adding a New Endpoint
 
-1. Add request model in `engine.py`:
+1. Add request model and endpoint to the relevant module in `backend/routes/`
+   (or create a new one — see `backend/routes/system.py` for the pattern):
 ```python
 class MyRequest(BaseModel):
     field: str
     optional_field: str = ""
-```
 
-2. Add endpoint:
-```python
-@app.post("/my/endpoint")
+@router.post("/my/endpoint")
 async def my_endpoint(req: MyRequest):
     # Implementation
     return {"result": "success"}
 ```
 
-3. Add to Vite proxy in `vite.config.ts`:
+2. If you created a new route module, include its router in `backend/engine.py`.
+
+3. Add to Vite proxy in `browser-app/vite.config.ts` (if not already covered):
 ```typescript
 '/my': { target: 'http://localhost:8001', changeOrigin: true },
 ```
@@ -155,24 +157,20 @@ class TestMyEndpoint:
 
 ### Adding a New Frontend Component
 
-1. Create component in `src/components/MyComponent.tsx`:
+1. Create component in `browser-app/src/components/<feature>/MyComponent.tsx`:
 ```tsx
 export function MyComponent() {
-    return <div className="my-component">...</div>;
+    return <div className="...">...</div>;
 }
 ```
 
-2. Import and use in `App.tsx`:
+2. Import and use in `App.tsx` (large panels are lazy-loaded — follow the
+   existing `lazy(() => import(...))` pattern):
 ```tsx
-import { MyComponent } from "./components/MyComponent";
+import { MyComponent } from "./components/<feature>/MyComponent";
 ```
 
-3. Add CSS in `App.css`:
-```css
-.my-component {
-    /* styles */
-}
-```
+3. Style with Tailwind utility classes (the v4 UI does not use a monolithic `App.css`).
 
 ### Adding a New Backend Module
 
@@ -194,11 +192,11 @@ def get_my_module() -> MyModule:
     return _module
 ```
 
-2. Import in `engine.py` and add endpoint:
+2. Import in the relevant `backend/routes/` module and add an endpoint:
 ```python
 from backend.modules.my_module import get_my_module
 
-@app.get("/my/module")
+@router.get("/my/module")
 async def my_module_endpoint():
     return get_my_module().do_something()
 ```

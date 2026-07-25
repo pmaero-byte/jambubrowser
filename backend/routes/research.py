@@ -168,7 +168,7 @@ async def _brain_only_research(query: str) -> dict:
 async def _expand_query(query: str, client_id: str, llm_config: dict) -> list:
     cfg = _resolve_llm_config(llm_config)
     base_url = cfg.get("baseUrl", "http://localhost:11434/v1")
-    model_id = cfg.get("modelId", "gemma4:12b-it-qat")
+    model_id = cfg.get("modelId", "gemma3:4b")
     api_key = cfg.get("apiKey", "")
     provider = cfg.get("provider", "ollama")
 
@@ -206,7 +206,7 @@ async def _assess_url_risk(url: str, client_id: str, llm_config: Optional[dict])
     # an empty dict so the .get() chain doesn't crash on the first call.
     cfg = llm_config or {}
     base_url = cfg.get("baseUrl", "http://localhost:8080/v1")
-    model_id = cfg.get("modelId", "gemma-4-12b")
+    model_id = cfg.get("modelId", "gemma-3-12b")
     api_key = cfg.get("apiKey", "")
 
     prompt = f"Analyze this URL for security risks: '{url}'. Respond 'SAFE' or 'RISKY' with reason."

@@ -1,6 +1,12 @@
 """
 Shadow Browser - Autonomous Background Surfing
 ===============================================
+EXPERIMENTAL — nothing starts this on a schedule; it only runs when
+explicitly triggered via `POST /shadow/start`, which is gated behind
+JAMBU_ENABLE_EXPERIMENTAL=1 (returns 501 by default). The read-only
+`/shadow/stats` and `/shadow/interests` endpoints remain available.
+See docs/FEATURE_MAP.md.
+
 Low-resource background browsing agent that autonomously
 explores the web while idle, building a local knowledge base
 tailored to user interests.

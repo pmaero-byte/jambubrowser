@@ -2,6 +2,12 @@
 AEGIS Evolution Pipeline — Phases 2-3 of HarnessX Integration
 ===============================================================
 
+EXPERIMENTAL — not wired into the shipped product: no route, CLI command,
+MCP tool, or engine startup path invokes this module. It is importable as a
+library (used by tests/benchmarks and re-exported from `backend.agent`),
+but nothing in the running product executes an evolution run.
+See docs/FEATURE_MAP.md.
+
 Implements the trace-driven multi-agent harness evolution engine described in
 the HarnessX paper (§4.3-4.5). The pipeline is:
 

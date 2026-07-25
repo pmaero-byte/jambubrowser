@@ -11,10 +11,10 @@ python3 -m uvicorn backend.engine:app --host 127.0.0.1 --port 8001
 
 2. Start the frontend:
 ```bash
-cd frontend/jambubrowser-ui && npm run dev
+cd browser-app && npm run dev
 ```
 
-3. Open `http://localhost:5173`
+3. Open `http://localhost:1420`
 
 ### First Research Query
 

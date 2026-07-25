@@ -75,27 +75,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         except asyncio.CancelledError:
             pass
 
-    async def curiosity_loop():
-        try:
-            while True:
-                await asyncio.sleep(60)
-                try:
-                    from backend.core.database import get_db_cursor
-                    from backend.engine_runtime import LATEST_LLM_CONFIG
-                    with get_db_cursor() as cursor:
-                        cursor.execute("SELECT text FROM documents ORDER BY RANDOM() LIMIT 1")
-                        row = cursor.fetchone()
-                        if row:
-                            topic = row[0][:50]
-                            await manager.broadcast("all",
-                                f"🧪 Curiosity: Exploring subtopic from vault via {LATEST_LLM_CONFIG.get('modelId', 'local')}")
-                except Exception:
-                    pass
-        except asyncio.CancelledError:
-            pass
-
     tasks.append(safe_task(memory_audit(), "memory_audit"))
-    tasks.append(safe_task(curiosity_loop(), "curiosity_loop"))
 
     yield  # Application runs here
 

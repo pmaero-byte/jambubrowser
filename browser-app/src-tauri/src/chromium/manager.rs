@@ -15,14 +15,27 @@ use super::cdp::CdpClient;
 use super::downloads;
 use super::extensions::{self, Extension};
 use super::privacy;
+use super::settings;
 
 /// Make a fresh per-launch profile dir under the OS temp dir. Called
-/// from `launch` and again from `restart` so a crashed Chrome's state
-/// doesn't leak into the next session.
+/// from `initial_profile_dir` and `restart` when the user has NOT opted
+/// into a persistent profile (the default — "forensic safety").
 fn ensure_profile_dir() -> PathBuf {
     let dir = std::env::temp_dir().join(format!("jambubrowser-chrome-profile-{}", uuid_v4_like()));
     let _ = std::fs::create_dir_all(&dir);
     dir
+}
+
+/// Pick the Chrome profile dir for a launch based on persisted settings.
+/// Returns `(dir, persistent)`. Default is a fresh ephemeral temp dir;
+/// with `persistent_profile` on it's the stable config-dir profile that
+/// keeps cookies/logins across launches and is never wiped.
+pub fn initial_profile_dir() -> (PathBuf, bool) {
+    if settings::load().persistent_profile {
+        (settings::persistent_profile_dir(), true)
+    } else {
+        (ensure_profile_dir(), false)
+    }
 }
 
 /// Tiny random-suffix helper so each restart gets its own profile dir
@@ -49,8 +62,12 @@ pub struct ChromiumManager {
     cdp: CdpClient,
     /// Open tabs, keyed by Jambu tab ID
     tabs: HashMap<String, Tab>,
-    /// Chrome user data directory (temp dir that gets cleaned up on drop)
+    /// Chrome user data directory (temp dir that gets cleaned up on drop,
+    /// unless `persistent_profile` is set)
     profile_dir: PathBuf,
+    /// Whether `profile_dir` is the stable persistent profile. When true,
+    /// the dir is never wiped (Drop/shutdown/restart leave it alone).
+    persistent_profile: bool,
 }
 
 impl ChromiumManager {
@@ -60,10 +77,16 @@ impl ChromiumManager {
     /// * `chrome_path` — path to Chrome/Chromium executable
     /// * `debug_port` — port for CDP remote debugging (0 = auto-assign)
     /// * `profile_dir` — directory for Chrome user data (isolated profile)
+    /// * `persistent_profile` — true when `profile_dir` is the stable
+    ///   persistent profile and must survive exit/restart. Note: only one
+    ///   Chrome instance can use a given profile dir at a time; launching
+    ///   a second Jambubrowser instance with persistence on will fail at
+    ///   the debug-port check (the first instance owns the port anyway).
     pub async fn launch(
         chrome_path: &str,
         debug_port: u16,
         profile_dir: PathBuf,
+        persistent_profile: bool,
     ) -> Result<Self, String> {
         // Generate a short random profile name for isolation
         let port = if debug_port == 0 {
@@ -76,9 +99,11 @@ impl ChromiumManager {
         std::fs::create_dir_all(&profile_dir)
             .map_err(|e| format!("Failed to create profile dir: {e}"))?;
 
-        // Discover installed extensions and build --load-extension arg
-        let ext_dir = extensions::ensure_extensions_dir(&profile_dir);
-        let discovered_exts = extensions::discover_extensions(&ext_dir);
+        // Discover installed extensions and build --load-extension arg,
+        // skipping any the user has disabled in settings.
+        let ext_dir = extensions::ensure_extensions_dir();
+        let mut discovered_exts = extensions::discover_extensions(&ext_dir);
+        extensions::apply_enabled_state(&mut discovered_exts, &settings::load());
         let ext_arg = extensions::build_load_extension_arg(&discovered_exts);
 
         // Spawn Chromium with privacy-focused flags
@@ -128,6 +153,7 @@ impl ChromiumManager {
             cdp,
             tabs: HashMap::with_capacity(8),
             profile_dir,
+            persistent_profile,
         })
     }
 
@@ -235,6 +261,57 @@ impl ChromiumManager {
         self.cdp.evaluate(tab, expression).await
     }
 
+    /// Dispatch a mouse event to the tab (see CdpClient::dispatch_mouse_event).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn dispatch_mouse_event(
+        &self,
+        tab_id: &str,
+        event_type: &str,
+        x: f64,
+        y: f64,
+        button: &str,
+        click_count: i32,
+        delta_x: f64,
+        delta_y: f64,
+    ) -> Result<(), String> {
+        let tab = self
+            .tabs
+            .get(tab_id)
+            .ok_or_else(|| format!("Tab not found: {tab_id}"))?;
+        self.cdp
+            .dispatch_mouse_event(tab, event_type, x, y, button, click_count, delta_x, delta_y)
+            .await
+    }
+
+    /// Dispatch a key event to the tab (see CdpClient::dispatch_key_event).
+    pub async fn dispatch_key_event(
+        &self,
+        tab_id: &str,
+        event_type: &str,
+        key: &str,
+        code: &str,
+        text: Option<&str>,
+        windows_virtual_key_code: Option<i32>,
+        modifiers: i32,
+    ) -> Result<(), String> {
+        let tab = self
+            .tabs
+            .get(tab_id)
+            .ok_or_else(|| format!("Tab not found: {tab_id}"))?;
+        self.cdp
+            .dispatch_key_event(tab, event_type, key, code, text, windows_virtual_key_code, modifiers)
+            .await
+    }
+
+    /// Insert text into the tab's focused element (see CdpClient::insert_text).
+    pub async fn insert_text(&self, tab_id: &str, text: &str) -> Result<(), String> {
+        let tab = self
+            .tabs
+            .get(tab_id)
+            .ok_or_else(|| format!("Tab not found: {tab_id}"))?;
+        self.cdp.insert_text(tab, text).await
+    }
+
     /// Get all cookies for a tab.
     pub async fn get_cookies(&self, tab_id: &str) -> Result<Value, String> {
         let tab = self
@@ -309,15 +386,18 @@ impl ChromiumManager {
         self.tabs.values().map(TabInfo::from).collect()
     }
 
-    /// Discover and list all extensions in the extensions directory.
+    /// Discover and list all extensions in the extensions directory,
+    /// with each one's enabled state read from persisted settings.
     pub fn list_extensions(&self) -> Vec<Extension> {
-        let dir = extensions::ensure_extensions_dir(&self.profile_dir);
-        extensions::discover_extensions(&dir)
+        let dir = extensions::ensure_extensions_dir();
+        let mut exts = extensions::discover_extensions(&dir);
+        extensions::apply_enabled_state(&mut exts, &settings::load());
+        exts
     }
 
     /// Get the path to the extensions directory.
     pub fn extensions_dir(&self) -> PathBuf {
-        extensions::ensure_extensions_dir(&self.profile_dir)
+        extensions::ensure_extensions_dir()
     }
 
     /// Enable or disable ad/tracker blocking on a tab.
@@ -372,21 +452,35 @@ impl ChromiumManager {
     /// old CDP target IDs are no longer valid. Intended for the crash-
     /// recovery watchdog — a clean restart path is the frontend just
     /// calling shutdown() + relaunch from lib.rs.
+    ///
+    /// Settings (persistent profile, disabled extensions) are re-read
+    /// here, so toggling them and restarting the browser applies them
+    /// immediately — this backs the UI's "Restart browser now" action.
     pub async fn restart(&mut self) -> Result<(), String> {
         // Best-effort kill. We don't care if it returns an error
         // (process might already be dead).
         let _ = self.process.kill();
         let _ = self.process.wait();
-        // The old profile dir was tied to the dead Chrome session.
-        // Drop it so the new session starts with a clean slate.
-        let _ = std::fs::remove_dir_all(&self.profile_dir);
-        let profile_dir = ensure_profile_dir();
+
+        // Re-read settings so toggles made since launch take effect.
+        let persistent = settings::load().persistent_profile;
+
+        // Wipe the old profile only if it was ephemeral. The persistent
+        // dir is user data (cookies, logins) and must survive.
+        if !self.persistent_profile {
+            let _ = std::fs::remove_dir_all(&self.profile_dir);
+        }
+        let profile_dir = if persistent {
+            settings::persistent_profile_dir()
+        } else {
+            ensure_profile_dir()
+        };
 
         // Reuse the same port the previous Chrome was on. If that port
         // is still in TIME_WAIT we just retry on a different one; the
         // frontend reads the new port from `debug_port` after restart.
         let port = self.debug_port;
-        let mut next = Self::launch(&self.chrome_path, port, profile_dir).await?;
+        let mut next = Self::launch(&self.chrome_path, port, profile_dir, persistent).await?;
 
         // Move the new manager's state into self so the caller keeps
         // holding the same struct (Arc<Mutex<...>> doesn't need to know).
@@ -395,8 +489,9 @@ impl ChromiumManager {
         std::mem::swap(&mut self.debug_port, &mut next.debug_port);
         std::mem::swap(&mut self.cdp, &mut next.cdp);
         std::mem::swap(&mut self.profile_dir, &mut next.profile_dir);
+        std::mem::swap(&mut self.persistent_profile, &mut next.persistent_profile);
         // next now owns the dead process and dead profile_dir; its
-        // Drop will clean them up.
+        // Drop will clean them up (unless persistent).
 
         // Tab map is stale — CDP target IDs are gone with the old Chrome.
         self.tabs.clear();
@@ -432,8 +527,11 @@ impl ChromiumManager {
         let _ = self.process.kill();
         let _ = self.process.wait();
 
-        // Clean up profile directory
-        let _ = std::fs::remove_dir_all(&self.profile_dir);
+        // Clean up profile directory (ephemeral only — a persistent
+        // profile is user data and survives shutdown).
+        if !self.persistent_profile {
+            let _ = std::fs::remove_dir_all(&self.profile_dir);
+        }
     }
 }
 
@@ -492,7 +590,10 @@ impl Drop for ChromiumManager {
     fn drop(&mut self) {
         let _ = self.process.kill();
         let _ = self.process.wait();
-        // Best-effort cleanup — ignore errors on drop
-        let _ = std::fs::remove_dir_all(&self.profile_dir);
+        // Best-effort cleanup — ignore errors on drop. Persistent
+        // profiles are never wiped.
+        if !self.persistent_profile {
+            let _ = std::fs::remove_dir_all(&self.profile_dir);
+        }
     }
 }

@@ -29,46 +29,46 @@ except ImportError:
 # MLX Model Registry
 # ---------------------------------------------------------------------------
 
-MLX_GEMMA4_MODELS = {
-    "gemma4:12b": {
-        "hf_path": "mlx-community/gemma-4-12B-it-4bit",
-        "name": "Gemma 4 12B",
+MLX_GEMMA3_MODELS = {
+    "gemma3:12b": {
+        "hf_path": "mlx-community/gemma-3-12b-it-4bit",
+        "name": "Gemma 3 12B",
         "size": "12B",
         "quant": "4-bit",
         "disk_gb": 7.0,
         "ram_gb": 8,
-        "description": "Recommended Gemma 4 via MLX - 4-bit quantized instruction-tuned",
+        "description": "Recommended Gemma 3 via MLX - 4-bit quantized instruction-tuned",
     },
-    "gemma4:12b-mxfp4": {
-        "hf_path": "mlx-community/gemma-4-12B-mxfp4",
-        "name": "Gemma 4 12B MXFP4",
+    "gemma3:12b-mxfp4": {
+        "hf_path": "mlx-community/gemma-3-12b-mxfp4",
+        "name": "Gemma 3 12B MXFP4",
         "size": "12B",
         "quant": "MXFP4",
         "disk_gb": 7.5,
         "ram_gb": 8,
-        "description": "Gemma 4 12B with MXFP4 quantization via MLX",
+        "description": "Gemma 3 12B with MXFP4 quantization via MLX",
     },
-    "gemma4:12b-6bit": {
-        "hf_path": "mlx-community/gemma-4-12B-6bit",
-        "name": "Gemma 4 12B 6-bit",
+    "gemma3:12b-6bit": {
+        "hf_path": "mlx-community/gemma-3-12b-6bit",
+        "name": "Gemma 3 12B 6-bit",
         "size": "12B",
         "quant": "6-bit",
         "disk_gb": 11.0,
         "ram_gb": 12,
-        "description": "Gemma 4 12B with 6-bit quantization (higher quality, more RAM)",
+        "description": "Gemma 3 12B with 6-bit quantization (higher quality, more RAM)",
     },
-    "gemma4:12b-8bit": {
-        "hf_path": "mlx-community/gemma-4-12B-it-8bit",
-        "name": "Gemma 4 12B 8-bit",
+    "gemma3:12b-8bit": {
+        "hf_path": "mlx-community/gemma-3-12b-it-8bit",
+        "name": "Gemma 3 12B 8-bit",
         "size": "12B",
         "quant": "8-bit",
         "disk_gb": 12.7,
         "ram_gb": 16,
-        "description": "Gemma 4 12B with 8-bit quantization (highest quality)",
+        "description": "Gemma 3 12B with 8-bit quantization (highest quality)",
     },
 }
 
-MLX_DEFAULT_MODEL = "gemma4:12b"
+MLX_DEFAULT_MODEL = "gemma3:12b"
 MLX_DEFAULT_PORT = 8080
 MLX_SERVER_HOST = "127.0.0.1"
 
@@ -100,7 +100,7 @@ def is_mlx_server_running(port: int = MLX_DEFAULT_PORT) -> bool:
 
 
 def get_available_mlx_models() -> List[Dict]:
-    """Get list of all available MLX Gemma 4 model definitions."""
+    """Get list of all available MLX Gemma 3 model definitions."""
     return [
         {
             "id": mid,
@@ -112,7 +112,7 @@ def get_available_mlx_models() -> List[Dict]:
             "ram_gb": info["ram_gb"],
             "description": info["description"],
         }
-        for mid, info in MLX_GEMMA4_MODELS.items()
+        for mid, info in MLX_GEMMA3_MODELS.items()
     ]
 
 
@@ -149,7 +149,7 @@ def find_local_mlx_models() -> List[Dict]:
 
 def resolve_mlx_model_path(model_id: str) -> str:
     """Resolve a model ID or HF path to a local cache path."""
-    info = MLX_GEMMA4_MODELS.get(model_id)
+    info = MLX_GEMMA3_MODELS.get(model_id)
     if info:
         return info["hf_path"]
     return model_id  # Treat as raw HF path
@@ -321,9 +321,9 @@ def _clear_model_cache():
 
 
 def _is_vlm_model(model_id: str) -> bool:
-    """Check if a model ID likely requires mlx_vlm (Gemma 4 is always VLM)."""
+    """Check if a model ID likely requires mlx_vlm (Gemma 3 is always VLM)."""
     hf_path = resolve_mlx_model_path(model_id).lower()
-    vlm_keywords = ["gemma-4", "gemma4", "vlm", "vision"]
+    vlm_keywords = ["gemma-3", "gemma3", "vlm", "vision"]
     return any(kw in hf_path for kw in vlm_keywords)
 
 

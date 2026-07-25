@@ -58,7 +58,7 @@ class LLMConfig:
 
     # Anthropic
     anthropic_api_key: str = ""
-    anthropic_model: str = "claude-sonnet-4-6"
+    anthropic_model: str = "claude-sonnet-4-5"
     anthropic_base_url: str = "https://api.anthropic.com"
 
     # OpenAI
@@ -68,16 +68,16 @@ class LLMConfig:
 
     # Ollama
     ollama_base_url: str = "http://localhost:11434/v1"
-    ollama_model: str = "gemma4:12b-it-qat"
+    ollama_model: str = "gemma3:4b"
 
     # MLX
     mlx_base_url: str = "http://127.0.0.1:8080/v1"
-    mlx_model: str = "gemma4:12b"
+    mlx_model: str = "gemma-3-12b-it-4bit"
 
     # MiniMax
     minimax_api_key: str = ""
     minimax_base_url: str = "https://api.minimax.io/v1"
-    minimax_model: str = "MiniMax-M2.7"
+    minimax_model: str = "MiniMax-M2"
 
     # Behavior
     auto_health_check: bool = True
@@ -96,18 +96,18 @@ class LLMConfig:
             max_tokens=_env_int("JAMBU_LLM_MAX_TOKENS", 1024),
             temperature=_env_float("JAMBU_LLM_TEMPERATURE", 0.3),
             anthropic_api_key=_env("ANTHROPIC_API_KEY", ""),
-            anthropic_model=_env("JAMBU_LLM_ANTHROPIC_MODEL", "claude-sonnet-4-6"),
+            anthropic_model=_env("JAMBU_LLM_ANTHROPIC_MODEL", "claude-sonnet-4-5"),
             anthropic_base_url=_env("JAMBU_LLM_ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
             openai_api_key=_env("OPENAI_API_KEY", ""),
             openai_model=_env("JAMBU_LLM_OPENAI_MODEL", "gpt-4o"),
             openai_base_url=_env("JAMBU_LLM_OPENAI_BASE_URL", "https://api.openai.com/v1"),
             ollama_base_url=_env("JAMBU_LLM_OLLAMA_BASE_URL", _env("OLLAMA_BASE_URL", "http://localhost:11434/v1")),
-            ollama_model=_env("JAMBU_LLM_OLLAMA_MODEL", _env("OLLAMA_MODEL", "gemma4:12b-it-qat")),
+            ollama_model=_env("JAMBU_LLM_OLLAMA_MODEL", _env("OLLAMA_MODEL", "gemma3:4b")),
             mlx_base_url=_env("JAMBU_LLM_MLX_BASE_URL", "http://127.0.0.1:8080/v1"),
-            mlx_model=_env("JAMBU_LLM_MLX_MODEL", "gemma4:12b"),
+            mlx_model=_env("JAMBU_LLM_MLX_MODEL", "gemma-3-12b-it-4bit"),
             minimax_api_key=_env("MINIMAX_API_KEY", ""),
             minimax_base_url=_env("JAMBU_LLM_MINIMAX_BASE_URL", "https://api.minimax.io/v1"),
-            minimax_model=_env("JAMBU_LLM_MINIMAX_MODEL", "MiniMax-M2.7"),
+            minimax_model=_env("JAMBU_LLM_MINIMAX_MODEL", "MiniMax-M2"),
             auto_health_check=_env_bool("JAMBU_LLM_AUTO_HEALTH_CHECK", True),
             force_local_only=_env_bool("JAMBU_LLM_LOCAL_ONLY", False),
         )

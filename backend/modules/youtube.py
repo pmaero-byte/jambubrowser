@@ -222,7 +222,7 @@ class YouTubeAnalyzer:
                            llm_config: dict) -> str:
         """Summarize transcript using LLM."""
         base_url = llm_config.get("baseUrl", "http://localhost:8080/v1")
-        model_id = llm_config.get("modelId", "gemma-4-12b")
+        model_id = llm_config.get("modelId", "gemma-3-12b")
         api_key = llm_config.get("apiKey", "")
 
         prompt = (

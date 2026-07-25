@@ -61,20 +61,20 @@ class TestBaseTypes:
     def test_cost_estimation_local(self):
         from backend.llm.base import Usage, estimate_cost_for_model
         u = Usage(prompt_tokens=1000, completion_tokens=500, total_tokens=1500)
-        assert estimate_cost_for_model("ollama", "gemma4:12b", u) == 0.0
-        assert estimate_cost_for_model("mlx", "gemma-4-12b", u) == 0.0
+        assert estimate_cost_for_model("ollama", "gemma3:12b", u) == 0.0
+        assert estimate_cost_for_model("mlx", "gemma-3-12b", u) == 0.0
         assert estimate_cost_for_model("mock", "mock", u) == 0.0
 
     def test_cost_estimation_anthropic_sonnet(self):
         from backend.llm.base import Usage, estimate_cost_for_model
         u = Usage(prompt_tokens=1_000_000, completion_tokens=1_000_000, total_tokens=2_000_000)
-        c = estimate_cost_for_model("anthropic", "claude-sonnet-4-6", u)
+        c = estimate_cost_for_model("anthropic", "claude-sonnet-4-5", u)
         assert abs(c - (3.0 + 15.0)) < 0.001  # $3/M input + $15/M output
 
     def test_cost_estimation_anthropic_opus(self):
         from backend.llm.base import Usage, estimate_cost_for_model
         u = Usage(prompt_tokens=1_000_000, completion_tokens=1_000_000, total_tokens=2_000_000)
-        c = estimate_cost_for_model("anthropic", "claude-opus-4-8", u)
+        c = estimate_cost_for_model("anthropic", "claude-opus-4-5", u)
         assert abs(c - (15.0 + 75.0)) < 0.001
 
     def test_cost_estimation_openai_gpt4o(self):
@@ -254,7 +254,7 @@ class TestRouting:
         async def _mock_chat(self, messages, **kwargs):
             return ChatResponse(
                 content="mock response",
-                model="gemma4:12b-it-qat",
+                model="gemma3:4b",
                 provider="ollama",
                 usage=Usage(prompt_tokens=10, completion_tokens=5, total_tokens=15),
                 latency_ms=5.0,

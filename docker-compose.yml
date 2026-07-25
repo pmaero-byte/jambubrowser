@@ -57,7 +57,9 @@ services:
     ports:
       - "127.0.0.1:8888:8080"
     volumes:
-      - ./searxng:/etc/searxng:rw
+      # Runtime config lives in searxng-config/settings.yml (JSON output, limiter off).
+      # ./searxng is a full source checkout and must NOT be mounted here.
+      - ./searxng-config:/etc/searxng:rw
     environment:
       - SEARXNG_BASE_URL=http://localhost:8888/
     depends_on:

@@ -1,13 +1,13 @@
 """
 LLM Configuration & Auto-Detection
 ====================================
-Centralized LLM configuration with Gemma 4 as the default
+Centralized LLM configuration with Gemma 3 as the default
 local model. Auto-detects available local LLM providers
 (Ollama, llama.cpp) and configures the engine accordingly.
 
 Priority:
 1. JAMBU_LLM_* environment variables
-2. Running Ollama with Gemma 4
+2. Running Ollama with Gemma 3
 3. Running llama.cpp server
 4. Fallback to localhost defaults
 """
@@ -17,29 +17,29 @@ import psutil
 from typing import Optional, Dict
 
 
-# ---- Gemma 4 Default Configuration ----
+# ---- Gemma 3 Default Configuration ----
 
 GEMMA4_DEFAULT_CONFIG = {
     "baseUrl": "http://localhost:11434/v1",  # Ollama OpenAI-compatible endpoint
-    "modelId": "gemma4:12b",
+    "modelId": "gemma3:12b",
     "apiKey": "",
     "temperature": 0.7,
     "maxTokens": 4096,
     "contextLength": 8192,
     "provider": "ollama",
-    "vision_model": "gemma4:12b",
+    "vision_model": "gemma3:12b",
 }
 
 # Alternative provider configurations
 PROVIDER_CONFIGS = {
     "ollama": {
         "baseUrl": "http://localhost:11434/v1",
-        "modelId": "gemma4:12b",
+        "modelId": "gemma3:12b",
         "apiKey": "",
     },
     "llamacpp": {
         "baseUrl": "http://localhost:8080/v1",
-        "modelId": "gemma-4-12b",
+        "modelId": "gemma-3-12b",
         "apiKey": "",
     },
     "openai": {
@@ -48,7 +48,7 @@ PROVIDER_CONFIGS = {
     },
     "openrouter": {
         "baseUrl": "https://openrouter.ai/api/v1",
-        "modelId": "google/gemma-4-12b",
+        "modelId": "google/gemma-3-12b",
     },
 }
 
@@ -56,7 +56,7 @@ PROVIDER_CONFIGS = {
 class LLMConfig:
     """
     Centralized LLM configuration manager.
-    Auto-detects local providers and applies Gemma 4 defaults.
+    Auto-detects local providers and applies Gemma 3 defaults.
     """
 
     def __init__(self):
@@ -145,7 +145,7 @@ class LLMConfig:
         return base_config
 
     def get_default(self) -> Dict:
-        """Get the recommended default configuration (Gemma 4)."""
+        """Get the recommended default configuration (Gemma 3)."""
         config = GEMMA4_DEFAULT_CONFIG.copy()
 
         # Override with env vars
@@ -163,7 +163,7 @@ class LLMConfig:
         config = self.get_default()
         config["modelId"] = os.environ.get(
             "JAMBU_VISION_MODEL",
-            config.get("vision_model", "gemma4:12b"),
+            config.get("vision_model", "gemma3:12b"),
         )
         return config
 
@@ -180,16 +180,16 @@ class LLMConfig:
         }
 
     def _recommend_by_ram(self, available_bytes: int) -> str:
-        """Recommend a Gemma 4 model based on available RAM."""
+        """Recommend a Gemma 3 model based on available RAM."""
         available_gb = available_bytes / (1024 ** 3)
         if available_gb >= 20:
-            return "gemma4:27b"
+            return "gemma3:27b"
         elif available_gb >= 8:
-            return "gemma4:12b"
+            return "gemma3:12b"
         elif available_gb >= 4:
-            return "gemma4:4b"
+            return "gemma3:4b"
         else:
-            return "gemma4:1b"
+            return "gemma3:1b"
 
 
 _config_instance: Optional[LLMConfig] = None
@@ -203,5 +203,5 @@ def get_llm_config() -> LLMConfig:
 
 
 def get_default_llm_config() -> Dict:
-    """Quick access to default LLM config (Gemma 4)."""
+    """Quick access to default LLM config (Gemma 3)."""
     return get_llm_config().get_default()

@@ -87,8 +87,18 @@ pub fn build_load_extension_arg(extensions: &[Extension]) -> Option<String> {
 }
 
 /// Ensure the extensions directory exists and has a default structure.
-pub fn ensure_extensions_dir(base: &Path) -> PathBuf {
-    let dir = base.join("extensions");
+/// The dir lives in the app config dir (see `settings::extensions_dir`),
+/// NOT inside the Chrome profile dir — the default profile is a temp dir
+/// wiped on exit, which would delete the user's extensions every launch.
+pub fn ensure_extensions_dir() -> PathBuf {
+    let dir = super::settings::extensions_dir();
     fs::create_dir_all(&dir).ok();
     dir
+}
+
+/// Mark each extension enabled/disabled from persisted settings.
+pub fn apply_enabled_state(extensions: &mut [Extension], settings: &super::settings::BrowserSettings) {
+    for ext in extensions.iter_mut() {
+        ext.enabled = settings.is_extension_enabled(&ext.id);
+    }
 }

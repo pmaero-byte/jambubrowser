@@ -33,9 +33,9 @@ python3 -m uvicorn backend.engine:app --host 127.0.0.1 --port 8001
 python3.11 -m venv mlx-venv
 mlx-venv/bin/pip install mlx-lm mlx-vlm
 
-# Start the MLX VLM server with Gemma 4 12B (auto-downloads from HuggingFace)
+# Start the MLX VLM server with Gemma 3 12B (auto-downloads from HuggingFace)
 mlx-venv/bin/python3 backend/scripts/mlx_vlm_server.py \
-  --model mlx-community/gemma-4-12B-it-4bit \
+  --model mlx-community/gemma-3-12b-it-4bit \
   --port 8080
 ```
 
@@ -72,9 +72,9 @@ export OPENAI_API_KEY="sk-..."
 export MINIMAX_API_KEY="..."
 
 # Per-provider model + base URL overrides
-export JAMBU_LLM_ANTHROPIC_MODEL="claude-sonnet-4-6"
+export JAMBU_LLM_ANTHROPIC_MODEL="claude-sonnet-4-5"
 export JAMBU_LLM_OPENAI_MODEL="gpt-4o"
-export JAMBU_LLM_OLLAMA_MODEL="gemma4:12b-it-qat"
+export JAMBU_LLM_OLLAMA_MODEL="gemma3:4b"
 export JAMBU_LLM_OPENAI_BASE_URL="https://api.openai.com/v1"  # or vLLM, Together, etc.
 
 # Then in the CommandBar, pick a provider from the dropdown, or use "auto".
@@ -199,7 +199,7 @@ python3 -m pytest tests/test_e2e.py -v
 - **Knowledge Graph**: Entity extraction, relationship inference, topic clustering
 - **Swarm Research**: Decomposes complex queries into parallel sub-missions
 - **LLM Synthesis**: Local (Ollama/MLX/Gemma4) + Cloud (MiniMax) support
-- **MLX LM Provider**: Apple Silicon-native inference via `mlx-vlm` — 12-33 tok/s on M4 Pro with Gemma 4 12B, 4 privacy modes, local-first
+- **MLX LM Provider**: Apple Silicon-native inference via `mlx-vlm` — 12-33 tok/s on M4 Pro with Gemma 3 12B, 4 privacy modes, local-first
 - **Brain-Only Mode**: Search local knowledge vault without web access
 
 ### Browser & Automation
@@ -333,7 +333,7 @@ All components live in `browser-app/src/` and are shared between the desktop (Ta
 | Consensus | `backend/modules/consensus_engine.py` | Multi-node voting |
 | Supply Chain | `backend/core/supply_chain.py` | Dependency verification |
 | MLX Provider | `backend/modules/mlx_provider.py` | Apple Silicon MLX integration, model registry, server lifecycle |
-| MLX VLM Server | `backend/scripts/mlx_vlm_server.py` | OpenAI-compatible FastAPI server for Gemma 4 via mlx-vlm |
+| MLX VLM Server | `backend/scripts/mlx_vlm_server.py` | OpenAI-compatible FastAPI server for Gemma 3 via mlx-vlm |
 | **LLM Layer (v3)** | `backend/llm/` | Unified provider abstraction: 6 providers, registry, routing, cost estimation |
 | **Agent Loop (v3)** | `backend/agent/` | ReAct/Plan-Execute loop with tool registry, verification, replanning, SSE events |
 | **Memory (v3)** | `backend/memory/` | 4-store memory system: user profile, session, semantic (with embeddings), procedural |
@@ -344,7 +344,8 @@ All components live in `browser-app/src/` and are shared between the desktop (Ta
 ## Testing
 
 ```bash
-# Run the full suite (673+ pass, 11 skipped, 1 env-dependent — see CI workflow)
+# Run the full suite (prints the current pass/fail count — the suite grows
+# continuously, so run it rather than trusting any hardcoded number)
 python3 -m pytest tests/ --ignore=tests/test_e2e.py --ignore=tests/test_real_llm_integration.py \
                    --ignore=tests/test_search_integration.py --ignore=tests/test_socks.py \
                    -v --tb=short
