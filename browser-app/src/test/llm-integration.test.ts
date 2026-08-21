@@ -47,8 +47,11 @@ describe("real-LLM integration", () => {
   it(
     "engine /v2/llm/chat returns a real model response when a real provider is configured",
     async () => {
-      if (hasRealProvider === false) {
-        console.log("[skip] JAMBU_LLM_PROVIDER=mock");
+      // Proceed only when a real provider was explicitly requested.
+      // An engine being up is NOT sufficient: with no provider configured
+      // the engine answers with an error and this test would fail.
+      if (hasRealProvider !== true) {
+        console.log("[skip] JAMBU_LLM_PROVIDER not set to a real provider");
         return;
       }
       if (!(await engineReachable())) {

@@ -138,7 +138,7 @@ function SourceChips({
           {shortHost(src)}
         </button>
       ))}
-      {hidden > 0 && (
+      {(hidden > 0 || expanded) && (
         <button
           className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground"
           onClick={() => setExpanded((e) => !e)}

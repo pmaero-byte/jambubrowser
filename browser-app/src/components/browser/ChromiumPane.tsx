@@ -681,9 +681,9 @@ return { filled: true, hasUser: !!bestUser, hasPass: true };
       }
       switch (e.key.toLowerCase()) {
         case "t": e.preventDefault(); handleNewTab(); break;
-        case "w": e.preventDefault(); activeTab && handleCloseTab(activeTab.id); break;
+        case "w": e.preventDefault(); if (activeTab) handleCloseTab(activeTab.id); break;
         case "l": e.preventDefault(); inputRef.current?.focus(); inputRef.current?.select(); break;
-        case "d": e.preventDefault(); activeTab?.url && toggleBookmark(activeTab.url, activeTab.title || activeTab.url); break;
+        case "d": e.preventDefault(); if (activeTab?.url) toggleBookmark(activeTab.url, activeTab.title || activeTab.url); break;
         case "r": e.preventDefault(); reload(); break;
         case "f": e.preventDefault(); openFind(); break;
         case "[": e.preventDefault(); goBack(); break;

@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import { render } from "@testing-library/react";
-import { TelemetryPanel } from "./TelemetryPanel";
 
 // Mock motion to avoid animation overhead in tests.
 vi.mock("motion/react", () => ({

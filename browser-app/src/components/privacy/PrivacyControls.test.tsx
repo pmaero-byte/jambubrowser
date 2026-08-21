@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { PrivacyControls } from "./PrivacyControls";
 
 // Mock localFetch so we control API responses.
 const mockLocalFetch = vi.hoisted(() => vi.fn());

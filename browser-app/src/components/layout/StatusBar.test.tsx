@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
-import { StatusBar } from "./StatusBar";
+import { render } from "@testing-library/react";
 
 // Mock the WebSocket hook so we control telemetry/connection state.
 const mockUseAgentWebSocket = vi.hoisted(() => vi.fn());

@@ -91,7 +91,6 @@ function resolveZone(state: string, zone?: string): Exclude<AgentZone, null> {
 export function AgentRoom({
   agentState,
   taskActive,
-  onInterrupt: _onInterrupt,
   multiRobots,
   droppedFiles,
   hoveredFile,

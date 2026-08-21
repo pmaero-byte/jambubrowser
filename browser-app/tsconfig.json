@@ -18,8 +18,12 @@
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+
+    /* Test matcher types (jest-dom matchers are registered in src/test/setup.ts) */
+    "types": ["@testing-library/jest-dom"]
   },
   "include": ["src"],
+  "exclude": ["e2e", "src-tauri"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

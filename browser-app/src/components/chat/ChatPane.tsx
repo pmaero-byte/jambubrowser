@@ -102,7 +102,7 @@ export function ChatPane({ agentEvents, onSend, onStop }: ChatPaneProps) {
             <Mic size={16} />
           </Button>
           {isLoading ? (
-            <Button type="button" variant="secondary" size="icon" className="h-8 w-8 shrink-0" onClick={onStop}>
+            <Button type="button" variant="secondary" size="icon" className="h-8 w-8 shrink-0" onClick={onStop} title="Stop generation">
               <StopCircle size={16} />
             </Button>
           ) : (
@@ -113,7 +113,7 @@ export function ChatPane({ agentEvents, onSend, onStop }: ChatPaneProps) {
               transition={{ duration: 0.32, ease: "easeOut" }}
               className="shrink-0"
             >
-              <Button type="submit" size="icon" className="h-8 w-8" disabled={!input.trim()}>
+              <Button type="submit" size="icon" className="h-8 w-8" disabled={!input.trim()} title="Submit">
                 <ArrowUp size={16} />
               </Button>
             </motion.div>

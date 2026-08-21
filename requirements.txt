@@ -38,7 +38,8 @@ cryptography>=41.0.0
 markdownify>=0.11.0
 
 # MCP server (for Claude/Cursor integration)
-mcp>=1.0.0
+# Pinned <2.0: mcp 2.0 removed mcp.server.fastmcp.FastMCP (breaking upstream change).
+mcp>=1.0.0,<2.0.0
 
 # Semantic search / embeddings (optional, falls back to numpy)
 sentence-transformers>=2.2.0

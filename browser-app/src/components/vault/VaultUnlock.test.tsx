@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { VaultUnlock } from "./VaultUnlock";
 
 // Mock localFetch so we control API responses.
 const mockLocalFetch = vi.hoisted(() => vi.fn());
@@ -52,9 +51,10 @@ describe("VaultUnlock", () => {
   it("shows loading state during unlock", async () => {
     const { VaultUnlock } = await import("./VaultUnlock");
     // Return a promise that never resolves so we can check loading state.
-    const mockLocalFetch = vi.fn(() => new Promise(() => {}));
     const apiModule = await import("../../utils/api");
-    vi.spyOn(apiModule, "localFetch").mockImplementation(mockLocalFetch);
+    vi.spyOn(apiModule, "localFetch").mockImplementation(
+      () => new Promise<Response>(() => {}) as Promise<Response>
+    );
 
     render(<VaultUnlock />);
     const input = screen.getByPlaceholderText("••••••••");

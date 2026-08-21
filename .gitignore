@@ -63,3 +63,6 @@ staged_repo/
 *.key
 .env
 tests/.artifacts/
+
+# Local dev virtualenv
+.venv/
