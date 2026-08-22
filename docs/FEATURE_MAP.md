@@ -146,13 +146,18 @@ the page being audited.
   Playwright.
 
 ### What still hurts (improvement targets)
-1. **DevTools data lives only in browser memory** — no way to export a
-   network waterfall to a file, no way to compare two audits'
-   performance traces side-by-side.
-2. **Form filler is a stub from early phases** — no test coverage, no UI
-   surface in the new app shell.
-3. **No "record / replay" of browser sessions** for debugging failed
-   audits.
+1. **DevTools performance-trace comparison** — the network waterfall now
+   exports to HAR/CSV (`networkExport.ts` toolbar buttons, resolved
+   2026-08), but there's no side-by-side comparison of two audits'
+   performance traces yet.
+2. **Form filler backend is solid** — locked-vault 500 fixed and MCP
+   schema mismatch repaired (2026-08, live-verified on github.com/login);
+   remaining work is surfacing detection results in a UI panel beyond
+   the existing vault-autofill key icon.
+3. **Record / replay shipped** — `backend/modules/session_recorder.py`
+   + `/sessions/recordings/*` routes (2026-08): record a scripted run,
+   replay it with per-step results; verified live end-to-end. A UI
+   surface for browsing recordings would complete the loop.
 
 > **Resolved 2026-08:** the proxy response cache listed here as a gap is
 > now implemented — `backend/core/response_cache.py` (LRU, TTL 60 s,
