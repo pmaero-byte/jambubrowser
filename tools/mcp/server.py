@@ -1072,9 +1072,9 @@ TOOLS: list[Tool] = [
     ),
     Tool(
         name="jambu_forms_fill_script",
-        description="Generate JavaScript to fill a form with vault credentials.",
-        inputSchema={"type": "object", "required": ["form_id"], "properties": {
-            "form_id": {"type": "string"}, "credentials": {"type": "object"},
+        description="Generate JavaScript to fill a page's login form with vault credentials.",
+        inputSchema={"type": "object", "required": ["url"], "properties": {
+            "url": {"type": "string", "description": "Page URL whose login form should be filled"},
         }},
     ),
 
@@ -1653,7 +1653,7 @@ async def _handle(tool_name: str, args: dict) -> list[TextContent]:
         elif tool_name == "jambu_forms_detect":
             return _ok(await _post("/forms/detect", {"url": args["url"]}))
         elif tool_name == "jambu_forms_fill_script":
-            return _ok(await _post("/forms/fill-script", {"form_id": args["form_id"], "credentials": args.get("credentials", {})}))
+            return _ok(await _post("/forms/fill-script", {"url": args["url"]}))
 
         # Notifications
         elif tool_name == "jambu_notifications_history":

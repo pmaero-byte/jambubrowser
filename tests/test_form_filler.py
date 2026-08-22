@@ -297,6 +297,26 @@ class TestDetectAndClassify:
             await detect_and_classify("https://target.com/foo")
             mock_get.assert_called_once_with("https://target.com/foo")
 
+    @pytest.mark.asyncio
+    async def test_locked_vault_still_detects_forms(self):
+        """Regression: with the vault locked (default state), /forms/detect used to
+        500 with PermissionError. Detection must still work — just without any
+        matched credential."""
+        filler = get_form_filler()
+        with (
+            patch("httpx.AsyncClient.get") as mock_get,
+            patch.object(filler._vault, "find_best_credential", side_effect=PermissionError("Credential vault is locked.")),
+        ):
+            mock_resp = MagicMock()
+            mock_resp.text = LOGIN_HTML
+            mock_get.return_value = mock_resp
+
+            result = await detect_and_classify("https://example.com/login")
+            assert result["forms_found"] == 1
+            assert result["forms"][0]["form_type"] == "login"
+            assert result["forms"][0]["matched_credential"] is None
+            assert result["forms"][0]["auto_fillable"] is False
+
 
 class TestGenerateFillJS:
     @pytest.mark.asyncio

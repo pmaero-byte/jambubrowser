@@ -261,13 +261,18 @@ class FormFiller:
         parsed = urlparse(page_url)
         domain = parsed.hostname or ''
 
+        # Vault may be locked (its default state) — form detection still
+        # works, we just can't match credentials. Degrade gracefully.
+        matched_cred: Optional[dict] = None
+        try:
+            matched_cred = self._vault.find_best_credential(page_url)
+        except PermissionError:
+            pass
+
         results = []
         for form in forms:
             # Classify the form type
             form_type = self._classify_form(form)
-
-            # Find matching credentials
-            matched_cred = self._vault.find_best_credential(page_url)
 
             # Generate fill instructions
             fill_data = {}
