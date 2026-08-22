@@ -406,6 +406,24 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
         )
     """)
 
+    # ── Session record / replay ─────────────────────────────────────────
+    # A "recording" captures every navigation + action of a scripted run
+    # so a failed audit or agent run can be replayed step-by-step later.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS session_recordings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            start_url TEXT NOT NULL,
+            steps_json TEXT NOT NULL DEFAULT '[]',
+            step_count INTEGER DEFAULT 0,
+            duration_ms REAL DEFAULT 0.0,
+            status TEXT NOT NULL DEFAULT 'recording',
+            error TEXT,
+            created_at REAL DEFAULT (julianday('now')),
+            updated_at REAL
+        )
+    """)
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS teams (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

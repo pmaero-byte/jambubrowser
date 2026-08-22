@@ -202,7 +202,7 @@ app.add_middleware(GZipMiddleware, minimum_size=500)
 app.add_middleware(RequestTimeoutMiddleware, timeout_seconds=30.0, exclude_paths=[
     "/research", "/scrape", "/exec", "/act", "/workflow", "/v2/",
     "/mlx/", "/mission", "/knowledge/ingest", "/login", "/discover_api",
-    "/audit/", "/proxy",
+    "/audit/", "/proxy", "/sessions/recordings",
 ])
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(TrustedHostMiddleware)

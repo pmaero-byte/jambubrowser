@@ -576,3 +576,84 @@ async def computer_list_apps():
                 if name.endswith(".app"):
                     apps.append(name.removesuffix(".app"))
     return {"apps": apps, "total": len(apps)}
+
+
+# ── Session Record / Replay ──
+
+
+class RecordRunRequest(BaseModel):
+    """Record a scripted browser run for later replay."""
+    url: str
+    steps: List[ActionStep]
+    name: str = ""
+
+    @validator("url")
+    def validate_url(cls, v):
+        if not is_safe_url(v):
+            raise ValueError("Invalid or blocked URL")
+        return v
+
+
+@router.post("/sessions/recordings/run")
+async def record_session_run(req: RecordRunRequest):
+    """Execute an action script while recording every step, then persist it."""
+    from backend.modules.session_recorder import record_run
+
+    actions = [
+        {
+            "action": s.action,
+            "selector": s.selector,
+            "value": s.value,
+            "x": s.x,
+            "y": s.y,
+        }
+        for s in req.steps
+    ]
+    try:
+        result = await record_run(req.url, actions, req.name)
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/sessions/recordings")
+async def list_session_recordings(limit: int = 50):
+    """List saved recordings (without full step payloads)."""
+    from backend.modules.session_recorder import list_recordings
+
+    return {"recordings": list_recordings(limit=min(max(limit, 1), 200))}
+
+
+@router.get("/sessions/recordings/{recording_id}")
+async def get_session_recording(recording_id: int):
+    """Fetch one recording including its full step list."""
+    from backend.modules.session_recorder import get_recording
+
+    rec = get_recording(recording_id)
+    if not rec:
+        raise HTTPException(status_code=404, detail=f"recording {recording_id} not found")
+    return rec
+
+
+@router.post("/sessions/recordings/{recording_id}/replay")
+async def replay_session_recording(recording_id: int):
+    """Replay a stored recording through the Playwright executor."""
+    from backend.modules.session_recorder import replay_recording
+
+    try:
+        return await replay_recording(recording_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404 if "not found" in str(e) else 409, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/sessions/recordings/{recording_id}")
+async def delete_session_recording(recording_id: int):
+    from backend.modules.session_recorder import delete_recording
+
+    if not delete_recording(recording_id):
+        raise HTTPException(status_code=404, detail=f"recording {recording_id} not found")
+    return {"success": True, "deleted": recording_id}
