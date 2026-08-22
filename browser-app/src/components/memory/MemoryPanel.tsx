@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence, LayoutGroup } from "motion/react";
-import { Brain, Plus, RefreshCw, Search } from "lucide-react";
+import { Brain, Clock, Plus, RefreshCw, Search } from "lucide-react";
 import { Button } from "../ui/button";
 import {
   getProfile,
@@ -254,7 +254,14 @@ function RecallTab() {
             ))}
           </AnimatePresence>
           {!loading && hits.length === 0 && (
-            <p className="text-center text-xs text-muted-foreground">No results.</p>
+            <div className="flex flex-col items-center gap-1.5 py-8 text-center text-muted-foreground">
+              <Brain size={24} className="text-border" />
+              <p className="text-sm">No memories match</p>
+              <p className="max-w-[260px] text-xs">
+                Try a different search — the engine searches semantically, not
+                just by keyword.
+              </p>
+            </div>
           )}
         </div>
       </LayoutGroup>
@@ -287,7 +294,14 @@ function SessionsTab({ sessions }: { sessions: SessionMemory[] }) {
           ))}
         </AnimatePresence>
         {sessions.length === 0 && (
-          <p className="text-center text-xs text-muted-foreground">No sessions yet.</p>
+          <div className="flex flex-col items-center gap-1.5 py-8 text-center text-muted-foreground">
+            <Clock size={24} className="text-border" />
+            <p className="text-sm">No sessions yet</p>
+            <p className="max-w-[260px] text-xs">
+              Agent research sessions will appear here as summaries you can
+              recall across conversations.
+            </p>
+          </div>
         )}
       </div>
     </LayoutGroup>
