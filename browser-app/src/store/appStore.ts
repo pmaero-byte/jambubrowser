@@ -6,6 +6,7 @@ export type CanvasTab =
   | "logs"
   | "missions"
   | "history"
+  | "recordings"
   | "memory"
   | "privacy"
   | "audit"

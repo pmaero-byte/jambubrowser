@@ -15,6 +15,7 @@ import {
   Puzzle,
   FileText,
   Bot,
+  Video,
 } from "lucide-react";
 import { useAppStore, type CanvasTab } from "../../store/appStore";
 import { useAgentWebSocket } from "../../utils/useAgentWebSocket";
@@ -26,6 +27,7 @@ const workspaceNav: { id: CanvasTab; label: string; icon: React.ElementType }[] 
   { id: "memory", label: "Memory", icon: Brain },
   { id: "missions", label: "Missions", icon: FolderKanban },
   { id: "history", label: "History", icon: History },
+  { id: "recordings", label: "Recordings", icon: Video },
   { id: "agent", label: "Agent", icon: Bot },
 ];
 

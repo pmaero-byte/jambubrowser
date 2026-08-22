@@ -17,8 +17,16 @@ function backendOrigin(): string {
 /**
  * Web build: performs a normal fetch to localhost:8001 (or via Vite proxy in dev).
  * Tauri build: forwards the request through the Rust proxy_localhost command.
+ *
+ * opts.timeoutMs overrides the default 30s abort (long browser runs like
+ * session-record replay legitimately need minutes). Only the web build
+ * honors it — the Tauri proxy has no client-side timeout.
  */
-export async function localFetch(path: string, options?: RequestInit): Promise<Response> {
+export async function localFetch(
+  path: string,
+  options?: RequestInit,
+  opts?: { timeoutMs?: number },
+): Promise<Response> {
   const url = `${backendOrigin()}${path}`;
 
   if (isTauri()) {
@@ -51,7 +59,7 @@ export async function localFetch(path: string, options?: RequestInit): Promise<R
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   try {
     return await fetch(url, {
       ...options,

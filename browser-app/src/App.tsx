@@ -44,6 +44,9 @@ const MissionsPanel = lazy(() =>
 const HistoryPanel = lazy(() =>
   import("./components/history/HistoryPanel").then((m) => ({ default: m.HistoryPanel }))
 );
+const RecordingsPanel = lazy(() =>
+  import("./components/recordings/RecordingsPanel").then((m) => ({ default: m.RecordingsPanel }))
+);
 const SettingsPanel = lazy(() =>
   import("./components/settings/SettingsPanel").then((m) => ({ default: m.SettingsPanel }))
 );
@@ -187,6 +190,8 @@ export default function App() {
         return <MissionsPanel />;
       case "history":
         return <HistoryPanel />;
+      case "recordings":
+        return <RecordingsPanel />;
       case "privacy":
         return <PrivacyControls />;
       case "audit":
