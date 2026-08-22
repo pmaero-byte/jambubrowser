@@ -37,7 +37,7 @@ describe("Sidebar", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockUseAppStore.mockReturnValue(defaultStore);
-    mockUseAgentWebSocket.mockReturnValue({ agentState: null });
+    mockUseAgentWebSocket.mockReturnValue({ agentState: null, connected: false });
   });
 
   it("renders workspace navigation items", async () => {
@@ -82,7 +82,14 @@ describe("Sidebar", () => {
     expect(setActiveTab).toHaveBeenCalledWith("browser");
   });
 
+  it("shows engine offline when the websocket is not connected", async () => {
+    const { Sidebar } = await import("./Sidebar");
+    render(<Sidebar />);
+    expect(screen.getByText("Engine offline")).toBeDefined();
+  });
+
   it("shows engine online status", async () => {
+    mockUseAgentWebSocket.mockReturnValue({ agentState: null, connected: true });
     const { Sidebar } = await import("./Sidebar");
     render(<Sidebar />);
     expect(screen.getByText("Engine online")).toBeDefined();

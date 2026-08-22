@@ -94,7 +94,7 @@ function NavItem({
 
 export function Sidebar() {
   const { activeTab, setActiveTab } = useAppStore();
-  const { agentState } = useAgentWebSocket();
+  const { agentState, connected } = useAgentWebSocket();
   const agentRunning = !!agentState && agentState.state !== "idle";
 
   return (
@@ -131,10 +131,16 @@ export function Sidebar() {
 
       <div className="mt-auto flex items-center gap-2 px-2 pt-4 text-xs text-muted-foreground/60">
         <span className="relative flex h-2 w-2">
-          <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400/60 animate-ping" />
-          <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+          {connected ? (
+            <>
+              <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400/60 animate-ping" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+            </>
+          ) : (
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-red-400" />
+          )}
         </span>
-        <span>Engine online</span>
+        <span>{connected ? "Engine online" : "Engine offline"}</span>
       </div>
     </nav>
   );

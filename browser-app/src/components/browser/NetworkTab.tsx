@@ -1,6 +1,8 @@
 import { useState, useMemo } from "react";
 import { motion, AnimatePresence } from "motion/react";
+import { Download } from "lucide-react";
 import { useDevtoolsStore, formatBytes, formatMs } from "../../store/devtoolsStore";
+import { buildHar, buildCsv, downloadTextFile } from "./networkExport";
 
 function initiatorIcon(type: string): string {
   if (type === "fetch" || type === "xmlhttprequest") return "🌐";
@@ -31,10 +33,25 @@ function pathOnly(url: string): string {
 }
 
 export function NetworkTab() {
-  const { resources } = useDevtoolsStore();
+  const { resources, navigation } = useDevtoolsStore();
   const [sortBy, setSortBy] = useState<"startTime" | "duration" | "transferSize">("startTime");
   const [filter, setFilter] = useState("");
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
+
+  const exportWaterfall = (fmt: "har" | "csv") => {
+    if (resources.length === 0) return;
+    // Export the filtered+sorted view the user is looking at.
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    if (fmt === "har") {
+      downloadTextFile(
+        JSON.stringify(buildHar(sorted, navigation), null, 2),
+        `jambu-network-${stamp}.har`,
+        "application/json",
+      );
+    } else {
+      downloadTextFile(buildCsv(sorted), `jambu-network-${stamp}.csv`, "text/csv");
+    }
+  };
 
   const sorted = useMemo(() => {
     let list = [...resources];
@@ -84,6 +101,24 @@ export function NetworkTab() {
           placeholder="Filter URLs…"
           className="w-32 rounded border border-border bg-card px-1.5 py-0.5 text-xs outline-none focus:border-accent"
         />
+        {resources.length > 0 && (
+          <>
+            <button
+              onClick={() => exportWaterfall("har")}
+              title="Export the visible waterfall as a HAR 1.2 file (open in Chrome DevTools or any HTTP analyzer)"
+              className="flex items-center gap-1 rounded border border-border bg-card px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:border-accent hover:text-foreground"
+            >
+              <Download size={10} /> HAR
+            </button>
+            <button
+              onClick={() => exportWaterfall("csv")}
+              title="Export the visible waterfall as CSV"
+              className="flex items-center gap-1 rounded border border-border bg-card px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:border-accent hover:text-foreground"
+            >
+              <Download size={10} /> CSV
+            </button>
+          </>
+        )}
       </div>
 
       {/* List / Detail split */}
