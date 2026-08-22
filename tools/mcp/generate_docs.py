@@ -38,6 +38,10 @@ def _import_mcp_server():
     (which register handlers in FastMCP's in-memory registry). It does
     NOT start the engine, open a port, or touch the network.
     """
+    # Running this file by path puts tools/mcp/ on sys.path, not the repo
+    # root — add the root so `backend` resolves no matter how we're invoked.
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
     from backend import mcp_server  # noqa: F401
     return mcp_server
 

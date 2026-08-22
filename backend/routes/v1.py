@@ -8,6 +8,7 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from backend import __version__
 from backend.core.database import (
     memory_add, memory_search, memory_list, memory_delete,
     session_create, session_update, session_list, session_get,
@@ -170,10 +171,10 @@ async def v1_health_detailed():
     mem = psutil.virtual_memory()
     return {
         "status": "online",
-        "version": "2.0.0",
+        "version": __version__,
         "cpu_percent": psutil.cpu_percent(interval=0),
         "ram_used_gb": round(mem.used / (1024 ** 3), 2),
         "ram_total_gb": round(mem.total / (1024 ** 3), 2),
         "response_time_ms": round((time.time() - start) * 1000, 2),
-        "engine_version": "2.0.0",
+        "engine_version": __version__,
     }

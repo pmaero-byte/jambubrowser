@@ -281,8 +281,15 @@ def cmd_health(args):
     print(f"  RAM: {resp.get('ram_used_gb', 0):.1f} / {resp.get('ram_total_gb', 0):.1f} GB")
     print(f"  CPU: {resp.get('cpu_percent', 0):.1f}%")
     checks = resp.get("checks", {})
+    # "locked" vault and a zero count are healthy states, not failures —
+    # only mark real error strings with ✗.
     for k, v in checks.items():
-        icon = "✓" if v == "ok" else "✗"
+        if isinstance(v, str) and v.startswith("error"):
+            icon = "✗"
+        elif isinstance(v, int):
+            icon = "•"
+        else:
+            icon = "✓"
         print(f"  {icon} {k}: {v}")
 
 

@@ -1,6 +1,6 @@
 """
-Jambubrowser Action Engine v2.0
-================================
+Jambubrowser Engine
+===================
 Application factory — imports route modules and wires up middleware.
 
 Routes have been split into domain modules under backend/routes/.
@@ -15,6 +15,8 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
+
+from backend import __version__
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
@@ -58,7 +60,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from backend.core.database import init_db
     init_db()
     _warn_missing_runtime_deps()
-    log.info("Jambubrowser Engine v2.0 started on port 8001")
+    log.info("Jambubrowser Engine v%s started on port 8001", __version__)
 
     from backend.engine_runtime import safe_task, manager
     tasks = []
@@ -109,7 +111,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 # App creation
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="Jambubrowser Engine v2.0", lifespan=lifespan)
+app = FastAPI(title=f"Jambubrowser Engine v{__version__}", version=__version__, lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

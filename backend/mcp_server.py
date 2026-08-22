@@ -1,6 +1,6 @@
 """
-Jambubrowser MCP Server (v2.0)
-==============================
+Jambubrowser MCP Server
+=======================
 FastMCP server exposing the full Jambubrowser engine as MCP tools.
 External agents (Claude, Cursor, etc.) can use these tools to perform
 autonomous research, browser automation, and knowledge management.
@@ -20,8 +20,10 @@ import os
 import httpx
 from mcp.server.fastmcp import FastMCP
 
+from backend import __version__
+
 # Initialize FastMCP server for Jambubrowser
-mcp = FastMCP("Jambubrowser Sovereign Engine v2.0")
+mcp = FastMCP(f"Jambubrowser Sovereign Engine v{__version__}")
 
 # Engine URL is overridable via JAMBU_ENGINE_URL (useful for tests that spawn
 # the engine on a free port). Default matches the conventional dev port.

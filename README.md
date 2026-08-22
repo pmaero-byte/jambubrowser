@@ -411,8 +411,6 @@ See `browser-app/README.md` for the full Tauri-specific documentation.
 
 ## License
 
-## License
-
 MIT — see [LICENSE](LICENSE).
 
 Built for digital freedom by [pmaero-byte](https://github.com/pmaero-byte).

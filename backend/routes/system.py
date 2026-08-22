@@ -4,6 +4,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from fastapi import HTTPException
 
+from backend import __version__
 from backend.core.database import get_db_cursor, get_stats as db_stats
 from backend.core.vault import get_vault
 from backend.core.privacy import get_privacy_manager
@@ -52,7 +53,8 @@ async def health():
 
     return {
         "status": overall,
-        "message": "Jambubrowser v2.0 is ready.",
+        "message": f"Jambubrowser v{__version__} is ready.",
+        "version": __version__,
         "ram_used_gb": round(mem.used / (1024 ** 3), 2),
         "ram_total_gb": round(mem.total / (1024 ** 3), 2),
         "cpu_percent": psutil.cpu_percent(interval=None),

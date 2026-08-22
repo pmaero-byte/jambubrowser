@@ -149,12 +149,16 @@ the page being audited.
 1. **DevTools data lives only in browser memory** — no way to export a
    network waterfall to a file, no way to compare two audits'
    performance traces side-by-side.
-2. **Proxy has no cache layer** — every reload re-fetches upstream; even
-   cache-bust aside, this is wasteful for repeated audit targets.
-3. **Form filler is a stub from early phases** — no test coverage, no UI
+2. **Form filler is a stub from early phases** — no test coverage, no UI
    surface in the new app shell.
-4. **No "record / replay" of browser sessions** for debugging failed
+3. **No "record / replay" of browser sessions** for debugging failed
    audits.
+
+> **Resolved 2026-08:** the proxy response cache listed here as a gap is
+> now implemented — `backend/core/response_cache.py` (LRU, TTL 60 s,
+> 50 MB budget) wired into `backend/routes/proxy.py` with a `_cb`
+> cache-bust query param, hit/miss proxy logging, and 28 tests
+> (`tests/test_response_cache.py`, `tests/test_proxy_log.py`).
 
 ---
 

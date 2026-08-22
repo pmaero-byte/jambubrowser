@@ -9,4 +9,4 @@ Structure:
 - tools/    : User-created and agent-generated tools
 """
 
-__version__ = "2.0.0"
+__version__ = "3.3.0"  # keep in sync with pyproject.toml
