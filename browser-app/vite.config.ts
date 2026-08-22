@@ -56,6 +56,7 @@ export default defineConfig(async () => ({
       "/goal": "http://localhost:8001",
       "/p2p": "http://localhost:8001",
       "/tools": "http://localhost:8001",
+      "/sessions": "http://localhost:8001",
     },
   },
 

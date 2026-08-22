@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useSyncExternalStore } from "react";
 
 export interface AgentState {
   state: string;
@@ -56,102 +56,172 @@ function wsUrl(): string {
   return `${proto}//${location.hostname}:8001/ws/default`;
 }
 
-export function useAgentWebSocket() {
-  const wsRef = useRef<WebSocket | null>(null);
-  const [connected, setConnected] = useState(false);
-  const [agentState, setAgentState] = useState<AgentState | null>(null);
-  const [telemetry, setTelemetry] = useState<AgentTelemetry | null>(null);
-  const [reasoning, setReasoning] = useState<string>("");
-  const [liveTasks, setLiveTasks] = useState<Record<string, LiveTask>>({});
-  const [lastTaskEnd, setLastTaskEnd] = useState<TaskEnd | null>(null);
+// ── Shared singleton connection ─────────────────────────────────────────────
+// One WebSocket for the whole app. Every useAgentWebSocket() consumer subscribes
+// to the same store via useSyncExternalStore — previously each component opened
+// its own socket, which meant N parallel connections and status indicators that
+// could disagree with each other mid-reconnect.
 
-  useEffect(() => {
-    let reconnectTimer: ReturnType<typeof setTimeout>;
-    let closed = false;
+interface AgentStoreState {
+  connected: boolean;
+  agentState: AgentState | null;
+  telemetry: AgentTelemetry | null;
+  reasoning: string;
+  liveTasks: Record<string, LiveTask>;
+  lastTaskEnd: TaskEnd | null;
+}
 
-    function connect() {
-      if (closed) return;
-      const ws = new WebSocket(wsUrl());
-      wsRef.current = ws;
+let ws: WebSocket | null = null;
+let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+let refCount = 0;
 
-      ws.onopen = () => setConnected(true);
+const state: AgentStoreState = {
+  connected: false,
+  agentState: null,
+  telemetry: null,
+  reasoning: "",
+  liveTasks: {},
+  lastTaskEnd: null,
+};
 
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          switch (data.type) {
-            case "agent.state":
-              setAgentState({
-                state: data.state,
-                zone: data.zone,
-                task_id: data.task_id,
-                timestamp: data.timestamp,
-              });
-              break;
-            case "agent.telemetry":
-              setTelemetry(data);
-              break;
-            case "agent.reasoning":
-              setReasoning((prev) => prev + data.delta);
-              break;
-            case "agent.task_start":
-              setLiveTasks((prev) => ({
-                ...prev,
-                [data.task_id]: { start: data },
-              }));
-              setReasoning("");
-              break;
-            case "agent.task_end":
-              setLastTaskEnd(data);
-              setLiveTasks((prev) => {
-                const existing = prev[data.task_id];
-                if (!existing) return prev;
-                return { ...prev, [data.task_id]: { ...existing, end: data } };
-              });
-              break;
+const listeners = new Set<() => void>();
+
+/** Version counter bumped on every state change so getSnapshot can be stable. */
+let version = 0;
+
+function emit() {
+  version += 1;
+  for (const fn of listeners) fn();
+}
+
+function setConnected(v: boolean) {
+  if (state.connected !== v) {
+    state.connected = v;
+    emit();
+  }
+}
+
+function connect() {
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+    return;
+  }
+  try {
+    ws = new WebSocket(wsUrl());
+  } catch {
+    reconnectTimer = setTimeout(connect, 3000);
+    return;
+  }
+
+  ws.onopen = () => setConnected(true);
+
+  ws.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      switch (data.type) {
+        case "agent.state":
+          state.agentState = {
+            state: data.state,
+            zone: data.zone,
+            task_id: data.task_id,
+            timestamp: data.timestamp,
+          };
+          emit();
+          break;
+        case "agent.telemetry":
+          state.telemetry = data as AgentTelemetry;
+          emit();
+          break;
+        case "agent.reasoning":
+          state.reasoning += (data as { delta: string }).delta ?? "";
+          emit();
+          break;
+        case "agent.task_start":
+          state.liveTasks = {
+            ...state.liveTasks,
+            [data.task_id]: { start: data },
+          };
+          state.reasoning = "";
+          emit();
+          break;
+        case "agent.task_end":
+          state.lastTaskEnd = data as TaskEnd;
+          {
+            const existing = state.liveTasks[data.task_id];
+            if (existing) {
+              state.liveTasks = {
+                ...state.liveTasks,
+                [data.task_id]: { ...existing, end: data },
+              };
+            }
           }
-        } catch {
-          // ignore parse errors
-        }
-      };
-
-      ws.onclose = () => {
-        setConnected(false);
-        if (!closed) {
-          reconnectTimer = setTimeout(connect, 3000);
-        }
-      };
-
-      ws.onerror = () => ws.close();
+          emit();
+          break;
+      }
+    } catch {
+      // ignore parse errors
     }
+  };
 
-    connect();
+  ws.onclose = () => {
+    setConnected(false);
+    if (refCount > 0) {
+      reconnectTimer = setTimeout(connect, 3000);
+    }
+  };
 
-    return () => {
-      closed = true;
+  ws.onerror = () => ws?.close();
+}
+
+function disconnectIfUnused() {
+  // Small delay so tab switches don't tear down the socket we're about to need.
+  setTimeout(() => {
+    if (refCount === 0 && ws) {
       clearTimeout(reconnectTimer);
-      wsRef.current?.close();
-    };
-  }, []);
+      ws.close();
+      ws = null;
+      setConnected(false);
+    }
+  }, 1000);
+}
 
-  const clearReasoning = useCallback(() => setReasoning(""), []);
+function subscribe(fn: () => void): () => void {
+  listeners.add(fn);
+  refCount += 1;
+  connect();
+  return () => {
+    listeners.delete(fn);
+    refCount -= 1;
+    disconnectIfUnused();
+  };
+}
 
-  // Derived: the "primary" task is the most recent still-running one.
-  const activeTasks = Object.values(liveTasks)
+function getSnapshot(): number {
+  return version;
+}
+
+const clearReasoning = () => {
+  state.reasoning = "";
+  emit();
+};
+
+export function useAgentWebSocket() {
+  useSyncExternalStore(subscribe, getSnapshot);
+
+  // Derived values recomputed per render from the shared mutable store.
+  const activeTasks = Object.values(state.liveTasks)
     .filter((t) => !t.end)
     .sort((a, b) => b.start.timestamp - a.start.timestamp);
-
   const currentTask = activeTasks[0]?.start ?? null;
 
   return {
-    connected,
-    agentState,
-    telemetry,
-    reasoning,
+    connected: state.connected,
+    agentState: state.agentState,
+    telemetry: state.telemetry,
+    reasoning: state.reasoning,
     currentTask,
     activeTasks,
-    liveTasks,
-    lastTaskEnd,
+    liveTasks: state.liveTasks,
+    lastTaskEnd: state.lastTaskEnd,
     clearReasoning,
   };
 }
