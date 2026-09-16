@@ -2,10 +2,12 @@
 
 Auto-generated from `backend/mcp_server.py` by `tools/mcp/generate_docs.py`. Do not edit by hand — re-run the generator after adding or renaming a tool.
 
-**Total tools:** 33
+**Total tools:** 35
 
 ## Table of contents
 
+- [`agent_eval_certify`](#agent_eval_certify)
+- [`agent_eval_verify`](#agent_eval_verify)
 - [`analyze_screenshot`](#analyze_screenshot)
 - [`browser_session_act`](#browser_session_act)
 - [`browser_session_close`](#browser_session_close)
@@ -41,6 +43,43 @@ Auto-generated from `backend/mcp_server.py` by `tools/mcp/generate_docs.py`. Do 
 - [`visual_grounding`](#visual_grounding)
 
 ## Tools
+
+### `agent_eval_certify`
+
+**Signature**
+
+```python
+agent_eval_certify(suite: str, provider: str = '', pass_threshold: float = 0.8)
+```
+
+**Description**
+
+Run an eval suite under a frozen spec and issue a signed certificate.
+The spec (task list + scoring + provider) is hashed before the run, so
+dropping failed tasks afterwards is detectable; verdicts are PASS, FAIL,
+INCONCLUSIVE (harness errors) or INVALID (coverage mismatch).
+
+Args:
+    suite: Suite name, e.g. "smoke" (see the GET /eval/suites list)
+    provider: LLM provider under test (empty = engine default)
+    pass_threshold: Pass rate required for PASS (0-1)
+
+### `agent_eval_verify`
+
+**Signature**
+
+```python
+agent_eval_verify(certificate_id: int)
+```
+
+**Description**
+
+Verify a certificate's signature and recompute its verdict from the
+embedded results (a signed certificate whose verdict doesn't follow
+from its data is rejected).
+
+Args:
+    certificate_id: Bundle id from agent_eval_certify
 
 ### `analyze_screenshot`
 

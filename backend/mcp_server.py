@@ -5,7 +5,7 @@ FastMCP server exposing the full Jambubrowser engine as MCP tools.
 External agents (Claude, Cursor, etc.) can use these tools to perform
 autonomous research, browser automation, and knowledge management.
 
-33 MCP tools covering:
+35 MCP tools covering:
 - Research & Search (5 tools)
 - Browser Actions (5 tools)
 - Vision & Perception (2 tools)
@@ -15,6 +15,7 @@ autonomous research, browser automation, and knowledge management.
 - DecentraCode Mesh (5 tools: dcm_status, dcm_infer, dcm_models, dcm_earnings, dcm_settlement_log)
 - MeshPay (2 tools: meshpay_audit, meshpay_anchor)
 - Browser Sessions (5 tools: browser_session_open|snapshot|act|receipts|close)
+- Agent Evaluation (2 tools: agent_eval_certify, agent_eval_verify)
 """
 
 import asyncio
@@ -908,6 +909,69 @@ async def browser_session_close(session_id: str) -> str:
     if "error" in result:
         return f"Close failed: {result['error']}"
     return f"Session {session_id} closed ({result.get('steps', 0)} steps recorded)."
+
+
+# ===================================================================
+# AGENT EVALUATION CERTIFICATES
+# ===================================================================
+
+@mcp.tool()
+async def agent_eval_certify(suite: str, provider: str = "",
+                             pass_threshold: float = 0.8) -> str:
+    """
+    Run an eval suite under a frozen spec and issue a signed certificate.
+    The spec (task list + scoring + provider) is hashed before the run, so
+    dropping failed tasks afterwards is detectable; verdicts are PASS, FAIL,
+    INCONCLUSIVE (harness errors) or INVALID (coverage mismatch).
+
+    Args:
+        suite: Suite name, e.g. "smoke" (see the GET /eval/suites list)
+        provider: LLM provider under test (empty = engine default)
+        pass_threshold: Pass rate required for PASS (0-1)
+    """
+    result = await _call_engine("POST", "/eval/certificates", {
+        "suite": suite, "provider": provider or None,
+        "pass_threshold": pass_threshold,
+    }, timeout=600.0)
+    if "error" in result:
+        return f"Certification failed: {result['error']}"
+    verdict = (result.get("payload") or {}).get("verdict") or {}
+    summary = verdict.get("summary") or {}
+    lines = [
+        f"# Certificate #{result.get('id')} — {result.get('kind')}",
+        f"- suite: {suite} | verdict: **{verdict.get('verdict')}**",
+        f"- pass rate: {summary.get('pass_rate')} "
+        f"({summary.get('passed')}/{summary.get('committed')} passed, "
+        f"{summary.get('error')} errors)",
+        f"- spec_hash: `{(result.get('payload') or {}).get('spec_hash')}`",
+    ]
+    for reason in verdict.get("reasons") or []:
+        lines.append(f"- reason: {reason}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def agent_eval_verify(certificate_id: int) -> str:
+    """
+    Verify a certificate's signature and recompute its verdict from the
+    embedded results (a signed certificate whose verdict doesn't follow
+    from its data is rejected).
+
+    Args:
+        certificate_id: Bundle id from agent_eval_certify
+    """
+    result = await _call_engine(
+        "GET", f"/eval/certificates/{certificate_id}", timeout=60.0,
+    )
+    if "error" in result:
+        return f"Verification failed: {result['error']}"
+    verification = result.get("verification") or {}
+    lines = [f"# Certificate #{certificate_id} verification"]
+    for name, ok in (verification.get("checks") or {}).items():
+        lines.append(f"- [{'PASS' if ok else 'FAIL'}] {name}")
+    lines.append(f"\n{'VALID' if verification.get('valid') else 'INVALID'}"
+                 + (f" — {verification.get('reason')}" if verification.get("reason") else ""))
+    return "\n".join(lines)
 
 
 # ===================================================================

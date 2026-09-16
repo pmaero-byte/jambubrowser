@@ -246,7 +246,7 @@ app.add_middleware(GZipMiddleware, minimum_size=500)
 app.add_middleware(RequestTimeoutMiddleware, timeout_seconds=30.0, exclude_paths=[
     "/research", "/scrape", "/exec", "/act", "/workflow", "/v2/",
     "/mlx/", "/mission", "/knowledge/ingest", "/login", "/discover_api",
-    "/audit/", "/proxy", "/sessions/recordings", "/dcm/", "/mcp",
+    "/audit/", "/proxy", "/sessions/recordings", "/dcm/", "/mcp", "/eval/",
 ])
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(TrustedHostMiddleware)
@@ -290,6 +290,7 @@ from backend.routes.meshpay import router as meshpay_router
 from backend.routes.x402 import router as x402_router
 from backend.routes.evidence import router as evidence_router
 from backend.routes.browser_sessions import router as browser_sessions_router
+from backend.routes.eval_cert import router as eval_cert_router
 from backend.mcp_http import (
     card_routes as mcp_card_routes,
     mcp_asgi_app,
@@ -328,6 +329,7 @@ app.include_router(meshpay_router)
 app.include_router(x402_router)
 app.include_router(evidence_router)
 app.include_router(browser_sessions_router)
+app.include_router(eval_cert_router)
 
 # Remote MCP (Streamable HTTP) + public Server Card. The sub-app carries
 # its own token auth; the engine's middleware stack still applies to it.

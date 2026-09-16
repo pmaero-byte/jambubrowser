@@ -57,7 +57,7 @@ class TestServerCard:
         assert "streamable-http" in transports
         assert "stdio" in transports
         assert card["authentication"]["type"] == "bearer"
-        assert card["tools"]["count"] == 33
+        assert card["tools"]["count"] == 35
         assert card["transports"][0]["url"] == "https://mcp.example.com/mcp/"
         # The card is public: no token material may leak.
         assert "super-secret-token" not in str(card)
@@ -148,7 +148,7 @@ class TestAuthBoundary:
             card = client.get("/.well-known/mcp-server-card.json")
         assert health.status_code == 200
         assert card.status_code == 200
-        assert card.json()["tools"]["count"] == 33
+        assert card.json()["tools"]["count"] == 35
 
 
 class TestToolProfile:
@@ -165,12 +165,12 @@ class TestToolProfile:
             assert "execute_tool" not in names
             assert "meshpay_audit" in names  # everything else stays
             assert "browser_session_open" in names
-            assert len(names) == 32
+            assert len(names) == 34
         finally:
             full = self._reload("full")
             names = {t.name for t in full.mcp._tool_manager.list_tools()}
             assert "execute_tool" in names
-            assert len(names) == 33
+            assert len(names) == 35
             os.environ.pop("JAMBU_MCP_PROFILE", None)
 
 
@@ -217,7 +217,7 @@ class TestEngineMount:
     def test_card_served_by_engine(self, client):
         resp = client.get("/.well-known/mcp-server-card.json")
         assert resp.status_code == 200
-        assert resp.json()["tools"]["count"] == 33
+        assert resp.json()["tools"]["count"] == 35
 
     def test_mcp_mount_requires_auth(self, client, monkeypatch):
         monkeypatch.setenv("JAMBU_MCP_TOKEN", "engine-tok")
@@ -290,7 +290,7 @@ class TestProtocolE2E:
         init, tools = asyncio.run(go())
         assert init.serverInfo.name.startswith("Jambubrowser")
         names = {t.name for t in tools.tools}
-        assert len(names) == 33
+        assert len(names) == 35
         assert {"research_web", "dcm_infer", "meshpay_audit", "browser_session_act"} <= names
 
     def test_official_client_without_token_fails(self, server):
