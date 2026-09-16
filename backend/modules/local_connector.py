@@ -382,3 +382,39 @@ def get_filesystem(base_path: str = None) -> FilesystemConnector:
     if _filesystem is None:
         _filesystem = FilesystemConnector(base_path)
     return _filesystem
+
+
+# ---- Module-level API used by the /local/* routes ----
+# The connector methods are synchronous file/AppleScript operations; the
+# async wrappers preserve the route-facing interface.
+
+
+async def create_obsidian_note(title: str, content: str = "", folder: str = "") -> dict:
+    """Create a new Obsidian note."""
+    return get_obsidian().create_note(title, content, folder or "Research")
+
+
+async def append_obsidian_note(title: str, content: str) -> dict:
+    """Append content to an existing Obsidian note."""
+    return get_obsidian().append_to_note(title, content)
+
+
+async def read_obsidian_note(title: str, vault_path: str = None) -> dict:
+    """Read an Obsidian note by title."""
+    return get_obsidian(vault_path).read_note(title)
+
+
+async def search_obsidian(query: str, max_results: int = 10,
+                          vault_path: str = None) -> dict:
+    """Search the Obsidian vault."""
+    return get_obsidian(vault_path).search_vault(query, max_results)
+
+
+async def get_obsidian_stats(vault_path: str = None) -> dict:
+    """Get Obsidian vault statistics."""
+    return get_obsidian(vault_path).get_stats()
+
+
+async def create_reminder(title: str, notes: str = "", due_date: str = None) -> dict:
+    """Create a macOS Reminder."""
+    return get_reminders().create_reminder(title, notes, due_date or "")

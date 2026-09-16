@@ -237,7 +237,13 @@ async def memory_procedural_record(body: dict):
     pid = int(body.get("id", 0))
     success = bool(body.get("success", False))
     duration = float(body.get("duration_ms", 0))
-    p = get_memory().record_procedural_outcome(pid, success, duration)
+    try:
+        p = get_memory().record_procedural_outcome(pid, success, duration)
+    except ValueError:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Procedural memory {pid} not found",
+        )
     return {"updated": True, "success_rate": p.success_rate(), "avg_ms": p.avg_duration_ms}
 
 

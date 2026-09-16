@@ -1,0 +1,30 @@
+# Example: audit every pull request with Jambubrowser and upload SARIF
+# findings to GitHub code scanning (Security → Code scanning alerts).
+#
+# Copy this file to .github/workflows/jambu-audit.yml in your repository.
+# Requires the OPENAI_API_KEY secret (or swap llm-provider to anthropic/ollama).
+name: Jambubrowser Audit
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write   # required for SARIF upload
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Audit the staging site
+        uses: pmaero-byte/jambubrowser@main
+        with:
+          url: https://staging.example.com
+          mode: quick          # 3 employees; use "full" for all 6
+          fail-on: high        # block the PR on high/critical findings
+          upload-sarif: "true"
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

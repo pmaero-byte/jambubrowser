@@ -447,3 +447,32 @@ async def test_all_employees_analyze_with_mock():
         emp = cls()
         findings = await emp.analyze(data)
         assert isinstance(findings, list), f"{cls.name} returned {type(findings)}"
+
+
+# =========================================================================
+# Product context extractor
+# =========================================================================
+
+
+@pytest.mark.asyncio
+async def test_product_context_uses_configured_provider(monkeypatch):
+    """Regression: the extractor hardcoded provider='minimax', ignoring
+    JAMBU_LLM_PROVIDER — wrong provider, wrong keys, broken offline/CI runs.
+    It must call the registry's configured default (no provider kwarg)."""
+    from types import SimpleNamespace
+    from backend.employees import product_context as pc_mod
+
+    captured: dict = {}
+
+    class FakeRegistry:
+        async def chat(self, messages, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(content='{"what_it_does": "a test site"}')
+
+    monkeypatch.setattr("backend.llm.get_registry", lambda: FakeRegistry())
+
+    extractor = pc_mod.ProductContextExtractor()
+    ctx = await extractor.extract_context(AuditData(url="https://x.com", title="X"))
+
+    assert "provider" not in captured
+    assert ctx.what_it_does == "a test site"

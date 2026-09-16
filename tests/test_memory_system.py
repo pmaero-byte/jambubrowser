@@ -344,3 +344,32 @@ class TestStats:
         m.get_or_create_procedural("alice", "task", "approach")
         s = m.stats("alice")
         assert s == {"profiles": 1, "sessions": 1, "semantic_memories": 2, "procedural_memories": 1}
+
+
+# ---------------------------------------------------------------------------
+# Procedural hints (agent-loop integration surface)
+# ---------------------------------------------------------------------------
+
+class TestProceduralHints:
+    """Regression guard for the hints helper the agent loop consults.
+
+    It previously imported a module-level ``list_procedural`` that never
+    existed, and the loop swallowed the resulting error — so stored
+    procedural memory was written but never read.
+    """
+
+    def test_hints_include_stored_approach(self):
+        from backend.memory import get_memory
+        from backend.memory.retrieval import get_procedural_hints
+        m = get_memory()
+        p = m.get_or_create_procedural("alice", "audit a login page", "run form detection first")
+        m.record_procedural_outcome(p.id, success=True, duration_ms=500)
+        hints = get_procedural_hints("alice", "audit a login page")
+        assert "Procedural memory" in hints
+        assert "audit a login page" in hints
+        assert "run form detection first" in hints
+        assert "100%" in hints
+
+    def test_hints_empty_without_memory(self):
+        from backend.memory.retrieval import get_procedural_hints
+        assert get_procedural_hints("nobody", "anything") == ""

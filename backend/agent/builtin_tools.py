@@ -211,14 +211,16 @@ async def risk_check(
 ) -> dict:
     """Check a URL's risk score against URLhaus, PhishTank, and heuristic rules."""
     try:
-        from backend.modules.risk_shield import get_risk_shield
-        shield = get_risk_shield()
-        score = shield.check(url)
+        from backend.modules.risk_shield import get_shield
+        shield = get_shield()
+        result = await shield.assess_url(url)
         return {
             "url": url,
-            "risk_score": getattr(score, "score", None) or (score.get("score") if isinstance(score, dict) else 0.0),
-            "blocked": getattr(score, "blocked", None) or (score.get("blocked") if isinstance(score, dict) else False),
-            "sources": getattr(score, "sources", None) or (score.get("sources") if isinstance(score, dict) else []),
+            "risk_score": result.get("consensus_score", 0.0),
+            "risk_level": result.get("risk_level"),
+            "blocked": result.get("blocked", False),
+            "reason": result.get("reason", ""),
+            "sources": [c.get("source") for c in result.get("checks", [])],
         }
     except Exception as e:
         return {"url": url, "error": str(e)}

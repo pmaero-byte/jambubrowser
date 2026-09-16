@@ -128,8 +128,12 @@ class AuditLogger:
         # Redact PII from details
         sanitized_details = self._redact_pii(details or {})
 
+        # Single timestamp for both the hash and the stored row: hashing a
+        # different value than we persist breaks the chain on every entry
+        # (two time.time() calls differ at microsecond resolution).
+        ts = time.time()
         entry_data = json.dumps({
-            "timestamp": time.time(),
+            "timestamp": ts,
             "category": category,
             "action": action,
             "details": sanitized_details,
@@ -148,7 +152,7 @@ class AuditLogger:
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        time.time(),
+                        ts,
                         category,
                         action,
                         json.dumps(sanitized_details),
@@ -367,3 +371,14 @@ def get_audit_logger(retention_days: int = 90) -> AuditLogger:
     if _audit_logger is None:
         _audit_logger = AuditLogger(retention_days)
     return _audit_logger
+
+
+def reset_audit_logger() -> None:
+    """Drop the cached logger.
+
+    The logger creates its table against whatever database is current at
+    first use, so tests (which redirect ``JAMBU_DB_PATH`` per file) must
+    drop it when the database changes.
+    """
+    global _audit_logger
+    _audit_logger = None

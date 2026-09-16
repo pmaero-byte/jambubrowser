@@ -17,7 +17,7 @@ import xml.etree.ElementTree as ET
 import asyncio
 from typing import Optional, List, Dict
 from urllib.parse import urlparse, parse_qs
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 
 import httpx
 
@@ -272,3 +272,48 @@ def get_youtube_analyzer() -> YouTubeAnalyzer:
     if _analyzer is None:
         _analyzer = YouTubeAnalyzer()
     return _analyzer
+
+
+# ---- Module-level API used by the /media/youtube* routes ----
+
+
+async def analyze_youtube(url: str, summarize: bool = False) -> dict:
+    """Full video analysis (metadata, transcript, chapters, optional summary)."""
+    analyzer = get_youtube_analyzer()
+    llm_config = None
+    if summarize:
+        from backend.engine_runtime import LATEST_LLM_CONFIG
+        llm_config = LATEST_LLM_CONFIG
+    video = await analyzer.analyze(url, llm_config=llm_config)
+    return video.to_dict()
+
+
+async def get_youtube_transcript(url: str) -> dict:
+    """Fetch a video's transcript segments."""
+    analyzer = get_youtube_analyzer()
+    video_id = analyzer.extract_video_id(url)
+    if not video_id:
+        return {"error": "Invalid YouTube URL", "url": url}
+    segments = await analyzer.get_transcript(video_id)
+    return {
+        "video_id": video_id,
+        "url": url,
+        "segments": [asdict(s) for s in segments],
+        "text": " ".join(s.text for s in segments),
+        "count": len(segments),
+    }
+
+
+async def search_youtube_transcript(url: str, query: str) -> dict:
+    """Search within a video's transcript for a query string."""
+    analyzer = get_youtube_analyzer()
+    video_id = analyzer.extract_video_id(url)
+    if not video_id:
+        return {"error": "Invalid YouTube URL", "url": url}
+    matches = await analyzer.search_transcript(video_id, query)
+    return {
+        "video_id": video_id,
+        "query": query,
+        "matches": [asdict(m) for m in matches],
+        "count": len(matches),
+    }

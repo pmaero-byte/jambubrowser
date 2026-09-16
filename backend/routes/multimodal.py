@@ -28,6 +28,8 @@ async def multimodal_image(req: MultimodalImageRequest):
         from backend.modules.multimodal_input import process_image
         result = await process_image(req.image_data, req.prompt)
         return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -39,6 +41,10 @@ async def multimodal_file(req: MultimodalFileRequest):
         from backend.modules.multimodal_input import process_file
         result = await process_file(req.file_path, req.prompt)
         return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

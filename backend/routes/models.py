@@ -71,41 +71,44 @@ async def check_providers():
 @router.get("/mlx/status")
 async def mlx_status():
     """Get MLX provider status: server running, available models, cached models."""
-    from backend.modules.mlx_provider import get_mlx_provider
-    provider = get_mlx_provider()
-    return await provider.get_status()
+    from backend.modules.mlx_provider import get_provider_info
+    return get_provider_info()
 
 
 @router.post("/mlx/server/start")
 async def mlx_start(model: str = "gemma3:12b", port: int = 8080):
     """Start the MLX LM server."""
-    from backend.modules.mlx_provider import get_mlx_provider
-    provider = get_mlx_provider()
-    return await provider.start_server(model=model, port=port)
+    from backend.modules.mlx_provider import mlx_start_server
+    return await mlx_start_server(model=model, port=port)
 
 
 @router.post("/mlx/server/stop")
 async def mlx_stop():
     """Stop the MLX LM server."""
-    from backend.modules.mlx_provider import get_mlx_provider
-    provider = get_mlx_provider()
-    return await provider.stop_server()
+    from backend.modules.mlx_provider import mlx_stop_server
+    return mlx_stop_server()
 
 
 @router.get("/mlx/models")
 async def mlx_models():
     """List available MLX models (definitions + cached)."""
-    from backend.modules.mlx_provider import get_mlx_provider
-    provider = get_mlx_provider()
-    return provider.list_models()
+    from backend.modules.mlx_provider import (
+        MLX_DEFAULT_MODEL,
+        get_available_mlx_models,
+        mlx_list_cached_models,
+    )
+    return {
+        "models": get_available_mlx_models(),
+        "cached": await mlx_list_cached_models(),
+        "default_model": MLX_DEFAULT_MODEL,
+    }
 
 
 @router.post("/mlx/models/download")
 async def mlx_download(model_id: str = "gemma3:12b"):
     """Download an MLX model from HuggingFace."""
-    from backend.modules.mlx_provider import get_mlx_provider
-    provider = get_mlx_provider()
-    return await provider.download_model(model_id)
+    from backend.modules.mlx_provider import mlx_download_model
+    return await mlx_download_model(model_id)
 
 
 @router.post("/mlx/generate")
@@ -117,8 +120,8 @@ async def mlx_generate_endpoint(
     temperature: float = 0.7,
 ):
     """Generate text using MLX local LLM."""
-    from backend.modules.mlx_provider import get_mlx_provider
-    provider = get_mlx_provider()
-    result = await provider.generate(prompt, system=system, model=model,
-                                      max_tokens=max_tokens, temperature=temperature)
-    return result
+    from backend.modules.mlx_provider import mlx_generate
+    text, usage = await mlx_generate(
+        prompt, system, model=model, max_tokens=max_tokens, temperature=temperature
+    )
+    return {"text": text, "usage": usage}

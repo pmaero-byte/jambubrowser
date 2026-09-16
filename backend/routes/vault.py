@@ -1,4 +1,6 @@
 """Credential vault endpoints."""
+import os
+
 from fastapi import APIRouter, HTTPException
 
 from backend.core.security import is_safe_url

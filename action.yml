@@ -1,0 +1,115 @@
+name: "Jambubrowser Audit"
+description: >-
+  AI-employee web audits (security, performance, accessibility, SEO, UX,
+  code quality) driven by a real headless browser. Writes SARIF and can
+  upload it to GitHub code scanning.
+author: "Jambu AI"
+branding:
+  icon: "shield"
+  color: "purple"
+
+inputs:
+  url:
+    description: "URL to audit (e.g. https://staging.example.com)"
+    required: true
+  mode:
+    description: "Audit mode: quick (3 employees) or full (6 employees)"
+    required: false
+    default: "quick"
+  fail-on:
+    description: "Fail the job when a finding at or above this severity exists: critical | high | medium | low | none"
+    required: false
+    default: "high"
+  engine-url:
+    description: "Use an already-running engine instead of installing one locally"
+    required: false
+    default: ""
+  llm-provider:
+    description: "LLM provider for the local engine (openai, anthropic, ollama, mock)"
+    required: false
+    default: "openai"
+  sarif-file:
+    description: "Path for the SARIF output file"
+    required: false
+    default: "jambu-audit.sarif"
+  upload-sarif:
+    description: "Upload SARIF to GitHub code scanning (requires 'security-events: write' permission)"
+    required: false
+    default: "true"
+
+outputs:
+  sarif-file:
+    description: "Path to the SARIF file produced by the audit"
+    value: ${{ steps.audit.outputs.sarif_file }}
+  exit-code:
+    description: "CLI exit code: 0 = pass, 1 = gate failed, 2 = engine error"
+    value: ${{ steps.audit.outputs.exit_code }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install Jambubrowser (CLI + engine)
+      if: inputs.engine-url == ''
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip
+        pip install "${{ github.action_path }}"
+        python -m playwright install --with-deps chromium
+
+    - name: Start engine
+      if: inputs.engine-url == ''
+      shell: bash
+      env:
+        JAMBU_LLM_PROVIDER: ${{ inputs.llm-provider }}
+      run: |
+        nohup python -m uvicorn backend.engine:app --host 127.0.0.1 --port 8001 \
+          > jambu-engine.log 2>&1 &
+        for i in $(seq 1 60); do
+          if curl -sf http://127.0.0.1:8001/health > /dev/null; then
+            echo "engine up after ${i}s"
+            exit 0
+          fi
+          sleep 1
+        done
+        echo "::error::Jambubrowser engine failed to start"
+        tail -50 jambu-engine.log
+        exit 1
+
+    - name: Run audit
+      id: audit
+      shell: bash
+      continue-on-error: true
+      env:
+        JAMBU_ENGINE_URL: ${{ inputs.engine-url != '' && inputs.engine-url || 'http://127.0.0.1:8001' }}
+      run: |
+        set +e
+        jambu ${{ inputs.mode == 'full' && 'audit' || 'quick' }} "${{ inputs.url }}" \
+          --sarif "${{ inputs.sarif-file }}" \
+          --fail-on "${{ inputs.fail-on }}"
+        code=$?
+        echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+        echo "sarif_file=${{ inputs.sarif-file }}" >> "$GITHUB_OUTPUT"
+        exit $code
+
+    - name: Upload SARIF to code scanning
+      if: inputs.upload-sarif == 'true' && hashFiles(inputs.sarif-file) != ''
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ inputs.sarif-file }}
+        category: jambubrowser
+
+    - name: Enforce audit gate
+      if: steps.audit.outputs.exit_code != '0'
+      shell: bash
+      run: |
+        case "${{ steps.audit.outputs.exit_code }}" in
+          1) echo "::error::Jambubrowser audit gate failed (findings at or above '${{ inputs.fail-on }}')" ;;
+          2) echo "::error::Jambubrowser engine error — check the audit step output" ;;
+          *) echo "::error::Jambubrowser audit failed (exit ${{ steps.audit.outputs.exit_code }})" ;;
+        esac
+        exit 1

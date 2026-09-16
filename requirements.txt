@@ -37,6 +37,22 @@ cryptography>=41.0.0
 # Markdown processing
 markdownify>=0.11.0
 
+# Browser automation — powers the AI-employee audit engine (Playwright
+# drives a real headless browser to collect DOM/network/console/a11y data).
+# After install, fetch the browser binary: python -m playwright install chromium
+playwright>=1.40.0
+
+# Screenshot decoding for visual regression detection in audit monitors.
+# Optional at runtime (diffing degrades to null when missing) but declared
+# because the feature is part of the product.
+pillow>=10.0.0
+
+# Solana transaction building for MeshPay anchor transactions (memo
+# program). Optional at runtime: the anchoring code raises a clear
+# AnchorUnavailable error when missing, and the default MeshPay cluster is
+# the offline "mock" transport.
+solders>=0.21
+
 # MCP server (for Claude/Cursor integration)
 # Pinned <2.0: mcp 2.0 removed mcp.server.fastmcp.FastMCP (breaking upstream change).
 mcp>=1.0.0,<2.0.0

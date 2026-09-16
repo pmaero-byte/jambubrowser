@@ -238,7 +238,7 @@ class LLMPlugin(Plugin):
         if not prompt:
             return PluginResult(success=False, error="Missing 'prompt' parameter")
         
-        from backend.engine import LATEST_LLM_CONFIG
+        from backend.engine_runtime import LATEST_LLM_CONFIG
         start = time.time()
         
         try:
@@ -312,7 +312,7 @@ class PluginManager:
     
     def list_models(self) -> List[Dict[str, Any]]:
         """List available models (from LLM config)."""
-        from backend.engine import LATEST_LLM_CONFIG
+        from backend.engine_runtime import LATEST_LLM_CONFIG
         return [
             {
                 "id": LATEST_LLM_CONFIG["modelId"],

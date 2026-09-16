@@ -23,6 +23,8 @@ dependencies = [
     "sqlite-vec>=0.1.0",
     "cryptography>=41.0.0",
     "markdownify>=0.11.0",
+    "playwright>=1.40.0",
+    "pillow>=10.0.0",
     "mcp>=1.0.0,<2.0.0",
     "sentence-transformers>=2.2.0",
     "numpy>=1.24.0",
@@ -44,8 +46,11 @@ mlx = ["mlx-lm", "mlx-vlm"]
 [project.scripts]
 jambu = "cli.jambu:main"
 
-[tool.setuptools]
-packages = ["backend", "cli"]
+# Ship every backend.* subpackage (routes, employees, llm, memory, ...).
+# An explicit `packages = ["backend", "cli"]` list would omit subpackages
+# from non-editable installs, breaking imports like backend.employees.export.
+[tool.setuptools.packages.find]
+include = ["backend*", "cli*"]
 
 [tool.ruff]
 line-length = 100

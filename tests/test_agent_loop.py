@@ -346,6 +346,37 @@ class TestAgentLoop:
         assert agent.history[1].query == "q2"
 
 
+class TestProceduralMemoryWiring:
+    def test_procedural_hints_reach_planner_context(self, monkeypatch):
+        """Stored procedural memory must be handed to the planner."""
+        from backend.memory import get_memory
+        from backend.agent import loop as loop_mod
+        from backend.agent import Agent
+        from backend.agent.plan import Plan
+
+        m = get_memory()
+        p = m.get_or_create_procedural(
+            "alice", "audit a login page", "warm up with form detection",
+        )
+        m.record_procedural_outcome(p.id, success=True, duration_ms=100)
+
+        captured = {}
+
+        async def fake_decompose(query, available_tools=None, user_context=None,
+                                  max_steps=None, prompt_template=None):
+            captured["context"] = user_context
+            return Plan()
+
+        monkeypatch.setattr(loop_mod, "decompose_goal", fake_decompose)
+
+        agent = Agent(max_steps=1, max_seconds=5)
+        asyncio.run(agent.run_to_completion("audit a login page", user_id="alice"))
+
+        context = captured.get("context") or ""
+        assert "Procedural memory" in context
+        assert "warm up with form detection" in context
+
+
 # ---------------------------------------------------------------------------
 # Tool failure → replan
 # ---------------------------------------------------------------------------

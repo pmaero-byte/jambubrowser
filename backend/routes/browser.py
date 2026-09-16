@@ -524,8 +524,10 @@ async def computer_mouse(action: str, x: int = 0, y: int = 0, button: str = "lef
         from backend.modules.computer import mouse_action
         result = await mouse_action(action, x, y, button)
         return result
-    except ImportError:
-        raise HTTPException(status_code=501, detail="Computer control module not available")
+    except RuntimeError as e:
+        raise HTTPException(status_code=501, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/computer/keyboard")
@@ -536,19 +538,14 @@ async def computer_keyboard(text: str = "", key: str = "", modifiers: list = [])
         subprocess.run(["osascript", "-e", f'tell application "System Events" to keystroke "{escaped}"'],
                        capture_output=True, timeout=5)
     elif key:
-        _key_to_code(key)
+        try:
+            from backend.modules.computer import press_key
+            await press_key(key)
+        except RuntimeError as e:
+            raise HTTPException(status_code=501, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
     return {"status": "ok"}
-
-
-def _key_to_code(key: str) -> int:
-    """Map key name to macOS key code (simplified subset)."""
-    mapping = {
-        "return": 36, "enter": 76, "tab": 48, "space": 49, "delete": 51,
-        "escape": 53, "cmd": 55, "shift": 56, "alt": 58, "ctrl": 59,
-        "up": 126, "down": 125, "left": 123, "right": 124,
-        "f5": 96,
-    }
-    return mapping.get(key.lower(), -1)
 
 
 @router.post("/computer/launch")

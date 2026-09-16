@@ -14,7 +14,7 @@ import json
 import re
 import time
 from typing import Optional, List, Dict, Tuple
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 
 import httpx
 
@@ -280,3 +280,71 @@ def get_vision_model(base_url: str = None, model_id: str = None,
             api_key=api_key or "",
         )
     return _vision_model
+
+
+# ---- Module-level API used by the /vision/* routes ----
+
+def _decode_image_data(image_data: str) -> bytes:
+    """Accept either raw base64 or a data: URL and return image bytes."""
+    if image_data.startswith("data:"):
+        _, _, image_data = image_data.partition(",")
+    return base64.b64decode(image_data)
+
+
+async def _fetch_image_bytes(image_url: str) -> bytes:
+    """Download an image for analysis.
+
+    Callers (the route layer) are responsible for SSRF validation via
+    ``is_safe_url`` before handing a URL to this helper.
+    """
+    async with make_async_client(timeout=30.0) as client:
+        resp = await client.get(image_url)
+        resp.raise_for_status()
+        return resp.content
+
+
+async def analyze_image(image_data: str, prompt: str = "") -> dict:
+    """Analyze a base64 image; returns the model narrative + parsed UI elements."""
+    data = _decode_image_data(image_data)
+    model = get_vision_model()
+    text = await model.analyze_screenshot(data, prompt or None)
+    elements = model._parse_element_json(text)
+    return {
+        "analysis": text,
+        "elements": [asdict(e) for e in elements],
+        "model": model.model_id,
+    }
+
+
+async def ocr_image(image_url: str) -> dict:
+    """Extract text from an image URL using the vision model."""
+    data = await _fetch_image_bytes(image_url)
+    model = get_vision_model()
+    text = await model.extract_text(data)
+    return {"text": text, "image_url": image_url, "model": model.model_id}
+
+
+async def detect_ui_elements(image_url: str) -> dict:
+    """Detect interactive UI elements in a screenshot at the given URL."""
+    data = await _fetch_image_bytes(image_url)
+    model = get_vision_model()
+    elements = await model.ground_elements(data)
+    return {
+        "elements": [asdict(e) for e in elements],
+        "count": len(elements),
+        "image_url": image_url,
+        "model": model.model_id,
+    }
+
+
+async def verify_screen(image_data: str, expected: str) -> dict:
+    """Check whether a screenshot shows what the caller expects."""
+    data = _decode_image_data(image_data)
+    model = get_vision_model()
+    prompt = (
+        f"Does this screenshot show the following? {expected}\n"
+        "Answer YES or NO on the first line, then one sentence explaining why."
+    )
+    text = await model.analyze_screenshot(data, prompt)
+    first_line = text.strip().splitlines()[0].upper() if text.strip() else ""
+    return {"verified": "YES" in first_line, "explanation": text}

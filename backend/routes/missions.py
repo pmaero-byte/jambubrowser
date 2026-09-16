@@ -65,22 +65,31 @@ class NotificationSendRequest(BaseModel):
 
 @router.post("/mission")
 async def start_mission(req: MissionRequest):
-    """Register a background research mission."""
-    import hashlib
-    mid = hashlib.md5(req.query.encode()).hexdigest()[:8]
-    with get_db_cursor() as cursor:
-        cursor.execute(
-            "INSERT OR REPLACE INTO missions (id, query, status, last_run, next_run, schedule) VALUES (?, ?, 'active', ?, ?, 'none')",
-            (mid, req.query, time.time(), 0),
-        )
-    return {"mission_id": mid, "status": "active"}
+    """Register a background research mission.
+
+    Persists through the scheduler so the mission appears in
+    ``/mission/list`` immediately (the list is served from the scheduler's
+    store, which used to be empty until a restart).
+    """
+    from backend.modules.missions import get_scheduler
+    mission = await get_scheduler().add_mission(query=req.query, schedule="none")
+    return {"mission_id": mission.id, "status": "active"}
 
 
 @router.post("/mission/stop")
 async def stop_mission(req: MissionStopRequest):
     """Stop a background research mission."""
-    with get_db_cursor() as cursor:
-        cursor.execute("UPDATE missions SET status = 'stopped' WHERE id = ?", (req.mission_id,))
+    from backend.modules.missions import get_scheduler
+    scheduler = get_scheduler()
+    # The scheduler may not have the mission in memory (never started, or
+    # created in a previous process) — sync from the DB first.
+    await scheduler.load_from_db()
+    if not await scheduler.stop_mission(req.mission_id):
+        with get_db_cursor() as cursor:
+            cursor.execute(
+                "UPDATE missions SET status = 'stopped' WHERE id = ?",
+                (req.mission_id,),
+            )
     return {"mission_id": req.mission_id, "status": "stopped"}
 
 
@@ -106,10 +115,17 @@ async def schedule_mission(req: MissionScheduleRequest):
 
 @router.get("/mission/list")
 async def list_missions(status: str = None):
-    """List all scheduled missions with status and run history."""
+    """List all scheduled missions with status and run history.
+
+    Always syncs from the database first: the scheduler's in-memory store
+    can be stale (missions created before a restart, or in another
+    process) and an out-of-date list made created missions invisible.
+    """
     try:
         from backend.modules.missions import get_scheduler
-        missions = get_scheduler().list_missions(status=status)
+        scheduler = get_scheduler()
+        await scheduler.load_from_db()
+        missions = scheduler.list_missions(status=status)
         return {"missions": missions}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -188,8 +204,8 @@ async def start_mission_scheduler():
     """Start the background mission scheduler loop."""
     try:
         from backend.modules.missions import get_scheduler
-        get_scheduler().start()
-        return {"status": "started"}
+        started = await get_scheduler().start()
+        return {"status": "started" if started else "already_running"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -314,8 +330,8 @@ async def stop_shadow_browser():
 async def notification_history(category: str = None, limit: int = 20):
     """Get notification history."""
     try:
-        from backend.modules.notifications import get_notification_manager
-        mgr = get_notification_manager()
+        from backend.modules.notifications import get_notifier
+        mgr = get_notifier()
         entries = mgr.get_history(category=category, limit=limit)
         return {"entries": entries}
     except Exception as e:
@@ -326,9 +342,22 @@ async def notification_history(category: str = None, limit: int = 20):
 async def send_notification_endpoint(req: NotificationSendRequest):
     """Send a test/system notification."""
     try:
-        from backend.modules.notifications import get_notification_manager
-        mgr = get_notification_manager()
-        await mgr.send(req.title, req.message, level=req.level)
+        from backend.modules.notifications import Urgency, get_notifier
+        level_map = {
+            "low": Urgency.LOW,
+            "info": Urgency.NORMAL,
+            "normal": Urgency.NORMAL,
+            "warning": Urgency.HIGH,
+            "high": Urgency.HIGH,
+            "error": Urgency.CRITICAL,
+            "critical": Urgency.CRITICAL,
+        }
+        mgr = get_notifier()
+        await mgr.send(
+            req.title,
+            req.message,
+            urgency=level_map.get(req.level.lower(), Urgency.NORMAL),
+        )
         return {"status": "sent"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

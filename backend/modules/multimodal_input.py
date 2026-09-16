@@ -68,7 +68,7 @@ class MultimodalProcessor:
         return self._http_client
 
     async def process_image(self, image_data: bytes, filename: str = "image.png",
-                             task: str = "analyze") -> ProcessedInput:
+                             task: str = "analyze", prompt: str = None) -> ProcessedInput:
         """
         Process an image: extract text, analyze content, or convert to data.
 
@@ -76,6 +76,7 @@ class MultimodalProcessor:
             image_data: Raw image bytes
             filename: Original filename (for type detection)
             task: "ocr", "analyze", "extract_data", "fix_website"
+            prompt: Optional custom prompt (overrides the task preset)
         """
         if len(image_data) > self.MAX_IMAGE_SIZE:
             return ProcessedInput(input_type="image", original_name=filename,
@@ -97,7 +98,7 @@ class MultimodalProcessor:
             ),
         }
 
-        prompt = prompts.get(task, prompts['analyze'])
+        prompt = prompt or prompts.get(task, prompts['analyze'])
 
         base_url = self.llm_config.get("baseUrl", "http://localhost:8080/v1")
         model_id = self.llm_config.get("modelId", "gemma-3-12b")
@@ -280,3 +281,62 @@ def get_processor(llm_config: dict = None) -> MultimodalProcessor:
     if _processor is None:
         _processor = MultimodalProcessor(llm_config)
     return _processor
+
+
+# ---- Module-level API used by the /multimodal/* routes ----
+
+# Files served by /multimodal/file must live inside this directory so the
+# endpoint can never read arbitrary host files.
+UPLOAD_DIR = os.path.join(os.path.expanduser("~"), ".jambu", "uploads")
+
+
+def _decode_b64_image(image_data: str) -> bytes:
+    """Accept raw base64 or a data: URL and return image bytes."""
+    if image_data.startswith("data:"):
+        _, _, image_data = image_data.partition(",")
+    return base64.b64decode(image_data)
+
+
+def _result_to_dict(result: ProcessedInput) -> dict:
+    return {
+        "input_type": result.input_type,
+        "original_name": result.original_name,
+        "extracted_text": result.extracted_text,
+        "structured_data": result.structured_data,
+        "summary": result.summary,
+        "confidence": result.confidence,
+    }
+
+
+async def process_image(image_data: str, prompt: str = "") -> dict:
+    """Process a base64-encoded image (analysis or OCR)."""
+    processor = get_processor()
+    result = await processor.process_image(
+        _decode_b64_image(image_data), "image.png", "analyze", prompt or None
+    )
+    return _result_to_dict(result)
+
+
+async def process_file(file_path: str, prompt: str = "") -> dict:
+    """Process a file from the uploads directory (~/.jambu/uploads).
+
+    Raises ValueError for paths outside the uploads dir and
+    FileNotFoundError when the file doesn't exist.
+    """
+    from backend.core.security import is_safe_path
+
+    if os.path.isabs(file_path):
+        target = os.path.realpath(file_path)
+    else:
+        target = os.path.realpath(os.path.join(UPLOAD_DIR, file_path))
+    if not is_safe_path(target, UPLOAD_DIR):
+        raise ValueError(f"File paths must be inside {UPLOAD_DIR}")
+    if not os.path.isfile(target):
+        raise FileNotFoundError(f"File not found: {os.path.basename(target)}")
+
+    with open(target, "rb") as f:
+        data = f.read()
+
+    processor = get_processor()
+    result = await processor.process_file(data, os.path.basename(target))
+    return _result_to_dict(result)

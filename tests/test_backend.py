@@ -71,12 +71,34 @@ class TestAuditModule:
         assert isinstance(entry_id, int)
     
     def test_audit_chain_integrity(self):
-        from backend.core.audit import get_audit_logger
+        from backend.core.audit import get_audit_logger, ActionCategory
         logger = get_audit_logger()
-        
+
+        logger.log(ActionCategory.SYSTEM, "chain_entry_1", {"n": 1})
+        logger.log(ActionCategory.SYSTEM, "chain_entry_2", {"n": 2})
+
         is_valid, message = logger.verify_chain_integrity()
-        assert isinstance(is_valid, bool)
-        assert isinstance(message, str)
+        # Not just a bool: the chain must actually verify. A double
+        # time.time() call (hash vs stored row) used to break it silently.
+        assert is_valid is True, message
+
+    def test_audit_chain_detects_tampering(self):
+        from backend.core.audit import get_audit_logger, ActionCategory
+        from backend.core.database import get_db_cursor
+
+        logger = get_audit_logger()
+        entry_id = logger.log(ActionCategory.SYSTEM, "tamper_target", {"x": 1})
+        logger.log(ActionCategory.SYSTEM, "after_tamper", {"x": 2})
+
+        with get_db_cursor() as cursor:
+            cursor.execute(
+                "UPDATE audit_log SET action = 'changed_by_attacker' WHERE id = ?",
+                (entry_id,),
+            )
+
+        is_valid, message = logger.verify_chain_integrity()
+        assert is_valid is False
+        assert "broken" in message.lower() or "mismatch" in message.lower()
 
 
 class TestVaultModule:

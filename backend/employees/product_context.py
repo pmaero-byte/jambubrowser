@@ -152,9 +152,12 @@ RULES:
         ]
 
         try:
+            # Use the engine's configured default provider (JAMBU_LLM_PROVIDER
+            # / fallback chain) — hardcoding a provider here ignored config,
+            # leaked calls to an unintended service, and broke offline/CI
+            # runs. Other employees already resolve the default this way.
             response = await get_registry().chat(
                 llm_messages,
-                provider="minimax",
                 max_tokens=self.max_tokens,
                 temperature=self.temperature,
             )

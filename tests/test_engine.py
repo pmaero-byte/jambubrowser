@@ -166,6 +166,26 @@ class TestMissionEndpoint:
         assert data["status"] == "stopped"
 
 
+class TestProceduralMemoryRoutes:
+    """Regression: recording an outcome for an unknown pattern must be a
+    404, not a 500 with a stack trace."""
+
+    def test_record_unknown_id_returns_404(self, client):
+        response = client.post(
+            "/v2/memory/procedural/record",
+            json={"id": 424242, "success": True, "duration_ms": 10},
+        )
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
+    def test_record_missing_id_returns_404(self, client):
+        response = client.post(
+            "/v2/memory/procedural/record",
+            json={"success": True, "duration_ms": 10},
+        )
+        assert response.status_code == 404
+
+
 class TestToolManagement:
     """Tests for /tool/save, /tools, /tool/exec endpoints."""
 
