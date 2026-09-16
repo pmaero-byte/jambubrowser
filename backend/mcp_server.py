@@ -5,13 +5,15 @@ FastMCP server exposing the full Jambubrowser engine as MCP tools.
 External agents (Claude, Cursor, etc.) can use these tools to perform
 autonomous research, browser automation, and knowledge management.
 
-21 MCP tools covering:
+28 MCP tools covering:
 - Research & Search (5 tools)
 - Browser Actions (5 tools)
 - Vision & Perception (2 tools)
 - Memory & Knowledge (3 tools)
 - Tools & Skills (2 tools)
 - System (4 tools: check_engine_health, get_system_stats, start_mission, stop_mission)
+- DecentraCode Mesh (5 tools: dcm_status, dcm_infer, dcm_models, dcm_earnings, dcm_settlement_log)
+- MeshPay (2 tools: meshpay_audit, meshpay_anchor)
 """
 
 import asyncio
@@ -57,6 +59,17 @@ async def _call_engine(
 
             if resp.status_code == 200:
                 return resp.json()
+            # Surface the engine's own error detail (e.g. DCM's missing-runtime
+            # explanation from /dcm/infer) instead of a bare status code.
+            detail = None
+            try:
+                body = resp.json()
+                if isinstance(body, dict):
+                    detail = body.get("detail") or body.get("error")
+            except Exception:
+                detail = None
+            if detail:
+                return {"error": f"Engine HTTP {resp.status_code}: {detail}"}
             return {"error": f"Engine returned status {resp.status_code}"}
         except httpx.TimeoutException:
             return {"error": f"Request timed out after {timeout}s"}
@@ -539,6 +552,243 @@ async def stop_mission(mission_id: str) -> str:
     if "error" in result:
         return f"Mission stop failed: {result['error']}"
     return f"Mission {mission_id} stopped."
+
+
+# ===================================================================
+# DECENTRACODE MESH (DCM) TOOLS
+# ===================================================================
+
+@mcp.tool()
+async def dcm_status() -> str:
+    """
+    Check the local DecentraCode Mesh (DCM) node: reachability, inference
+    runtimes, available models, and connected peers.
+    """
+    result = await _call_engine("GET", "/dcm/status", timeout=20.0)
+    if "error" in result:
+        return f"DCM status failed: {result['error']}"
+    if not result.get("reachable"):
+        return (
+            "DCM node unreachable. Start it with: "
+            "cd decentracode/backend && npm start"
+        )
+
+    lines = ["# DecentraCode Mesh Node\n"]
+    inf = result.get("inference_status") or {}
+    if isinstance(inf, dict):
+        # A top-level "error" only concerns the *default* runtime; a ready
+        # secondary (MoE sidecar) still means the node can serve inference.
+        top_ready = bool(inf.get("engine_ready", inf.get("ready")))
+        moe = inf.get("moe") or {}
+        moe_ready = bool(moe.get("ready") or moe.get("available"))
+        if top_ready:
+            lines.append(f"- Inference: {inf.get('runtime', 'runtime')} ready")
+        elif moe_ready:
+            lines.append(
+                f"- Inference: {moe.get('runtime', 'MoE')} ready"
+                + (f" ({inf.get('runtime', 'default')}: {str(inf.get('error'))[:60]})"
+                   if inf.get("error") else "")
+            )
+        else:
+            lines.append(
+                f"- Inference: not ready — {str(inf.get('error') or 'no runtime')[:80]}"
+            )
+    elif inf.get("error"):
+        lines.append(f"- Inference: unavailable — {inf['error']}")
+
+    models = result.get("models")
+    if isinstance(models, list):
+        available = [m for m in models if m.get("status") in ("available", "ready")]
+        lines.append(f"- Models: {len(available)}/{len(models)} available")
+
+    mesh = result.get("mesh_status") or {}
+    if isinstance(mesh, dict) and not mesh.get("error"):
+        peers = mesh.get("peers")
+        n = len(peers) if isinstance(peers, (list, dict)) else (peers or 0)
+        lines.append(f"- Mesh peers: {n}")
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def dcm_infer(prompt: str, model: str = "", max_tokens: int = 64) -> str:
+    """
+    Run a prompt on the local DecentraCode Mesh (distributed inference).
+
+    Args:
+        prompt: The prompt to run
+        model: Optional DCM model id (e.g. 'qwen1.5-moe-a2.7b'); empty uses the node default
+        max_tokens: Maximum tokens to generate (1-4096)
+    """
+    payload = {"prompt": prompt, "max_tokens": max_tokens}
+    if model:
+        payload["model"] = model
+    result = await _call_engine("POST", "/dcm/infer", payload, timeout=180.0)
+    if "error" in result:
+        return f"DCM inference failed: {result['error']}"
+    usage = result.get("usage") or {}
+    return (
+        f"{result.get('content', '').strip()}\n\n"
+        f"_model: {result.get('model', '?')} · "
+        f"{usage.get('completion_tokens', 0)} tokens · "
+        f"{result.get('latency_ms', 0):.0f}ms_"
+    )
+
+
+@mcp.tool()
+async def dcm_models() -> str:
+    """
+    List the local DecentraCode Mesh model catalog with availability and
+    runtime per model.
+    """
+    result = await _call_engine("GET", "/dcm/models", timeout=20.0)
+    if "error" in result:
+        return f"DCM models failed: {result['error']}"
+    models = result.get("models", [])
+    if not models:
+        return "DCM node returned no models."
+    lines = [f"# DCM Models ({len(models)})\n"]
+    for m in models:
+        status = m.get("status", "?")
+        mark = "✅" if status in ("available", "ready") else "·"
+        lines.append(
+            f"- {mark} `{m.get('id')}` — {m.get('name', '')} "
+            f"({m.get('runtime', '?')}, {status})"
+        )
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def dcm_earnings(did: str) -> str:
+    """
+    Show accrued DCT earnings for a provider DID on the local DCM node.
+
+    Args:
+        did: Provider DID (e.g. 'did:dcm:...' or the node's registered DID)
+    """
+    result = await _call_engine("GET", f"/dcm/earnings/{did}", timeout=20.0)
+    if "error" in result:
+        return f"DCM earnings failed: {result['error']}"
+    lines = [f"# DCT Earnings — {did}\n"]
+    for key in ("pendingDct", "paidDct", "totalDct", "settledDct", "withdrawnDct"):
+        if key in result:
+            lines.append(f"- {key}: {result[key]}")
+    if len(lines) == 1:
+        lines.append(f"```json\n{json.dumps(result, indent=2)[:800]}\n```")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def dcm_settlement_log(limit: int = 20) -> str:
+    """
+    Fetch the DCM node's hash-chained settlement receipts (billing audit
+    trail: usage, inference-charge, simulation-charge, settlement).
+
+    Args:
+        limit: Number of receipts to fetch (1-500)
+    """
+    result = await _call_engine(
+        "GET", "/dcm/settlement-log", {"limit": limit}, timeout=20.0,
+    )
+    if "error" in result:
+        return f"DCM settlement log failed: {result['error']}"
+    entries = result.get("entries") or result.get("log") or []
+    # DCM nests the chain verdict under "verification"; accept both shapes.
+    verification = result.get("verification") or {}
+    valid = result.get("valid", verification.get("valid"))
+    head = f"# DCM Settlement Log — {len(entries)} receipt(s)"
+    if valid is not None:
+        head += f" · chain valid: {valid}"
+    totals = verification.get("totals") or {}
+    lines = [head + "\n"]
+    if totals:
+        lines.append(
+            "- totals: "
+            + ", ".join(f"{k}={v}" for k, v in totals.items())
+        )
+    for e in entries[:limit]:
+        kind = e.get("kind") or e.get("type") or "?"
+        amount = e.get("amountDct", e.get("amount", e.get("dct", "")))
+        when = e.get("timestamp", "")
+        lines.append(f"- `{kind}` {amount} — {when}")
+    if not entries:
+        lines.append("(no receipts yet)")
+    return "\n".join(lines)
+
+
+# ===================================================================
+# MESHPAY TOOLS (USDC settlement for mesh compute)
+# ===================================================================
+
+@mcp.tool()
+async def meshpay_audit(limit: int = 200) -> str:
+    """
+    Independently audit the DCM settlement receipt chain and preview the
+    USDC payout plan. Replays the hash chain with MeshPay's own verifier
+    and compares it to DCM's verdict.
+
+    Args:
+        limit: Receipts to audit (1-200)
+    """
+    result = await _call_engine("GET", "/meshpay/audit", {"limit": limit}, timeout=30.0)
+    if "error" in result:
+        return f"MeshPay audit failed: {result['error']}"
+
+    v = result.get("verification") or {}
+    lines = ["# MeshPay Audit\n"]
+    lines.append(f"- Receipts checked: {v.get('checked', 0)}")
+    lines.append(f"- Chain valid (independent): {v.get('valid')}")
+    if v.get("broken_at") is not None:
+        lines.append(f"- Broken at: #{v['broken_at']} — {v.get('broken_reason')}")
+    if result.get("agreement") is not None:
+        lines.append(f"- Agrees with DCM's own verdict: {result['agreement']}")
+    epochs = result.get("epochs") or []
+    lines.append(f"- Epochs: {len(epochs)}")
+    payout = result.get("payout") or {}
+    totals = payout.get("totals") or {}
+    if totals:
+        lines.append(
+            f"- Latest epoch plan: {totals.get('grossDct')} DCT gross → "
+            f"{totals.get('usdc')} USDC net (fee {payout.get('protocol_fee_pct')})"
+        )
+        providers = payout.get("providers") or []
+        for p in providers[:5]:
+            lines.append(
+                f"  - {p['nodeId']}: {p['netDct']} DCT → {p['usdc']} USDC"
+            )
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def meshpay_anchor(epoch_index: int = -1, epoch_size: int = 50) -> str:
+    """
+    Anchor an epoch's Merkle receipt root (Solana memo program on the
+    configured cluster, or the explicit mock transport). Returns the
+    signature and explorer link when a real cluster is configured.
+
+    Args:
+        epoch_index: Epoch to anchor (-1 = latest)
+        epoch_size: Receipts per epoch
+    """
+    result = await _call_engine("POST", "/meshpay/anchor", {
+        "epoch_index": epoch_index,
+        "epoch_size": epoch_size,
+        "limit": 200,
+    }, timeout=60.0)
+    if "error" in result:
+        return f"MeshPay anchor failed: {result['error']}"
+    lines = ["# MeshPay Anchor\n"]
+    lines.append(f"- Epoch: {result.get('epoch', {}).get('index')} "
+                 f"({result.get('epoch', {}).get('receipts')} receipts)")
+    lines.append(f"- Root: `{result.get('root')}`")
+    lines.append(f"- Transport: {result.get('transport')} "
+                 f"(cluster: {result.get('cluster')})")
+    lines.append(f"- Signature: `{result.get('signature')}`")
+    if result.get("explorer_url"):
+        lines.append(f"- Explorer: {result['explorer_url']}")
+    else:
+        lines.append("- (mock transport — no chain transaction; nothing to explore)")
+    return "\n".join(lines)
 
 
 # ===================================================================

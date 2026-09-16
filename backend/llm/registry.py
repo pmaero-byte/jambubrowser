@@ -79,6 +79,10 @@ class ProviderRegistry:
             return provider
 
     def has(self, name: str) -> bool:
+        """True when a provider is registered (triggers discovery on miss)."""
+        if name in self._factories or name in self._providers:
+            return True
+        self._discover_providers()
         return name in self._factories or name in self._providers
 
     def list_available(self) -> list[str]:
@@ -120,7 +124,7 @@ class ProviderRegistry:
         for candidate in chain:
             if not self.has(candidate):
                 continue
-            if self._config.force_local_only and candidate not in ("ollama", "mlx", "mock"):
+            if self._config.force_local_only and candidate not in ("ollama", "mlx", "mock", "dcm"):
                 continue
             try:
                 provider = self.get(candidate)

@@ -402,7 +402,7 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
             info_count INTEGER DEFAULT 0,
             findings_json TEXT,
             share_token TEXT UNIQUE,
-            created_at REAL DEFAULT (julianday('now'))
+            created_at REAL DEFAULT (CAST(strftime('%s','now') AS REAL))
         )
     """)
 
@@ -478,6 +478,120 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
             FOREIGN KEY (team_id) REFERENCES teams(id)
         )
     """)
+
+    # ── Dismissed findings ─────────────────────────────────────────────────
+    # Lets users mark a finding as a false-positive / not-applicable. The
+    # "fingerprint" is the content_hash from the canonical JSON export
+    # (employee + category + severity + title), so dismissal survives across
+    # re-audits of the same URL even when the per-audit finding ID changes.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS dismissed_findings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fingerprint TEXT NOT NULL,
+            url TEXT NOT NULL,
+            employee TEXT NOT NULL,
+            category TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            title TEXT NOT NULL,
+            reason TEXT,
+            dismissed_by TEXT NOT NULL DEFAULT 'default',
+            dismissed_at REAL DEFAULT (julianday('now')),
+            UNIQUE(fingerprint, url)
+        )
+    """)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_dismissed_url ON dismissed_findings(url)"
+    )
+
+    # ── Audit monitors ─────────────────────────────────────────────────────
+    # Recurring audits with regression alerting: a monitor re-runs the audit
+    # pipeline on an interval and diffs the active findings against the
+    # previous run. "Regressions" are new findings at or above `fail_on`.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS audit_monitors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            url TEXT NOT NULL,
+            mode TEXT NOT NULL DEFAULT 'quick',
+            interval_minutes INTEGER NOT NULL DEFAULT 1440,
+            fail_on TEXT NOT NULL DEFAULT 'high',
+            webhook_url TEXT,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            visual_threshold_pct REAL DEFAULT 2.0,
+            created_at REAL DEFAULT (CAST(strftime('%s','now') AS REAL)),
+            last_run_at REAL,
+            last_status TEXT,
+            last_finding_count INTEGER,
+            last_error TEXT
+        )
+    """)
+    # Migration: visual regression threshold (for databases created before
+    # visual diffing existed).
+    try:
+        cursor.execute("SELECT visual_threshold_pct FROM audit_monitors LIMIT 1")
+    except sqlite3.OperationalError:
+        cursor.execute(
+            "ALTER TABLE audit_monitors ADD COLUMN visual_threshold_pct REAL DEFAULT 2.0"
+        )
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS audit_monitor_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            monitor_id INTEGER NOT NULL,
+            run_at REAL DEFAULT (CAST(strftime('%s','now') AS REAL)),
+            status TEXT NOT NULL,
+            baseline INTEGER DEFAULT 0,
+            total_findings INTEGER DEFAULT 0,
+            new_findings INTEGER DEFAULT 0,
+            resolved_findings INTEGER DEFAULT 0,
+            by_severity TEXT,
+            fingerprints TEXT,
+            new_fingerprints TEXT,
+            resolved_fingerprints TEXT,
+            screenshot_b64 TEXT,
+            visual_change_pct REAL,
+            error TEXT,
+            FOREIGN KEY (monitor_id) REFERENCES audit_monitors(id)
+        )
+    """)
+    # Migration: screenshot + visual diff columns.
+    for column, ddl in (
+        ("screenshot_b64", "ALTER TABLE audit_monitor_runs ADD COLUMN screenshot_b64 TEXT"),
+        ("visual_change_pct", "ALTER TABLE audit_monitor_runs ADD COLUMN visual_change_pct REAL"),
+    ):
+        try:
+            cursor.execute(f"SELECT {column} FROM audit_monitor_runs LIMIT 1")
+        except sqlite3.OperationalError:
+            cursor.execute(ddl)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_monitor_runs ON audit_monitor_runs(monitor_id, run_at DESC)"
+    )
+
+    # ── MeshPay: anchored receipt-epoch roots ──────────────────────────
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS meshpay_anchors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            epoch INTEGER NOT NULL,
+            root TEXT NOT NULL,
+            receipts INTEGER DEFAULT 0,
+            cluster TEXT NOT NULL,
+            transport TEXT NOT NULL,
+            signature TEXT NOT NULL,
+            memo TEXT NOT NULL,
+            epoch_size INTEGER DEFAULT 50,
+            created_at REAL DEFAULT (CAST(strftime('%s','now') AS REAL))
+        )
+    """)
+    # Migration: anchor records must remember the epoch size they were
+    # computed with, or later re-verification groups receipts differently
+    # and reports a false "unavailable".
+    try:
+        cursor.execute("SELECT epoch_size FROM meshpay_anchors LIMIT 1")
+    except sqlite3.OperationalError:
+        cursor.execute(
+            "ALTER TABLE meshpay_anchors ADD COLUMN epoch_size INTEGER DEFAULT 50"
+        )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_meshpay_anchors ON meshpay_anchors(created_at DESC)"
+    )
 
     conn.commit()
     return conn

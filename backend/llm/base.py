@@ -191,8 +191,9 @@ _PRICING_TABLE: list[tuple[str, str, float, float]] = [
     ("minimax", "minimax", 1.0, 3.0),
 ]
 
-# Local providers: zero marginal cost (electricity aside).
-_LOCAL_PROVIDERS = {"ollama", "mlx", "mock"}
+# Local providers: zero marginal cost (electricity aside). DCM is a
+# user-operated compute mesh — DCT metering happens mesh-side, not in USD.
+_LOCAL_PROVIDERS = {"ollama", "mlx", "mock", "dcm"}
 
 
 def estimate_cost_for_model(provider: str, model: str, usage: Usage) -> float:

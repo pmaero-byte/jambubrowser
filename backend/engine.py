@@ -79,6 +79,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     tasks.append(safe_task(memory_audit(), "memory_audit"))
 
+    # Audit monitor scheduler: runs due recurring audits with regression
+    # alerting. Starts after a short delay so engine startup isn't racy.
+    from backend.modules.audit_monitor import get_monitor_scheduler
+    tasks.append(safe_task(
+        get_monitor_scheduler().run_loop(), "audit_monitor_scheduler",
+    ))
+
+    # Mission scheduler: register a research handler so missions can
+    # actually execute when the loop is started (POST
+    # /mission/start-scheduler). Without this every due mission failed
+    # with "no research handler".
+    from backend.modules.missions import get_scheduler as get_mission_scheduler
+
+    async def _mission_research(query: str) -> str:
+        from backend.routes.research import _brain_only_research
+        result = await _brain_only_research(query)
+        return result.get("answer", "") or ""
+
+    get_mission_scheduler().set_research_handler(_mission_research)
+
     yield  # Application runs here
 
     # Shutdown cleanup. Inlined in the post-yield for-loop because
@@ -86,6 +106,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # accepts `await` only inside try/loop bodies in that context.
     for task in tasks:
         task.cancel()
+    try:
+        from backend.modules.audit_monitor import get_monitor_scheduler
+        get_monitor_scheduler().stop()
+    except Exception:
+        pass
     for mod_name in ["browser", "missions", "shadow_browser", "risk_shield"]:
         try:
             mod = __import__(f"backend.modules.{mod_name}", fromlist=["cleanup"])
@@ -202,7 +227,7 @@ app.add_middleware(GZipMiddleware, minimum_size=500)
 app.add_middleware(RequestTimeoutMiddleware, timeout_seconds=30.0, exclude_paths=[
     "/research", "/scrape", "/exec", "/act", "/workflow", "/v2/",
     "/mlx/", "/mission", "/knowledge/ingest", "/login", "/discover_api",
-    "/audit/", "/proxy", "/sessions/recordings",
+    "/audit/", "/proxy", "/sessions/recordings", "/dcm/",
 ])
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(TrustedHostMiddleware)
@@ -235,6 +260,9 @@ from backend.routes.multimodal import router as multimodal_router
 from backend.routes.fingerprint import router as fingerprint_router
 from backend.routes.media import router as media_router
 from backend.routes.audit import router as audit_router
+from backend.routes.audit_monitors import router as audit_monitors_router
+from backend.routes.dcm import router as dcm_router
+from backend.routes.meshpay import router as meshpay_router
 from backend.routes.api_keys import router as api_keys_router
 from backend.routes.billing import router as billing_router
 from backend.routes.teams import router as teams_router
@@ -262,6 +290,9 @@ app.include_router(multimodal_router)
 app.include_router(fingerprint_router)
 app.include_router(media_router)
 app.include_router(audit_router)
+app.include_router(audit_monitors_router)
+app.include_router(dcm_router)
+app.include_router(meshpay_router)
 app.include_router(api_keys_router)
 app.include_router(billing_router)
 app.include_router(teams_router)

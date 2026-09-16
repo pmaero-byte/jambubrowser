@@ -79,6 +79,13 @@ class LLMConfig:
     minimax_base_url: str = "https://api.minimax.io/v1"
     minimax_model: str = "MiniMax-M2"
 
+    # DecentraCode Mesh (DCM) — OpenAI-compatible endpoint of a local mesh node.
+    # The mesh is user-operated infrastructure, so inference is treated as a
+    # local provider (zero USD marginal cost; DCT metering happens mesh-side).
+    dcm_base_url: str = "http://127.0.0.1:3001"
+    dcm_model: str = "qwen1.5-moe-a2.7b"
+    dcm_auth: str = ""  # optional Authorization header (prod DCM needs DID-Sig)
+
     # Behavior
     auto_health_check: bool = True
     force_local_only: bool = False  # privacy mode enforcement
@@ -108,6 +115,9 @@ class LLMConfig:
             minimax_api_key=_env("MINIMAX_API_KEY", ""),
             minimax_base_url=_env("JAMBU_LLM_MINIMAX_BASE_URL", "https://api.minimax.io/v1"),
             minimax_model=_env("JAMBU_LLM_MINIMAX_MODEL", "MiniMax-M2"),
+            dcm_base_url=_env("JAMBU_LLM_DCM_BASE_URL", "http://127.0.0.1:3001"),
+            dcm_model=_env("JAMBU_LLM_DCM_MODEL", "qwen1.5-moe-a2.7b"),
+            dcm_auth=_env("JAMBU_LLM_DCM_AUTH", ""),
             auto_health_check=_env_bool("JAMBU_LLM_AUTO_HEALTH_CHECK", True),
             force_local_only=_env_bool("JAMBU_LLM_LOCAL_ONLY", False),
         )
@@ -120,6 +130,7 @@ class LLMConfig:
             "ollama": self.ollama_model,
             "mlx": self.mlx_model,
             "minimax": self.minimax_model,
+            "dcm": self.dcm_model,
             "mock": "mock-model",
             "moa": self.default_model or "default",
         }.get(provider, "")

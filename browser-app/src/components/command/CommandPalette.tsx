@@ -14,6 +14,7 @@ import {
   ScrollText,
   Settings,
   FolderKanban,
+  Radar,
   Video,
   Shield,
   Wallet,
@@ -24,6 +25,8 @@ import {
   Moon,
   Sun,
   HelpCircle,
+  Radio,
+  Coins,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { useAppStore, type CanvasTab } from "../../store/appStore";
@@ -36,6 +39,9 @@ const navActions: { id: CanvasTab; label: string; icon: React.ElementType; short
   { id: "logs", label: "Logs / Audit", icon: FileText, shortcut: "Meta+L" },
   { id: "memory", label: "Memory", icon: Brain, shortcut: "Meta+Shift+M" },
   { id: "missions", label: "Missions", icon: FolderKanban },
+  { id: "monitors", label: "Audit Monitors (regression alerts)", icon: Radar },
+  { id: "dcm-node", label: "DCM Node (DecentraCode mesh)", icon: Radio },
+  { id: "meshpay", label: "MeshPay (USDC settlement + receipt audit)", icon: Coins },
   { id: "recordings", label: "Recordings (replay browser runs)", icon: Video },
   { id: "privacy", label: "Privacy Controls", icon: Shield, shortcut: "Meta+Shift+P" },
   { id: "audit", label: "Audit Log", icon: ScrollText },

@@ -26,6 +26,7 @@ Run:
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import socket
 import subprocess
@@ -52,7 +53,7 @@ ENGINE_URL_ENV = "JAMBU_ENGINE_URL"
 # ---------------------------------------------------------------------------
 
 def _expected_tool_names() -> set[str]:
-    """The canonical 21-tool surface exposed by backend/mcp_server.py.
+    """The canonical 26-tool surface exposed by backend/mcp_server.py.
 
     Listed here (not imported) because the server uses @mcp.tool() decorators
     at module-import time; we want this test to fail loudly if any tool is
@@ -74,6 +75,11 @@ def _expected_tool_names() -> set[str]:
         # System (4)
         "check_engine_health", "get_system_stats",
         "start_mission", "stop_mission",
+        # DecentraCode Mesh (5)
+        "dcm_status", "dcm_infer", "dcm_models",
+        "dcm_earnings", "dcm_settlement_log",
+        # MeshPay (2)
+        "meshpay_audit", "meshpay_anchor",
     }
 
 
@@ -232,11 +238,23 @@ async def _live_e2e() -> int:
             if r.status != 200:
                 import pytest
                 pytest.skip(f"engine at {engine_url} returned {r.status}")
+            health = json.loads(r.read() or b"{}")
     except Exception as e:
         import pytest
         pytest.skip(
             f"engine not reachable at {engine_url} ({type(e).__name__}: {e}). "
             f"Start it with: JAMBU_LLM_PROVIDER=mock python3 -m uvicorn backend.engine:app --port 8001"
+        )
+
+    # Another app may be squatting on the port (e.g. a different local
+    # service on :8001). Only treat the response as "the engine" when it
+    # identifies itself as Jambubrowser — otherwise the assertions below
+    # fail on a foreign service's 404s.
+    if "Jambubrowser" not in str(health.get("message", "")):
+        import pytest
+        pytest.skip(
+            f"port {engine_url} is serving a different service "
+            f"(health={health!r}); skipping live MCP e2e"
         )
 
     async with _stdio_session(env_overrides={ENGINE_URL_ENV: engine_url}) as s:

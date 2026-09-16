@@ -9,6 +9,7 @@ import {
   Settings,
   History,
   FolderKanban,
+  Radar,
   Shield,
   Wallet,
   Users,
@@ -16,6 +17,8 @@ import {
   FileText,
   Bot,
   Video,
+  Radio,
+  Coins,
 } from "lucide-react";
 import { useAppStore, type CanvasTab } from "../../store/appStore";
 import { useAgentWebSocket } from "../../utils/useAgentWebSocket";
@@ -26,6 +29,9 @@ const workspaceNav: { id: CanvasTab; label: string; icon: React.ElementType }[] 
   { id: "logs", label: "Logs", icon: FileText },
   { id: "memory", label: "Memory", icon: Brain },
   { id: "missions", label: "Missions", icon: FolderKanban },
+  { id: "monitors", label: "Monitors", icon: Radar },
+  { id: "dcm-node", label: "DCM Node", icon: Radio },
+  { id: "meshpay", label: "MeshPay", icon: Coins },
   { id: "history", label: "History", icon: History },
   { id: "recordings", label: "Recordings", icon: Video },
   { id: "agent", label: "Agent", icon: Bot },
