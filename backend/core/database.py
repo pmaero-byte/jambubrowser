@@ -649,6 +649,26 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
         "CREATE INDEX IF NOT EXISTS idx_evidence_bundles ON evidence_bundles(created_at DESC)"
     )
 
+    # ── A2A tasks (agent-to-agent hires) ───────────────────────────────
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS a2a_tasks (
+            id TEXT PRIMARY KEY,
+            context_id TEXT,
+            skill TEXT NOT NULL,
+            state TEXT NOT NULL,
+            message_json TEXT,
+            artifacts_json TEXT,
+            history_json TEXT,
+            status_message TEXT,
+            error TEXT,
+            created_at REAL DEFAULT (CAST(strftime('%s','now') AS REAL)),
+            updated_at REAL DEFAULT (CAST(strftime('%s','now') AS REAL))
+        )
+    """)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_a2a_tasks ON a2a_tasks(updated_at DESC)"
+    )
+
     conn.commit()
     return conn
 

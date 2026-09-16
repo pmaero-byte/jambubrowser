@@ -53,12 +53,14 @@ PRICE_DEFAULTS = {
     "audit_quick": "20000",   # $0.02
     "audit_full": "100000",   # $0.10
     "dcm_infer": "1000",      # $0.001
+    "a2a_task": "50000",      # $0.05
 }
 
 PRICE_DESCRIPTIONS = {
     "audit_quick": "Quick scan: 3 AI employees (Security, Performance, UX)",
     "audit_full": "Full audit: 6 AI employees with SARIF/HTML report",
     "dcm_infer": "Prompt completion on the local DecentraCode mesh node",
+    "a2a_task": "One agent-to-agent task (A2A SendMessage)",
 }
 
 
@@ -448,6 +450,7 @@ DEFAULT_PAID_ROUTES = {
     ("POST", "/audit/run"): "audit_full",
     ("POST", "/audit/quick"): "audit_quick",
     ("POST", "/dcm/infer"): "dcm_infer",
+    ("POST", "/a2a"): "a2a_task",
 }
 
 _BUFFER_LIMIT = 262_144  # bytes; larger bodies switch to passthrough
@@ -548,6 +551,9 @@ class X402Middleware:
         verify = await facilitator.verify(payload, requirements)
         if not verify.is_valid:
             return await payment_required(verify.invalid_reason or "payment_invalid")
+
+        # Downstream routes (A2A) can see that the paywall already collected.
+        scope.setdefault("state", {})["x402_paid"] = True
 
         state = {"start": None, "chunks": [], "buffering": True}
         settled = {"done": False}
