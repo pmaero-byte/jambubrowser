@@ -2,18 +2,25 @@
 
 Auto-generated from `backend/mcp_server.py` by `tools/mcp/generate_docs.py`. Do not edit by hand — re-run the generator after adding or renaming a tool.
 
-**Total tools:** 21
+**Total tools:** 28
 
 ## Table of contents
 
 - [`analyze_screenshot`](#analyze_screenshot)
 - [`check_engine_health`](#check_engine_health)
 - [`click_element`](#click_element)
+- [`dcm_earnings`](#dcm_earnings)
+- [`dcm_infer`](#dcm_infer)
+- [`dcm_models`](#dcm_models)
+- [`dcm_settlement_log`](#dcm_settlement_log)
+- [`dcm_status`](#dcm_status)
 - [`deep_research`](#deep_research)
 - [`execute_tool`](#execute_tool)
 - [`get_brain_stats`](#get_brain_stats)
 - [`get_system_stats`](#get_system_stats)
 - [`list_custom_tools`](#list_custom_tools)
+- [`meshpay_anchor`](#meshpay_anchor)
+- [`meshpay_audit`](#meshpay_audit)
 - [`navigate_browser`](#navigate_browser)
 - [`query_brain`](#query_brain)
 - [`recall_memory`](#recall_memory)
@@ -71,6 +78,68 @@ Args:
     selector: CSS selector for the element to click
     session_id: Optional browser session ID
 
+### `dcm_earnings`
+
+**Signature**
+
+```python
+dcm_earnings(did: str)
+```
+
+**Description**
+
+Show accrued DCT earnings for a provider DID on the local DCM node.
+
+Args:
+    did: Provider DID (e.g. 'did:dcm:...' or the node's registered DID)
+
+### `dcm_infer`
+
+**Signature**
+
+```python
+dcm_infer(prompt: str, model: str = '', max_tokens: int = 64)
+```
+
+**Description**
+
+Run a prompt on the local DecentraCode Mesh (distributed inference).
+
+Args:
+    prompt: The prompt to run
+    model: Optional DCM model id (e.g. 'qwen1.5-moe-a2.7b'); empty uses the node default
+    max_tokens: Maximum tokens to generate (1-4096)
+
+### `dcm_models`
+
+**Description**
+
+List the local DecentraCode Mesh model catalog with availability and
+runtime per model.
+
+### `dcm_settlement_log`
+
+**Signature**
+
+```python
+dcm_settlement_log(limit: int = 20)
+```
+
+**Description**
+
+Fetch the DCM node's hash-chained settlement receipts (billing audit
+trail: usage, inference-charge, simulation-charge, settlement).
+
+Args:
+    limit: Number of receipts to fetch (1-500)
+
+### `dcm_status`
+
+**Description**
+
+Check the local DecentraCode Mesh (DCM) node: reachability, inference
+runtimes, available models, and connected peers.
+
 ### `deep_research`
 
 **Signature**
@@ -124,6 +193,41 @@ active missions, and database size.
 
 List all saved agent-generated tools and skills stored
 in the toolbox.
+
+### `meshpay_anchor`
+
+**Signature**
+
+```python
+meshpay_anchor(epoch_index: int = -1, epoch_size: int = 50)
+```
+
+**Description**
+
+Anchor an epoch's Merkle receipt root (Solana memo program on the
+configured cluster, or the explicit mock transport). Returns the
+signature and explorer link when a real cluster is configured.
+
+Args:
+    epoch_index: Epoch to anchor (-1 = latest)
+    epoch_size: Receipts per epoch
+
+### `meshpay_audit`
+
+**Signature**
+
+```python
+meshpay_audit(limit: int = 200)
+```
+
+**Description**
+
+Independently audit the DCM settlement receipt chain and preview the
+USDC payout plan. Replays the hash chain with MeshPay's own verifier
+and compares it to DCM's verdict.
+
+Args:
+    limit: Receipts to audit (1-200)
 
 ### `navigate_browser`
 

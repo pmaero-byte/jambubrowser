@@ -29,8 +29,9 @@ isn't real yet.
 verifier) with shared memory and budgets, instead of trusting a single model.
 
 ### What exists today
-- **Unified LLM layer** (`backend/llm/`, ~2k LOC) — 6 providers behind one
-  protocol: Anthropic, OpenAI, Ollama, MLX, MiniMax, Mock. Auto-discovery,
+- **Unified LLM layer** (`backend/llm/`, ~2k LOC) — 7 providers behind one
+  protocol: Anthropic, OpenAI, Ollama, MLX, MiniMax, DecentraCode Mesh (DCM),
+  Mock. Auto-discovery,
   per-request cost tracking, smart routing (`cheapest` / `fastest` /
   `quality` / `fallback` / `local_only`).
 - **Mixture-of-Agents provider** (`backend/llm/providers/moa.py`, 375 LOC) —
@@ -80,7 +81,10 @@ verifier) with shared memory and budgets, instead of trusting a single model.
    registry's auto-discovery path.** It lives in `providers/` but the
    health-check / fallback chain may not see it.
 2. **No shared "plan library" across runs** — every agent run starts from
-   zero; procedural memory exists but isn't consulted on plan generation.
+   zero. Procedural memory *is* consulted on plan generation
+   (`get_procedural_hints` → planner context, verified by
+   `tests/test_agent_loop.py::TestProceduralMemoryWiring`), but successful
+   *plans* themselves aren't cached/retrieved as templates yet.
 3. **Goal orchestrator has 593 LOC but no visible UI surface** beyond
    `/goal/*` routes — users can't see goals in the app.
 4. **AEGIS evolution / co-evolution pipeline is experimental and unwired**
@@ -134,6 +138,23 @@ the page being audited.
 - **Audit engine integration** (`backend/routes/audit.py`, 731 LOC) —
   Playwright-based data collection (network, console, DOM, a11y tree)
   feeds the 6 employees.
+- **HTML reports + share links** (2026-09) — `findings_to_html` renders a
+  self-contained, escaped, print-friendly report; `GET /audit/report/{id}`
+  and `GET /audit/shared/{token}/report` serve it; the AuditPanel shows
+  recent audits with Report / Share / Export actions (the endpoints
+  existed for months with no UI — now surfaced). CLI: `jambu report`,
+  `jambu share` prints both JSON + HTML URLs.
+- **Audit monitors** (`backend/modules/audit_monitor.py`, 2026-09) —
+  recurring audits that diff each run's active findings against the
+  previous run (new / resolved / persisting) and alert on regressions via
+  desktop notification + optional webhook. **Visual regression**: the
+  run screenshot is stored and pixel-diffed against the previous run
+  (`backend/modules/visual_diff.py`), alerting past
+  `visual_threshold_pct` (default 2.0). Scheduler runs in the engine
+  lifespan; CLI: `jambu monitor add|list|rm|run|runs`; UI: Monitors panel
+  (`browser-app/src/components/monitors/MonitorsPanel.tsx`). Shares the
+  exact pipeline (`_audit_event_stream`) with `/audit/run`, so dismissals
+  and dedupe apply identically.
 
 ### Real problems this solves
 - "Most websites block iframe embedding" → the proxy endpoint fixes
@@ -146,18 +167,25 @@ the page being audited.
   Playwright.
 
 ### What still hurts (improvement targets)
-1. **DevTools performance-trace comparison** — the network waterfall now
+1. **Desktop browser rendering is screenshot-backed (~1 FPS)** — the Tauri
+   pane forwards input over CDP but displays polled screenshots, so there's
+   no video, text selection, or smooth scroll. The identity/streaming bugs
+   that made the pane *non-functional* are resolved (2026-09: engine tab-ID
+   reconciliation in `ChromiumPane.tsx`/`appStore.ts`, live SSE through the
+   new `proxy_stream` Rust command + `localFetchStream`), but real rendering
+   (multi-webview tabs) remains the next milestone.
+2. **DevTools performance-trace comparison** — the network waterfall now
    exports to HAR/CSV (`networkExport.ts` toolbar buttons, resolved
    2026-08), but there's no side-by-side comparison of two audits'
    performance traces yet.
-2. **Form filler backend is solid** — locked-vault 500 fixed and MCP
+3. **Form filler backend is solid** — locked-vault 500 fixed and MCP
    schema mismatch repaired (2026-08, live-verified on github.com/login);
    remaining work is surfacing detection results in a UI panel beyond
    the existing vault-autofill key icon.
-3. **Record / replay shipped** — `backend/modules/session_recorder.py`
+4. **Record / replay shipped** — `backend/modules/session_recorder.py`
    + `/sessions/recordings/*` routes (2026-08): record a scripted run,
-   replay it with per-step results; verified live end-to-end. A UI
-   surface for browsing recordings would complete the loop.
+   replay it with per-step results; verified live end-to-end, with a
+   Recordings panel (2026-08).
 
 > **Resolved 2026-08:** the proxy response cache listed here as a gap is
 > now implemented — `backend/core/response_cache.py` (LRU, TTL 60 s,
@@ -204,7 +232,10 @@ federation — the information-access surface a normal browser can't offer.
 - **SSRF protection** (`backend/core/security.py`, 124 LOC) — `is_safe_url`
   blocks private IPs, DNS rebinding, unsafe schemes on every URL endpoint.
 - **Missions** (`backend/modules/missions.py`) — cron-based background
-  research scheduler.
+  research scheduler. Fixed 2026-09: create/list/stop round-trip through
+  one store, `/mission/start-scheduler` actually starts the loop, the
+  engine wires a real research handler, and run state survives reloads.
+  Results persist to `mission_results` (`/mission/{id}/results`).
 
 ### Real problems this solves
 - "I want search results that aren't SEO-spam" → SearXNG over 90 engines.
@@ -266,11 +297,15 @@ service, or agent — via CLI, MCP, eval framework, or plugins.
 - "I want this to fit into a CI gate" → GitHub Action.
 
 ### What still hurts (improvement targets)
-1. **CLI lives in `cli/` but there's no packaging** — no `pyproject.toml`
-   entry point, no `jambu` script wired in (now fixable since we added
-   `pyproject.toml`).
-2. **MCP server's 21 tools aren't enumerated anywhere in the docs** —
-   users have to read source to know what's available.
+1. **CLI packaging shipped** — `pyproject.toml` exposes the `jambu` entry
+   point (`audit`, `quick`, `history`, `share`, `tiers`, `health`,
+   `status`, `diff`), with 13 tests in `tests/test_cli_jambu.py`.
+   Remaining: publish to PyPI/Homebrew and add `jambu watch`.
+2. **MCP docs shipped** — `docs/MCP_TOOLS.md` documents the 21 canonical
+   tools from `backend/mcp_server.py`, with a drift test
+   (`tests/test_mcp_docs_generator.py`). Remaining: the second, 147-tool
+   server in `tools/mcp/server.py` is undocumented and untested — merge
+   or retire it.
 3. **Eval tasks live in `backend/eval/tasks/` but there's no benchmark
    dashboard** — results are in `tests/.artifacts/council.json` JSON.
 4. **Supply chain verifier has no "regenerate baseline" workflow** —

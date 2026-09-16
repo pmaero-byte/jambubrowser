@@ -2,6 +2,465 @@
 
 All notable changes to Jambubrowser.
 
+## [Unreleased]
+
+### Added — MeshPay: USDC settlement for mesh compute (verifiable receipt auditing + Solana anchoring)
+
+The DCM mesh meters every billable operation into a hash-chained
+``settlementLog``. MeshPay makes that ledger auditable and payable:
+
+- **Independent verifier** (`backend/modules/meshpay/`) — a from-scratch
+  replay of DCM's chain, including `jsjson.py`, an ECMAScript-faithful
+  JSON serializer (DCM hashes with `JSON.stringify`; its inference rates
+  are `1e-5`/`5e-5`, exactly where Python's number formatting diverges).
+  Pinned against real Node.js output on 34 edge cases; live cross-checked
+  three ways (stored hash = Node.js recomputation = Python verifier) on
+  real receipts containing floats like `1.2090960000000002`.
+- **Epochs + payouts** (`plan.py`) — contiguous receipt windows, Merkle
+  roots (canonical spec: domain-separated SHA-256, odd-node promotion),
+  per-provider USDC payout plans with an explicit protocol fee. The
+  DCT→USD rate is **configured, not an oracle**, and every USD figure says
+  so.
+- **Anchoring** (`anchor.py`) — Solana **memo-program** transactions
+  (`meshpay:v1:<epoch>:<receipts>:<root>`, no custom program to deploy)
+  over JSON-RPC, plus an explicitly-labelled offline `mock` transport
+  (default). Missing toolchain/keypair/key fail loudly — nothing ever
+  claims a chain transaction that did not happen. Anchor records persist
+  `epoch_size` so re-verification regroups receipts identically
+  (live-found bug: custom-size anchors showed a false "unavailable").
+- **Routes** — `GET /meshpay/{config,audit,anchors,receipts/{i}}`,
+  `POST /meshpay/anchor`. Audit reports our verdict, DCM's own verdict,
+  and whether they agree. Inclusion proofs let one receipt be checked
+  against an anchored root.
+- **MCP tools (28 total)** — `meshpay_audit`, `meshpay_anchor`.
+- **UI** — `MeshPayPanel` (chain verdict + disagreement warning, epochs
+  with per-epoch anchor buttons, payout table, anchor history with status
+  badges and explorer links) and `DcmNodePanel` (node readiness incl. the
+  MoE-sidecar case, model catalog, LAN join URLs, one-shot infer box);
+  both registered in the sidebar, command palette, and canvas router.
+- **Tests (+91)** — serialization table, chain verify (tamper/link/
+  truncation/anonymous-charge), Merkle proofs for 1–8 leaves, payout math,
+  anchor transport behavior (mock determinism, refusal to downgrade,
+  offline transaction construction with `solders`), config, 14 route tests
+  including the epoch-size regression, plus 17 frontend tests.
+- **Live-verified**: 4 real receipts generated via DCM's billing API →
+  independent verification + DCM agreement → epoch roots → mock anchor
+  persisted → re-verification `verified` → inclusion proof verified → MCP
+  audit through the engine. Devnet anchoring is a documented runbook
+  (`docs/MESHPAY.md`) blocked only on a funded keypair.
+- `solders` declared in requirements (optional at runtime); runbook and
+  honest "not done yet" list (USDC payouts, paging, forward markets,
+  node→wallet binding) in `docs/MESHPAY.md`.
+
+### Added — DecentraCode Mesh (DCM) integration, phase 2: engine routes + MCP tools
+
+The mesh is now reachable from the app and from agents, not just the CLI:
+
+- **Engine routes** (`backend/routes/dcm.py`, `/dcm/*`) — `status`,
+  `models`, `join-info`, `earnings/{did}`, `token/balance/{did}`,
+  `settlement-log?limit=`, and `infer` (non-streaming). All 502s instead
+  of hanging: unreachable nodes get "start it with `cd
+  decentracode/backend && npm start`", runtime failures carry DCM's own
+  explanation, auth failures point at `JAMBU_LLM_DCM_AUTH`.
+  `/dcm/` is excluded from the 30s request timeout (mesh inference is
+  slow by design — 2–5 tok/s on the MoE path).
+- **MCP tools (26 total, +5)** — `dcm_status`, `dcm_infer`, `dcm_models`,
+  `dcm_earnings`, `dcm_settlement_log`. Any MCP client (Claude, Cursor)
+  can now operate and verify a DCM node. `docs/MCP_TOOLS.md` regenerated.
+- **`_call_engine` surfaces non-200 detail** — every MCP tool that hits an
+  engine 502 now reports the engine's own explanation instead of a bare
+  status code (this is what makes `dcm_infer`'s missing-runtime message
+  actionable through the agent path). All 26 tools benefit.
+- **Live-verified end to end** against a real node: MCP tool →
+  `/dcm/*` route → DCM. Status correctly reports `python-moe ready
+  (candle-dense: Binary not found: …)`, models `2/16 available`,
+  settlement log reads DCM's nested `verification` block
+  (`chain valid: True`, totals). Two formatter bugs were found this way
+  and fixed (the `error` key masking a ready secondary runtime; nested
+  verification ignored).
+- **Tests (+22)**: `tests/test_dcm_routes.py` — 11 route tests (payloads,
+  limit validation, 502 mappings, infer validation/error mapping), 3 MCP
+  registration/schema tests, 4 formatter/`_call_engine` regressions; the
+  MCP expected-tool snapshot now pins all 26 tools.
+
+### Added — DecentraCode Mesh (DCM) integration, phase 1
+
+Jambubrowser can now use a local **DecentraCode Mesh** node as a
+first-class LLM provider and operate it from the CLI. Live-verified
+against a real DCM backend (`npm start` on this machine):
+
+- **`dcm` LLM provider** (`backend/llm/providers/dcm.py`) — talks to the
+  mesh's OpenAI-compatible endpoint
+  (`POST {node}/api/inference/v1/chat/completions`). Parsing is pinned to
+  DCM's real wire format: non-streaming `chat.completion` JSON, plus its
+  native SSE frames (`{"token", "text", "finished"}` per token; terminal
+  `{finished, outputText, outputTokens, perStepMs, tokPerSec}`), with
+  OpenAI-style deltas accepted for forward compatibility. Error mapping
+  is actionable: 401→auth (with a DID-Sig hint), 404→"not a DCM node",
+  and missing runtimes (501 `RUNTIME_NOT_IMPLEMENTED` or 500 `ENOENT`
+  spawn failures — both observed live) → "build backend/p2pd binaries or
+  start the dense coordinator". DCM is treated as a **local provider**
+  (zero USD cost; DCT metering is mesh-side) and is allowed in
+  local-only privacy mode. Enable with `JAMBU_LLM_PROVIDER=dcm` (not in
+  the default fallback chain — opt-in).
+- **`DcmClient`** (`backend/modules/dcm_client.py`) — async REST client
+  for node/mesh/billing state: `/api/inference/status`, `/api/models`,
+  `/api/network/{status,peers,join-info}`, `/api/billing/earnings/:did`,
+  `/api/billing/settlement-log`, `/api/token/balance/:did`, plus a
+  `summary()` for CLI/UI. Live-contract correction baked in: DCM answers
+  **503 with a state body** on `inference/status` when the default
+  runtime is missing while a secondary (MoE sidecar) is ready.
+- **Provider health** reflects runtime readiness, not just HTTP 200:
+  healthy when any runtime (top-level or nested `moe`) is ready.
+  Live-verified claim shape: candle binary missing + MoE sidecar ready →
+  provider healthy, `jambu dcm status` prints
+  `python-moe ready (candle-dense: Binary not found: …)`.
+- **CLI**: `jambu dcm status` (node/inference/models/mesh overview) and
+  `jambu dcm infer "<prompt>" [--model M] [--max-tokens N]` — talks to
+  the node directly via `JAMBU_DCM_URL` (default `127.0.0.1:3001`), no
+  engine required. Missing-runtime failures exit 2 with the node's own
+  error text.
+- **Tests (25 new)** — `tests/test_dcm_provider.py`: both stream frame
+  dialects, snake_case terminals, error frames, 501/ENOENT/401/404
+  mapping, auth header forwarding, zero-cost accounting, registry
+  discovery + local-only mode, and client tests for models/earnings/
+  settlement-log/errors/summary. `tests/test_dcm_cli` additions (6):
+  status (ready + MoE-sidecar shapes), unreachable exit 2, infer output,
+  runtime-missing exit 2. `tests/test_dcm_integration.py` (6) runs
+  against a live node when one answers `/health` (via
+  `JAMBU_TEST_DCM_URL`), including a contract check that needs no
+  runtime (empty messages → 400 `INVALID_MESSAGES`) and generation tests
+  that **skip with DCM's own reason** when the model artifacts are
+  absent.
+- **Also fixed while validating against the live node**: `has()` in the
+  provider registry now triggers discovery (auto-mode chains could skip
+  undiscovered providers), and `DCMProvider.health()` no longer treats a
+  not-ready default runtime as a dead provider.
+- **Live state (honest)**: node contract, models catalog (16 models,
+  2 available), CLI, client and provider error paths verified live.
+  Real token streaming is blocked on model artifacts on this machine —
+  the MoE path needs `mlx_lm` + ~9 GB HF weights
+  (`gdax/Qwen1.5-MoE-A2.7B_gguf`), the candle path needs the Rust
+  binary (`cargo build` in `backend/p2pd`). The integration tests prove
+  the pipeline the moment either exists.
+
+### Fixed — five bugs found by validating the public use-case claims
+
+A claim-by-claim audit of the product's use cases (live engine, real
+Playwright, mock LLM) turned up five defects, four in surfaces the
+marketing copy already claimed working:
+
+- **The tamper-evident audit-log chain never verified.** `AuditLogger.log`
+  hashed one `time.time()` value but stored a second, different one, so
+  `/audit/verify` reported "Chain broken at entry 1" for every database
+  ever written — the "tamper-evident" claim was false in practice. The
+  test that should have caught it asserted only that the return value was
+  a bool. `log()` now uses a single timestamp; the test asserts
+  `is_valid is True` and a new test proves tampering *is* detected.
+  Note: rows written before this fix remain unverifiable (re-sealing an
+  existing chain is deliberately out of scope — it would legitimise any
+  prior tampering).
+- **Missions could be created but never seen or run** (four separate
+  defects in one feature):
+  - `POST /mission` wrote directly to the DB while `GET /mission/list`
+    read the scheduler's in-memory store, which was never populated →
+    UI-created missions vanished immediately (MissionsPanel calls both).
+  - `POST /mission/start-scheduler` called `MissionScheduler.start()`,
+    which did not exist → HTTP 500.
+  - No research handler was ever registered, so any due mission failed
+    with status `error`.
+  - Run state (`last_run`) was never written back, so every reload
+    (`load_from_db`) made a just-run mission due again — it re-executed
+    on each scheduler tick.
+  Fixes: routes persist and list through one store (DB sync on list/stop),
+  `start()`/`stop()` implemented (idempotent loop + cancellation), the
+  engine lifespan registers a real research handler
+  (`routes.research._brain_only_research`), and `_persist_mission_state`
+  writes `status`/`last_run`/`next_run` back after every run.
+- **Procedural-memory outcome endpoint 500s** on an unknown/missing `id`
+  (`ValueError` escaped as a 500). Now 404 with a clear message.
+- **Test isolation**: `reset_memory()` (which existed but was unused) is
+  now wired into the autouse isolation fixture — a stale memory store
+  pointed at a closed per-file DB caused late-suite "no such table:
+  procedural_memory" 500s.
+- **Tests added (12)**: full mission lifecycle (`tests/test_missions.py` —
+  create→list round-trip, stop, cross-process listing, scheduler
+  start/stop idempotency, execution + persistence, reload-doesn't-rerun,
+  missing-handler error, DB-loaded missions), chain integrity + tamper
+  detection, procedural 404s.
+
+### Added — visual diff heatmaps (see *what* changed)
+
+- The change percentage told you *how much* changed but not *where*.
+  New `render_diff_image` (`backend/modules/visual_diff.py`) paints
+  changed pixels pure red over a dimmed page (same tolerance rule as the
+  percentage, so the heatmap and the number always agree; identical
+  pairs render the dimmed page with no red). Wide captures are capped at
+  640px for payload sanity; missing Pillow/bad inputs return `None`.
+- `GET /audit/monitors/{id}/runs/{run_id}/diff` serves the heatmap PNG.
+  The previous screenshot is the newest successful run strictly older
+  than the run (tie-broken by id): 404 when the run is unknown, has no
+  screenshot, or is the baseline; 500 when rendering fails.
+- Monitors panel run rows link "diff" next to the thumbnail whenever a
+  comparison exists (hidden for baselines); CLI:
+  `jambu monitor diff <monitor-id> <run-id> [--out FILE]`.
+- **Tests** — 8 render tests (red region placement, identical/no-red,
+  dimming, jitter tolerance, resize, width cap, bad inputs, missing
+  Pillow), 5 API tests (heatmap red-pixel assertion, baseline/no-shot/
+  unknown 404s, cross-monitor scoping), 1 CLI test, 2 frontend tests.
+
+### Added — viewable monitor screenshots
+
+- Stored run screenshots were **write-only**: the percentage was shown
+  everywhere but the image itself was unreachable. Now:
+  - `GET /audit/monitors/{id}/runs/{run_id}/screenshot` serves the raw
+    PNG (`image/png`). 404 when the monitor/run is unknown, belongs to a
+    different monitor, or stored no screenshot; 500 when the stored
+    payload isn't decodable image data (scoped getter
+    `get_run_screenshot` prevents cross-monitor ID guessing).
+  - Monitors panel run rows show a thumbnail (when `has_screenshot`) that
+    opens the full PNG in a new tab; no thumbnail when the run stored
+    none.
+  - CLI: `jambu monitor screenshot <monitor-id> <run-id> [--out FILE]`
+    downloads the PNG (default `monitor-<id>-run-<rid>.png`).
+- **Tests** — 7 API tests (PNG round-trip bytes, unknown monitor/run,
+  missing screenshot, cross-monitor scoping, corrupt-data 500, getter
+  scoping), 2 CLI tests (writes bytes, engine-error exit 2), 3 frontend
+  tests (thumbnail src/href, omission without screenshot, URL helper).
+
+### Added — visual regression detection for audit monitors
+
+- **Screenshot diffing** (`backend/modules/visual_diff.py`) — monitors now
+  store each run's screenshot and compare it with the previous run's:
+  per-pixel max-channel delta on a downscaled RGB copy, with a tolerance
+  band that absorbs anti-aliasing/rendering jitter. Identical images take
+  a hash fast-path (0.0%); results are a change percentage. Pillow is a
+  declared dependency; if it's missing the diff degrades to `null`
+  instead of failing the run.
+- **Visual alerts** — monitors gained `visual_threshold_pct` (default
+  2.0; `0` disables alerts but still records the percentage). Exceeding
+  the threshold sends a desktop notification and a webhook event
+  (`audit.visual_change`) with the percentage; the findings webhook
+  (`audit.regression`) is unchanged.
+- **Storage + retention** — `screenshot_b64` and `visual_change_pct` are
+  persisted per run; only the newest 20 runs per monitor are retained so
+  screenshots don't grow the DB unbounded. Column migrations handle
+  databases created before this existed.
+- **Surfaced everywhere** — run history (API, CLI `monitor runs`, and the
+  Monitors panel) shows `visual X.XX%`; the run-now response includes
+  `visual_change_pct` / `visual_changed` / `visual_alerted`.
+- **Pipeline plumbing** — `_audit_event_stream(req, on_collected=...)`
+  exposes the collected `AuditData` to callers without bloating the SSE
+  payload; monitors use it to grab the screenshot.
+- **Fixed — useless monitor errors**: `_execute_audit` swallowed the
+  pipeline's `error` event and raised "audit did not produce a done
+  event". It now includes the failing phase and cause (e.g. the missing
+  Playwright browser that exposed this).
+- **Tests** — 11 diffing tests (identical / 100% / partial / jitter
+  tolerance / resize / decode failure / missing Pillow / hash), 7 monitor
+  visual tests (baseline, changed, unchanged, disabled threshold,
+  missing screenshot, webhook payload, pruning), 4 API validation tests,
+  and an error-surface regression test.
+
+### Added — HTML reports, share links, and the missing audit-history UI
+
+- **HTML report exporter** (`findings_to_html` in
+  `backend/employees/export.py`) — self-contained (inline CSS, no
+  external assets), print-friendly (browser → Save as PDF), severity
+  stats + grouped findings with fixes/evidence/WCAG/impact. Every field
+  is `html.escape`d: findings are LLM prose about arbitrary pages, so the
+  shared report is a stored-XSS surface if anything slips through.
+- **Routes** — `GET /audit/report/{audit_id}` and
+  `GET /audit/shared/{token}/report` render the same page for local
+  history and public share links.
+- **`done` event now carries `audit_id`** — the pipeline persists the
+  audit *before* announcing completion so the UI's Report / Share /
+  Export actions can target the saved row.
+- **AuditPanel history UI** — the backend history/export/share endpoints
+  were fully built but had **no UI surface at all**:
+  - Recent audits list (expandable) with per-row Report, Share, and
+    SARIF download actions.
+  - Run banner actions: Report (modal with sandboxed `srcDoc` iframe),
+    Share (creates a link, copies to clipboard, shows the URL), and an
+    Export dropdown (SARIF / canonical JSON / Markdown downloads).
+  - Share-link strip shown for shares from either place.
+- **CLI** — `jambu report <audit-id> [--out FILE|-]` downloads the HTML
+  report; `jambu share` now prints both the JSON and HTML report URLs.
+- **Fixed — history dates rendered as 1970**: `audit_history.created_at`
+  used SQLite `julianday('now')` (~2.46e6) while clients treated it as
+  epoch seconds. New rows store epoch seconds; reads normalise legacy
+  Julian Day values transparently (`_created_at_epoch`), and the test
+  suite pins both formats.
+- **Tests** — exporter (incl. hostile-content escaping), routes (report,
+  shared report, 404s), the full pipeline end-to-end without Playwright
+  (`tests/test_audit_pipeline.py`: done carries `audit_id`, history is
+  post-dismissal, report renders pipeline output), history timestamp
+  normalisation, 6 AuditPanel component tests, 4 CLI tests.
+- **Fixed — test isolation**: the cached `AuditLogger` created its table
+  against whichever database was current at first use, so suites that
+  redirect `JAMBU_DB_PATH` per file could poison later tests with
+  "no such table: audit_log". Added `reset_audit_logger()` and reset it
+  in the autouse isolation fixture.
+
+### Added — continuous audit monitors (regression alerting)
+
+- **Recurring audit monitors** — `POST /audit/monitors` schedules the audit
+  pipeline on an interval and diffs each run's active findings against the
+  previous run: new / resolved / persisting. New findings at or above the
+  monitor's `fail_on` severity trigger a desktop notification and an
+  optional webhook POST (Slack-compatible JSON). The first run is a
+  baseline and never alerts.
+  (`backend/modules/audit_monitor.py`, `backend/routes/audit_monitors.py`)
+- **Scheduler** — started from the engine lifespan, ticks every 60 s and
+  runs due monitors; `POST /audit/monitors/check-now` triggers a due-check
+  manually. Monitor state (last run, status, finding count) is persisted.
+- **Shared pipeline, no drift** — the audit SSE endpoints and the scheduler
+  now run the same `_audit_event_stream` generator
+  (`backend/routes/audit.py`), so dedupe, dismissal filtering, and history
+  persistence are identical for interactive and scheduled runs.
+- **CLI** — `jambu monitor add|list|rm|run|runs` with `--interval`,
+  `--fail-on`, `--webhook`, `--run-now`. Run history marks baseline runs
+  and shows `+new` / `-resolved` deltas.
+- **UI** — Monitors panel (`browser-app/src/components/monitors/`): create
+  form (interval, threshold, webhook, "baseline now"), per-monitor
+  enable/disable, run-now with inline diff result, expandable run history
+  with baseline / `+new` / `−resolved` badges, delete. Registered in the
+  sidebar, command palette (⌘K), and lazy canvas switch.
+- **Tables** — `audit_monitors` + `audit_monitor_runs` (per-run
+  fingerprints, diffs, baseline flag, errors).
+- Also fixed: `jambu diff` / `jambu monitor runs` silently ignored their
+  `limit` parameter (GET query params were sent as a request body).
+
+### Added — CI audit pipeline (audit wedge productization)
+
+- `jambu audit|quick --sarif FILE --json FILE --markdown FILE` — the CLI can
+  now emit all three export formats (SARIF 2.1.0 for GitHub code scanning,
+  canonical JSON for dashboards, Markdown for humans). `-` writes to stdout
+  for piping. (`cli/jambu.py`)
+- `jambu ... --fail-on critical|high|medium|low|none` — severity gate with a
+  stable CI contract: **0 = pass, 1 = gate failed, 2 = engine error**.
+- The CLI consumes the engine's post-dedup, post-dismissal findings from the
+  `done` event, so dismissals survive into CI and known false-positives
+  never re-fail a build.
+- Root `action.yml` — composite GitHub Action: installs the engine + Chromium,
+  starts it, runs the audit, uploads SARIF to code scanning, and enforces the
+  gate (`continue-on-error` on the audit step so SARIF uploads even when the
+  gate fails). Supports `engine-url` to skip installation entirely.
+- `examples/github-actions/jambu-audit.yml` and `docs/CI.md` — copy-paste
+  workflow, input/output tables, exit-code contract, cost notes, and
+  non-GitHub CI recipes.
+- **Playwright was undeclared**: the audit engine imports it, but it was
+  missing from `requirements.txt` and `pyproject.toml` — a fresh install
+  couldn't run the headline feature. Added, with the
+  `python -m playwright install chromium` step documented in the README.
+- `pyproject.toml` packaging switched to `packages.find` (`backend*`, `cli*`)
+  so non-editable installs include subpackages like `backend.employees` —
+  the CLI's export imports would previously break in a wheel install.
+
+### Fixed — trust reset (dead endpoints, browser identity, honest claims)
+
+**Desktop browser tab identity (the pane was effectively non-functional)**
+- The Rust engine assigns tab IDs (`tab-xxxxxxxx`) at creation, but the
+  frontend discarded them and generated `crypto.randomUUID()` IDs — every
+  `invoke()` referenced a tab the engine had never seen (`Tab not found`),
+  and the viewport stayed empty. Tabs are now reconciled on `browser-ready`
+  and `browser-restarted`: the store's desired tabs are recreated in the
+  engine, engine IDs are adopted verbatim, and closing the last tab creates
+  the engine replacement first so store and engine never diverge.
+  (`browser-app/src/components/browser/ChromiumPane.tsx`,
+  `browser-app/src/store/appStore.ts` — `syncEngineTabs`)
+- The pane now probes engine readiness on mount: `browser-ready` fires
+  once per engine start, so switching canvas tabs away and back previously
+  left the pane stuck on "Starting Chromium engine..." forever.
+
+**SSE streaming in the Tauri build (appeared frozen until completion)**
+- `proxy_localhost` buffered the whole response body, so agent/audit event
+  streams arrived only after the run finished. New `proxy_stream` Rust
+  command forwards response chunks over a Tauri IPC channel
+  (`Response::chunk()`, base64-framed); `localFetchStream()` wraps them in a
+  real `ReadableStream`, and aborting the caller's signal cancels the Rust
+  task via `proxy_stream_cancel`. `runAgentStream` and `AuditPanel` use it.
+  (`browser-app/src-tauri/src/commands/stream.rs`,
+  `browser-app/src/utils/api.ts`)
+
+**Native menu did nothing**
+- Menu items emitted `menu-event` with no listener. All items are now wired
+  (New/Close Tab, Reload, Back/Forward, Find, Bookmark Page/All Tabs,
+  toggle bookmark bar, DevTools, Next/Prev Tab, Full History) with a
+  timestamp guard so menu accelerators and the JS shortcut handler never
+  double-fire. Dead "New Window" and zoom items were removed rather than
+  shipped non-functional; Next/Prev Tab accelerators moved to
+  Ctrl+Tab / Ctrl+Shift+Tab (Cmd+Tab is owned by macOS).
+
+**~25 endpoints were dead at runtime (import mismatches, silent 500s)**
+- `backend/modules/vision.py` — added the module-level API the `/vision/*`
+  routes import (`analyze_image`, `ocr_image`, `detect_ui_elements`,
+  `verify_screen`).
+- `backend/modules/computer.py` — new: Quartz-backed `mouse_action()` and
+  `press_key()` for `/computer/*`; the keyboard route's `key=` branch no
+  longer discards the key code.
+- `backend/routes/models.py` — all 6 `/mlx/*` endpoints now call the real
+  `mlx_provider` functions (`get_provider_info`, `mlx_start_server`,
+  `mlx_stop_server`, `mlx_generate`, `mlx_download_model`).
+- `backend/modules/local_connector.py` — added async module-level wrappers
+  for `/local/obsidian/*` and `/local/reminders/create`.
+- `backend/modules/youtube.py` — added `analyze_youtube`,
+  `get_youtube_transcript`, `search_youtube_transcript` wrappers.
+- `backend/modules/multimodal_input.py` — added `process_image` /
+  `process_file`; file processing is confined to `~/.jambu/uploads`
+  (path-traversal rejected, 400/404 mapped in the route).
+- `backend/routes/missions.py` — `/notifications/*` now use `get_notifier`
+  and map `level` onto `Urgency`.
+- `backend/agent/builtin_tools.py` — `risk_check` used a nonexistent
+  `get_risk_shield`; now `get_shield().assess_url()` with the real result
+  shape.
+- `backend/plugins/manager.py` — `LATEST_LLM_CONFIG` imported from the
+  module that defines it (`engine_runtime`).
+- `backend/routes/vault.py` — missing `import os` (latent 500 when locked).
+- `tests/test_import_contracts.py` — new static contract test: every
+  `from backend.* import Name` in the codebase must resolve. This is the
+  guard that would have caught the whole class of bug.
+
+**Procedural memory was written but never read**
+- `backend/memory/retrieval.py` imported a module-level `list_procedural`
+  that never existed, and the agent loop swallowed the error. It also
+  called `success_rate` as a property instead of the `success_rate()`
+  method. Both fixed; new tests assert stored procedural memory reaches
+  the planner context. (`tests/test_memory_system.py`,
+  `tests/test_agent_loop.py`)
+
+**Frontend quick-scan button hit a missing route**
+- `POST /audit/quick` was documented and called by `AuditPanel` but never
+  registered. Added as a thin alias of `/audit/run` with mode forced to
+  `quick`; regression test asserts the route exists in OpenAPI.
+
+**Audit dismissals are now applied server-side**
+- The dismiss/undismiss API existed but only the UI filtered dismissed
+  findings. `/audit/run` and `/audit/quick` now partition findings into
+  active + suppressed (by content fingerprint, scoped per URL); the `done`
+  SSE event carries `dismissed_count` + `dismissed` metadata, and history
+  / exports persist only active findings. The route-level hash and the
+  canonical export's `content_hash` are unified into
+  `employees.export.content_fingerprint` (one source of truth).
+
+**Test-environment robustness**
+- `tests/test_mcp_server.py` live e2e now verifies the service on :8001
+  identifies as Jambubrowser before asserting, so an unrelated local
+  service on the same port skips instead of failing.
+
+**Audit pipeline honored the wrong LLM provider**
+- `ProductContextExtractor` hardcoded `provider="minimax"`, ignoring
+  `JAMBU_LLM_PROVIDER`/the fallback chain — it leaked calls to an
+  unintended service, failed on rate limits, and broke offline/CI runs.
+  It now uses the registry's configured default like every other
+  employee; regression test in `tests/test_employees.py`. Verified live:
+  a full `jambu quick` run with `JAMBU_LLM_PROVIDER=mock` produces zero
+  external calls and a valid SARIF file.
+
+### Verification
+- Backend: 874 passed, 3 skipped (CI batch).
+- Frontend: 342 vitest tests, 0 lint errors; `cargo check` clean.
+
 ## [3.3.0] - 2026-06-13
 
 ### Added — Security hardening & middleware stack

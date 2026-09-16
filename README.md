@@ -23,6 +23,9 @@ that powers both the audits and free-form research.
 # Install backend dependencies
 pip install -r requirements.txt
 
+# Fetch the headless browser the audit engine drives
+python -m playwright install chromium
+
 # Start the engine
 python3 -m uvicorn backend.engine:app --host 127.0.0.1 --port 8001
 ```
@@ -76,6 +79,15 @@ export JAMBU_LLM_ANTHROPIC_MODEL="claude-sonnet-4-5"
 export JAMBU_LLM_OPENAI_MODEL="gpt-4o"
 export JAMBU_LLM_OLLAMA_MODEL="gemma3:4b"
 export JAMBU_LLM_OPENAI_BASE_URL="https://api.openai.com/v1"  # or vLLM, Together, etc.
+
+# DecentraCode Mesh node as a provider (local mesh inference, zero USD cost)
+export JAMBU_LLM_PROVIDER="dcm"                       # opt-in; not in the default chain
+export JAMBU_LLM_DCM_BASE_URL="http://127.0.0.1:3001" # DCM node root
+export JAMBU_LLM_DCM_MODEL="qwen1.5-moe-a2.7b"
+export JAMBU_LLM_DCM_AUTH="DID-Sig <did>:<signature>" # only for prod nodes
+# Operate the node from the CLI (no engine needed):
+#   jambu dcm status          node, inference, models, mesh overview
+#   jambu dcm infer "hello"   run a prompt on the mesh
 
 # Then in the CommandBar, pick a provider from the dropdown, or use "auto".
 ```
@@ -163,7 +175,7 @@ python3 -m pytest tests/test_e2e.py -v
 - **Persistence & Sharing**: Full audit history + shareable read-only links (`/audit/history`, `/audit/shared/{token}`).
 
 ### Agentic Research (v3 — the engine underneath)
-- **Unified LLM Layer**: 6 providers (Anthropic, OpenAI, Ollama, MLX, MiniMax, Mock) behind one `Provider` protocol. Auto-discovery, env-driven defaults, smart routing (`cheapest` / `fastest` / `quality` / `fallback` / `local_only`), per-request cost tracking.
+- **Unified LLM Layer**: 7 providers (Anthropic, OpenAI, Ollama, MLX, MiniMax, DecentraCode Mesh, Mock) behind one `Provider` protocol. Auto-discovery, env-driven defaults, smart routing (`cheapest` / `fastest` / `quality` / `fallback` / `local_only`), per-request cost tracking.
 - **ReAct Agent Loop**: Plan → Execute → Verify → Replan, with streaming SSE events. Auto-derived JSON Schema for every tool, 10 built-in tools wrapping existing capabilities (web_search, scrape_url, vault_get, knowledge_query, memory_recall, memory_store, code_exec, goal_set, risk_check, final_answer). Budget-aware (max steps / tokens / seconds).
 - **Memory & Personalization**: 4 sub-stores (user profile, session, semantic with embeddings, procedural with success rates). Hybrid retrieval: 60% vector + 30% recency+importance + 10% FTS, with profile-interest boost. Per-user scoping, full forget support.
 
@@ -334,7 +346,7 @@ All components live in `browser-app/src/` and are shared between the desktop (Ta
 | Supply Chain | `backend/core/supply_chain.py` | Dependency verification |
 | MLX Provider | `backend/modules/mlx_provider.py` | Apple Silicon MLX integration, model registry, server lifecycle |
 | MLX VLM Server | `backend/scripts/mlx_vlm_server.py` | OpenAI-compatible FastAPI server for Gemma 3 via mlx-vlm |
-| **LLM Layer (v3)** | `backend/llm/` | Unified provider abstraction: 6 providers, registry, routing, cost estimation |
+| **LLM Layer (v3)** | `backend/llm/` | Unified provider abstraction: 7 providers (incl. DecentraCode Mesh), registry, routing, cost estimation |
 | **Agent Loop (v3)** | `backend/agent/` | ReAct/Plan-Execute loop with tool registry, verification, replanning, SSE events |
 | **Memory (v3)** | `backend/memory/` | 4-store memory system: user profile, session, semantic (with embeddings), procedural |
 | **V2 Endpoints (v3)** | `backend/engine.py:36xx+` | 16 new `/v2/*` endpoints: LLM chat, agent run, memory CRUD + recall |
@@ -362,6 +374,77 @@ are excluded from CI — run those manually when the corresponding service is up
 
 ---
 
+## CI — audit every pull request
+
+The repo ships a GitHub Action and a CLI export pipeline:
+
+```bash
+# Works on any CI: SARIF + JSON + Markdown, with a severity gate.
+# Exit codes: 0 = pass · 1 = gate failed · 2 = engine error
+jambu quick https://staging.example.com \
+  --sarif jambu-audit.sarif --json jambu-audit.json --markdown report.md \
+  --fail-on high
+
+# Human-readable report + share link for a saved audit
+jambu report 12 --out report.html   # self-contained, print → PDF
+jambu share 12                      # prints JSON + HTML share URLs
+```
+
+```yaml
+# .github/workflows/jambu-audit.yml
+- uses: pmaero-byte/jambubrowser@main
+  with:
+    url: https://staging.example.com
+    mode: quick          # or full (6 employees)
+    fail-on: high
+    upload-sarif: "true" # GitHub code scanning alerts
+  env:
+    OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+```
+
+Findings land in **Security → Code scanning alerts**; dismissed findings
+are filtered server-side so known false-positives never re-fail a build.
+See [docs/CI.md](docs/CI.md) for inputs, exit codes, self-hosted engine
+setup, and non-GitHub CI recipes.
+
+---
+
+## Continuous auditing — catch regressions before users do
+
+CI audits the deploy; **monitors** keep watching afterwards. A monitor
+re-runs the audit pipeline on an interval and diffs the active findings
+against the previous run, alerting only on *new* findings at or above a
+severity threshold:
+
+```bash
+# Daily monitor; alert on new high/critical findings via Slack webhook
+jambu monitor add https://app.example.com \
+  --interval 1440 --fail-on high \
+  --webhook https://hooks.slack.com/services/... \
+  --run-now
+
+jambu monitor list
+jambu monitor runs 1     # per-run history: +new / -resolved deltas
+jambu monitor run 1      # run now
+jambu monitor rm 1
+```
+
+- The first run is a **baseline** (no alert storm on setup day).
+- **Visual regression alerts**: each run's screenshot is diffed against
+  the previous run; a change over `--visual-threshold` percent (default
+  2, `0` disables) sends a desktop notification and webhook event.
+- Dismissed findings are already filtered by the shared pipeline, so a
+  monitor never re-alerts on a known false-positive.
+- Prefer the UI? The **Monitors** panel (sidebar or ⌘K) has the same
+  create form, enable/disable, run-now, and per-run history.
+- API: `POST /audit/monitors`, `GET /audit/monitors`,
+  `POST /audit/monitors/{id}/run`, `GET /audit/monitors/{id}/runs`,
+  `PATCH` / `DELETE /audit/monitors/{id}`.
+- The webhook payload is `{"event": "audit.regression", "monitor_id",
+  "url", "fail_on", "new_findings": [...], "resolved_count", "run_at"}`.
+
+---
+
 ## Development Scripts
 
 Hand-rolled scripts in `scripts/` make the dev loop one command:
@@ -381,8 +464,21 @@ See `scripts/dev.sh` for the full menu, or just run with `--help`.
 ## Tauri Desktop App
 
 The Tauri 2 shell in `browser-app/` wraps the React frontend with a Rust
-orchestrator. It spawns the Python backend and llama-server sidecar on first
-launch, handles `jambubrowser://` deep links, and ships native auto-updates.
+orchestrator. It launches a local Chrome/Chromium instance driven over CDP
+(page rendering + input), spawns the Python backend, exposes a native
+application menu wired to browser actions, and ships native auto-update
+*pipeline* configuration. See `docs/FEATURE_MAP.md` for the honest
+per-feature status.
+
+**Known gaps (tracked, not yet implemented):**
+- **Packaging:** the backend launcher assumes a repo checkout with system
+  `python3`; a fully self-contained sidecar (`externalBin`) is still TODO.
+- **Deep links:** `jambubrowser://` is registered in Info.plist but the
+  runtime handler isn't wired yet.
+- **Auto-update UI:** the updater plugin is configured, but the JS
+  package/capability/UX check is not shipped.
+- **Rendering:** the browser pane paints polled CDP screenshots (~1 FPS).
+  Real multi-webview rendering is the next milestone.
 
 ```bash
 cd browser-app
