@@ -287,6 +287,9 @@ python3 -m pytest tests/test_e2e.py -v
 | Browser sessions | `/browser/sessions/{id}/act` | POST | Deterministic click/type by ref (gated) |
 | Browser sessions | `/browser/sessions/{id}/receipts` | GET | Hash-chained step log + Merkle root |
 | Browser sessions | `/browser/sessions/{id}/evidence` | POST | Signed session bundle |
+| Eval certificates | `/eval/suites` | GET | Eval suites + committed task ids |
+| Eval certificates | `/eval/certificates` | POST | Run a suite under a frozen spec, issue a signed certificate |
+| Eval certificates | `/eval/certificates/{id}` | GET | Certificate + signature/verdict recomputation |
 | Consensus | `/consensus/vote` | POST | Cast vote |
 | Vision | `/vision/ocr` | POST | Extract text from image |
 | Vision | `/vision/ui-elements` | POST | Detect UI elements |
@@ -369,6 +372,7 @@ All components live in `browser-app/src/` and are shared between the desktop (Ta
 | **x402 Paywall** | `backend/modules/x402.py` | Spec-exact x402 v2 agent payments: 402 + `PAYMENT-REQUIRED`, verify/settle via facilitator (mock or HTTP), receipts + Merkle root |
 | **Evidence Bundles** | `backend/modules/evidence.py` | Ed25519-signed, third-party-verifiable claims (audit reports, receipt windows, DCM verdicts); standalone verifier in `scripts/verify_evidence_bundle.py` |
 | **Browser Sessions** | `backend/modules/browser_agent.py` | Agent browsing with allowlists, approval gates, PII scrubbing, per-step receipts (snapshot → catalog → dispatch by ref) |
+| **Eval Certificates** | `backend/modules/eval_cert.py` | Frozen-spec, coverage-checked, Ed25519-signed evaluation certificates over the 9 eval suites |
 | **MeshPay** | `backend/modules/meshpay/` | Independent DCM receipt-chain verification (JS-faithful serializer), epoch Merkle roots, USDC payout plans, Solana memo anchoring |
 | **DCM Client** | `backend/modules/dcm_client.py` | DecentraCode Mesh REST: status, models, join-info, earnings, settlement log |
 | **Remote MCP** | `backend/mcp_http.py` | Streamable-HTTP MCP transport with token auth + Server Card (stdio lives in `mcp_server.py`) |

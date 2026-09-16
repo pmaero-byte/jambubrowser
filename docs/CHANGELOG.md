@@ -4,6 +4,39 @@ All notable changes to Jambubrowser.
 
 ## [Unreleased]
 
+### Added — E5: agent-evaluation certificates (frozen spec, coverage, signed verdicts)
+
+The eval harness (9 suites) now issues **certificates** instead of scores
+you have to trust:
+
+- **`backend/modules/eval_cert.py`** — freezes the experiment definition
+  (sorted task ids, scoring rule, provider/model, threshold, timestamp) and
+  hashes it **before** the run; judges coverage first; then PASS/FAIL/
+  INCONCLUSIVE/INVALID; signs the whole thing as an `agent_eval` evidence
+  bundle (E3, Ed25519).
+- **Coverage is a first-class check** — missing, extra, duplicate or
+  malformed results make the certificate ``INVALID``, so dropping the tasks
+  you failed is detectable rather than "mostly passed".
+- **Verdicts are recomputable** — `INCONCLUSIVE` when harness errors make a
+  below-threshold score untrustworthy; `GET /eval/certificates/{id}`
+  re-derives the verdict from the embedded results, rejecting even a
+  correctly signed certificate that lies about its own verdict.
+- **Routes** — `GET /eval/suites`, `POST /eval/certificates`,
+  `GET /eval/certificates[/{id}]`; `/eval/` is exempt from the request
+  timeout (suite runs are long).
+- **MCP tools (35 total)** — `agent_eval_certify`, `agent_eval_verify`.
+- **Live-verified with the real harness** (mock provider, smoke suite):
+  2/5 passed → `PASS` at threshold 0.4 and `FAIL` at 0.99 on the same
+  results; verification checks all true; standalone verifier exit 0;
+  dropping one result from the certificate → `INVALID` (exit 1).
+- **Tests (+19)** — spec-hash stability/order-independence, every verdict
+  branch (thresholds, missing/extra/duplicate/malformed, errors →
+  INCONCLUSIVE, errors above threshold → PASS), signed certificate
+  round-trip, signature tamper, **lying-verdict rejection**, standalone
+  verifier acceptance, and route tests with an injected runner.
+- Docs: `docs/EVAL_CERTIFICATES.md` (verdict table, live example, honest
+  limitations: single-run variance, harness-mode coverage, no revocation).
+
 ### Added — E4: browser sessions as a service (the agent loop, with rails)
 
 Agent-driven browsing now has the perception pattern the category validated
