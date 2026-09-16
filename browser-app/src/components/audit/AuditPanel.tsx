@@ -1,12 +1,13 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Search, Zap, Shield, Activity, ChevronRight,
   Download, Loader2, AlertTriangle, CheckCircle,
-  Info, AlertOctagon, XCircle,
+  Info, AlertOctagon, XCircle, Share2, FileText,
+  ExternalLink, Clock, X, ChevronDown, FileJson,
 } from "lucide-react";
 import { Button } from "../ui/button";
-import { localFetch } from "../../utils/api";
+import { localFetch, localFetchStream, engineOrigin } from "../../utils/api";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -68,9 +69,25 @@ interface AuditSummary {
   by_severity: Record<string, number>;
   url: string;
   mode: string;
+  audit_id?: number | null;
   product_context?: ProductContext;
   fix_groups?: FixGroup[];
   findings?: Finding[];
+}
+
+interface AuditRecord {
+  id: number;
+  url: string;
+  title: string;
+  mode: string;
+  total_findings: number;
+  critical_count: number;
+  high_count: number;
+  medium_count: number;
+  low_count: number;
+  info_count: number;
+  created_at: number | null;
+  share_token: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -96,6 +113,20 @@ const SEVERITY_CONFIG = {
 
 type GroupBy = "employee" | "severity";
 
+function formatHistoryDate(epochSeconds: number | null): string {
+  if (!epochSeconds) return "—";
+  try {
+    return new Date(epochSeconds * 1000).toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "—";
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -112,12 +143,22 @@ export function AuditPanel() {
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
   const abortRef = useRef<AbortController | null>(null);
 
+  // Audit history / report / share / export state
+  const [auditId, setAuditId] = useState<number | null>(null);
+  const [history, setHistory] = useState<AuditRecord[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [report, setReport] = useState<{ title: string; html: string } | null>(null);
+
   const reset = () => {
     setEmployeeResults([]);
     setProductContext(null);
     setFixGroups([]);
     setSummary(null);
     setPhase("idle");
+    setAuditId(null);
+    setShareUrl(null);
     setExpandedCards(new Set());
   };
 
@@ -148,7 +189,7 @@ export function AuditPanel() {
       abortRef.current = ac;
 
       try {
-        const res = await localFetch(
+        const res = await localFetchStream(
           mode === "full" ? "/audit/run" : "/audit/quick",
           {
             method: "POST",
@@ -236,9 +277,11 @@ export function AuditPanel() {
         break;
       case "done":
         setSummary(data);
+        setAuditId(data.audit_id ?? null);
         if (data.product_context) setProductContext(data.product_context);
         if (data.fix_groups) setFixGroups(data.fix_groups);
         setPhase("done");
+        loadHistory();
         break;
       case "error":
         setPhase("error");
@@ -251,6 +294,71 @@ export function AuditPanel() {
     setRunning(false);
     setPhase("idle");
   };
+
+  // -----------------------------------------------------------------------
+  // History / report / share / export
+  // -----------------------------------------------------------------------
+
+  const loadHistory = useCallback(async () => {
+    try {
+      const res = await localFetch("/audit/history?limit=10");
+      const data = await res.json();
+      setHistory(data.audits || []);
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadHistory();
+  }, [loadHistory]);
+
+  const openReport = useCallback(async (id: number, url: string, title?: string) => {
+    try {
+      const res = await localFetch(`/audit/report/${id}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setReport({ title: title || url, html: await res.text() });
+    } catch (e) {
+      console.error("Report failed:", e);
+    }
+  }, []);
+
+  const shareAudit = useCallback(async (id: number) => {
+    try {
+      const res = await localFetch(`/audit/history/${id}/share`, { method: "POST" });
+      const data = await res.json();
+      const link = `${engineOrigin()}${data.share_url}/report`;
+      setShareUrl(link);
+      try {
+        await navigator.clipboard.writeText(link);
+      } catch {
+        /* clipboard denied — the link stays visible for manual copy */
+      }
+      await loadHistory();
+    } catch (e) {
+      console.error("Share failed:", e);
+    }
+  }, [loadHistory]);
+
+  const downloadExport = useCallback(
+    async (id: number, format: "sarif" | "json" | "markdown") => {
+      setExportOpen(false);
+      try {
+        const res = await localFetch(`/audit/export/${format}?audit_id=${id}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `jambu-audit-${id}.${format === "markdown" ? "md" : format}`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        console.error("Export failed:", e);
+      }
+    },
+    [],
+  );
 
   // -----------------------------------------------------------------------
   // Group findings
@@ -415,10 +523,83 @@ export function AuditPanel() {
                   By Severity
                 </button>
               </div>
-              <Button variant="ghost" size="sm" onClick={exportMarkdown}>
-                <Download className="mr-1 h-4 w-4" /> Export
-              </Button>
+
+              {auditId != null ? (
+                <>
+                  <Button variant="ghost" size="sm" onClick={() => openReport(auditId, summary.url)}>
+                    <FileText className="mr-1 h-4 w-4" /> Report
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => shareAudit(auditId)}>
+                    <Share2 className="mr-1 h-4 w-4" /> Share
+                  </Button>
+                  <div className="relative">
+                    <Button variant="ghost" size="sm" onClick={() => setExportOpen((v) => !v)}>
+                      <Download className="mr-1 h-4 w-4" /> Export
+                      <ChevronDown className="ml-1 h-3 w-3" />
+                    </Button>
+                    <AnimatePresence>
+                      {exportOpen && (
+                        <>
+                          <div className="fixed inset-0 z-40" onClick={() => setExportOpen(false)} />
+                          <motion.div
+                            initial={{ opacity: 0, y: -4, scale: 0.98 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: -4, scale: 0.98 }}
+                            transition={{ duration: 0.12 }}
+                            className="absolute right-0 top-full z-50 mt-1 w-48 overflow-hidden rounded-lg border border-white/10 bg-zinc-900 shadow-xl"
+                          >
+                            {([
+                              ["sarif", "SARIF (code scanning)"],
+                              ["json", "Canonical JSON"],
+                              ["markdown", "Markdown"],
+                            ] as const).map(([format, label]) => (
+                              <button
+                                key={format}
+                                onClick={() => downloadExport(auditId, format)}
+                                className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-white/10"
+                              >
+                                <FileJson className="h-3 w-3 text-muted-foreground" /> {label}
+                              </button>
+                            ))}
+                          </motion.div>
+                        </>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                </>
+              ) : (
+                <Button variant="ghost" size="sm" onClick={exportMarkdown}>
+                  <Download className="mr-1 h-4 w-4" /> Export
+                </Button>
+              )}
             </div>
+          </div>
+
+        </div>
+      )}
+
+      {/* Share link strip — shown for shares from history or the run banner */}
+      {shareUrl && (
+        <div className="shrink-0 border-b border-white/10 bg-blue-500/10 px-4 py-2">
+          <div className="flex items-center gap-2 text-xs">
+            <Share2 className="h-3 w-3 shrink-0 text-blue-400" />
+            <span className="shrink-0 text-muted-foreground">Share link (copied):</span>
+            <a
+              href={shareUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="truncate text-blue-400 hover:underline"
+              title={shareUrl}
+            >
+              {shareUrl}
+            </a>
+            <button
+              onClick={() => setShareUrl(null)}
+              className="ml-auto shrink-0 text-muted-foreground/60 hover:text-foreground"
+              aria-label="Dismiss share link"
+            >
+              <X className="h-3 w-3" />
+            </button>
           </div>
         </div>
       )}
@@ -470,6 +651,87 @@ export function AuditPanel() {
               </button>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Recent audits */}
+      {history.length > 0 && (
+        <div className="shrink-0 border-b border-white/10">
+          <button
+            onClick={() => setHistoryOpen((v) => !v)}
+            className="flex w-full items-center gap-2 px-4 py-2 text-xs hover:bg-white/5"
+          >
+            <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="font-medium">Recent audits</span>
+            <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] text-muted-foreground">
+              {history.length}
+            </span>
+            <ChevronRight
+              className={`ml-auto h-3.5 w-3.5 text-muted-foreground transition-transform ${historyOpen ? "rotate-90" : ""}`}
+            />
+          </button>
+          <AnimatePresence initial={false}>
+            {historyOpen && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.15 }}
+                className="overflow-hidden"
+              >
+                <div className="max-h-56 space-y-1 overflow-y-auto px-4 pb-3">
+                  {history.map((rec) => (
+                    <div
+                      key={rec.id}
+                      className="flex items-center gap-2 rounded-lg border border-white/5 bg-white/5 px-2.5 py-1.5 text-xs"
+                    >
+                      <span className="w-24 shrink-0 text-muted-foreground">
+                        {formatHistoryDate(rec.created_at)}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate font-medium" title={rec.url}>
+                        {rec.url}
+                      </span>
+                      <span className="shrink-0 text-muted-foreground">{rec.mode}</span>
+                      {rec.critical_count > 0 && (
+                        <span className="shrink-0 rounded bg-red-500/10 px-1.5 py-0.5 text-red-400">
+                          {rec.critical_count} crit
+                        </span>
+                      )}
+                      <span className="shrink-0 text-muted-foreground">
+                        {rec.total_findings} findings
+                      </span>
+                      <div className="flex shrink-0 items-center gap-0.5">
+                        <Button
+                          variant="ghost" size="icon" className="h-6 w-6"
+                          onClick={() => openReport(rec.id, rec.url, rec.title)}
+                          aria-label={`Report for audit ${rec.id}`}
+                          title="View HTML report"
+                        >
+                          <FileText className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost" size="icon" className="h-6 w-6"
+                          onClick={() => shareAudit(rec.id)}
+                          aria-label={`Share audit ${rec.id}`}
+                          title="Create share link"
+                        >
+                          <Share2 className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost" size="icon" className="h-6 w-6"
+                          onClick={() => downloadExport(rec.id, "sarif")}
+                          aria-label={`Download SARIF for audit ${rec.id}`}
+                          title="Download SARIF"
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       )}
 
@@ -636,6 +898,61 @@ export function AuditPanel() {
           )}
         </AnimatePresence>
       </div>
+
+      {/* HTML report modal */}
+      <AnimatePresence>
+        {report && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6"
+            onClick={() => setReport(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.97, y: 8 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.97, y: 8 }}
+              transition={{ duration: 0.15 }}
+              className="flex h-full w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-white/10 bg-zinc-950 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-2 border-b border-white/10 px-4 py-2.5">
+                <FileText className="h-4 w-4 shrink-0 text-blue-400" />
+                <span className="min-w-0 flex-1 truncate text-sm font-medium">{report.title}</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    const blob = new Blob([report.html], { type: "text/html" });
+                    const url = URL.createObjectURL(blob);
+                    window.open(url, "_blank");
+                    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+                  }}
+                >
+                  <ExternalLink className="mr-1 h-3.5 w-3.5" /> Open
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  onClick={() => setReport(null)}
+                  aria-label="Close report"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+              {/* sandbox="" — the report is static HTML with no scripts */}
+              <iframe
+                title="Audit report"
+                srcDoc={report.html}
+                sandbox=""
+                className="h-full w-full bg-white"
+              />
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

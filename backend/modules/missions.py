@@ -274,6 +274,7 @@ class MissionScheduler:
         self._check_interval = check_interval or self.DEFAULT_CHECK_INTERVAL
         self._running = False
         self._lock = asyncio.Lock()
+        self._task: Optional[asyncio.Task] = None
         self._on_mission_complete: Optional[Callable] = None
         self._on_new_finding: Optional[Callable] = None
         self._research_fn: Optional[Callable] = None
@@ -418,6 +419,7 @@ class MissionScheduler:
         """Execute a single mission's research task."""
         if not self._research_fn:
             mission.status = 'error'
+            self._persist_mission_state(mission)
             return
 
         try:
@@ -427,11 +429,13 @@ class MissionScheduler:
             if mission.is_duplicate_result(result):
                 mission.record_result(result)
                 self._persist_result(mission.id, result, success=True)
+                self._persist_mission_state(mission)
                 return
 
             # New finding detected
             mission.record_result(result)
             self._persist_result(mission.id, result, success=True)
+            self._persist_mission_state(mission)
 
             # Notify about new findings
             if self._on_new_finding:
@@ -451,6 +455,25 @@ class MissionScheduler:
             error_text = f"Error: {e}"
             mission.record_result(error_text, success=False)
             self._persist_result(mission.id, error_text, success=False)
+            self._persist_mission_state(mission)
+
+    def _persist_mission_state(self, mission: Mission) -> None:
+        """Write status/last_run/next_run back to the missions row.
+
+        Without this a reload (``load_from_db`` on every /mission/list)
+        resets last_run to the stale DB value, so a mission that just ran
+        looks due again on the next scheduler tick and re-executes.
+        """
+        try:
+            with get_db_cursor() as cursor:
+                cursor.execute(
+                    "UPDATE missions SET status = ?, last_run = ?, next_run = ? "
+                    "WHERE id = ?",
+                    (mission.status, mission.last_run, mission.next_run or 0,
+                     mission.id),
+                )
+        except Exception as e:
+            log.error("Failed to persist mission state for %s: %s", mission.id, e)
 
     def _persist_result(self, mission_id: str, result_text: str, success: bool) -> None:
         """Write a run's result to the mission_results table."""
@@ -482,9 +505,26 @@ class MissionScheduler:
                 for row in cursor.fetchall()
             ]
 
+    async def start(self) -> bool:
+        """Start the background scheduler loop (idempotent).
+
+        Loads missions from the database first so restarts pick up
+        previously scheduled work. Returns True when a new loop was
+        started, False when one was already running.
+        """
+        if self._running:
+            return False
+        await self.load_from_db()
+        self._running = True
+        self._task = asyncio.create_task(self.run_loop())
+        return True
+
     def stop(self):
         """Stop the scheduler loop."""
         self._running = False
+        if self._task is not None and not self._task.done():
+            self._task.cancel()
+        self._task = None
 
 
 # ---- Module-level singleton ----
