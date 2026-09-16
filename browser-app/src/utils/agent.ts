@@ -1,5 +1,5 @@
 // Agent API helpers — wraps the /v2/agent/* endpoints and parses SSE streams
-import { localFetch, isTauri } from "./api";
+import { localFetch, localFetchStream, isTauri } from "./api";
 import type { AgentEvent, Plan, ToolSpec } from "./types";
 
 export async function listAgentTools(): Promise<{ tools: ToolSpec[]; stats: any[] }> {
@@ -40,7 +40,8 @@ export async function* runAgentStream(opts: {
   let resp: Response;
 
   if (isTauri()) {
-    resp = await localFetch("/v2/agent/run", {
+    // Streaming transport — chunks arrive live instead of after the run.
+    resp = await localFetchStream("/v2/agent/run", {
       method: "POST",
       body,
     });

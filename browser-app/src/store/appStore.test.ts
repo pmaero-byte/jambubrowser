@@ -138,6 +138,13 @@ describe("appStore - browser tabs", () => {
     expect(useAppStore.getState().activeBrowserTabId).toBe(tabs[tabs.length - 1].id);
   });
 
+  it("addBrowserTab adopts an explicit engine-assigned id", () => {
+    useAppStore.getState().addBrowserTab("https://example.com", "Example", "tab-abcd1234");
+    const tabs = useAppStore.getState().browserTabs;
+    expect(tabs[tabs.length - 1].id).toBe("tab-abcd1234");
+    expect(useAppStore.getState().activeBrowserTabId).toBe("tab-abcd1234");
+  });
+
   it("closing the active tab falls back to the last remaining tab", () => {
     useAppStore.getState().addBrowserTab("https://b.com", "B");
     useAppStore.getState().addBrowserTab("https://c.com", "C");
@@ -249,6 +256,39 @@ describe("appStore - browser tabs", () => {
     );
     useAppStore.getState().restoreSession(
       [{ id: "ok", url: "https://x.com" } as unknown as never],
+      "x"
+    );
+    expect(useAppStore.getState().browserTabs).toEqual(before);
+  });
+});
+
+describe("appStore - engine tab sync", () => {
+  it("replaces tabs with the engine's view and keeps the requested active tab", () => {
+    useAppStore.getState().syncEngineTabs(
+      [
+        { id: "tab-aaaa", url: "https://a.com", title: "A" },
+        { id: "tab-bbbb", url: "https://b.com", title: "B" },
+      ],
+      "tab-bbbb"
+    );
+    const s = useAppStore.getState();
+    expect(s.browserTabs.map((t) => t.id)).toEqual(["tab-aaaa", "tab-bbbb"]);
+    expect(s.activeBrowserTabId).toBe("tab-bbbb");
+  });
+
+  it("falls back to the first engine tab when the requested active id is gone", () => {
+    useAppStore.getState().syncEngineTabs(
+      [{ id: "tab-xxxx", url: "https://x.com", title: "X" }],
+      "stale-uuid"
+    );
+    expect(useAppStore.getState().activeBrowserTabId).toBe("tab-xxxx");
+  });
+
+  it("ignores empty or malformed engine tab lists", () => {
+    const before = useAppStore.getState().browserTabs;
+    useAppStore.getState().syncEngineTabs([], "x");
+    useAppStore.getState().syncEngineTabs(
+      [{ id: 1, url: "https://x.com", title: "X" }] as unknown as never,
       "x"
     );
     expect(useAppStore.getState().browserTabs).toEqual(before);

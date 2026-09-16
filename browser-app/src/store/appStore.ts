@@ -5,6 +5,9 @@ export type CanvasTab =
   | "browser"
   | "logs"
   | "missions"
+  | "monitors"
+  | "dcm-node"
+  | "meshpay"
   | "history"
   | "recordings"
   | "memory"
@@ -60,12 +63,18 @@ interface AppState {
   setCommandOpen: (open: boolean) => void;
   setOnboardingOpen: (open: boolean) => void;
 
-  addBrowserTab: (url?: string, title?: string) => void;
+  addBrowserTab: (url?: string, title?: string, id?: string) => void;
   closeBrowserTab: (id: string) => void;
   setActiveBrowserTab: (id: string) => void;
   updateBrowserTab: (id: string, patch: Partial<BrowserTab>) => void;
   reorderBrowserTabs: (newOrder: BrowserTab[]) => void;
   restoreSession: (tabs: BrowserTab[], activeTabId: string) => void;
+  /**
+   * Replace the tab list with the engine's authoritative view of open tabs.
+   * Used after the Chromium engine starts or restarts (its tab map is wiped
+   * and IDs are regenerated), so the store never holds stale engine IDs.
+   */
+  syncEngineTabs: (tabs: BrowserTab[], activeTabId?: string) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -102,12 +111,12 @@ export const useAppStore = create<AppState>((set) => ({
   setCommandOpen: (commandOpen) => set({ commandOpen }),
   setOnboardingOpen: (onboardingOpen) => set({ onboardingOpen }),
 
-  addBrowserTab: (url = "https://astrogenesis.net", title = "Astrogenesis") =>
+  addBrowserTab: (url = "https://astrogenesis.net", title = "Astrogenesis", id) =>
     set((s) => {
-      const id = crypto.randomUUID();
+      const tabId = id ?? crypto.randomUUID();
       return {
-        browserTabs: [...s.browserTabs, { id, url, title }],
-        activeBrowserTabId: id,
+        browserTabs: [...s.browserTabs, { id: tabId, url, title }],
+        activeBrowserTabId: tabId,
       };
     }),
   closeBrowserTab: (id) => set((s) => {
@@ -162,5 +171,18 @@ export const useAppStore = create<AppState>((set) => ({
         ? activeTabId
         : tabs[0].id;
       return { browserTabs: tabs, activeBrowserTabId: activeTabId_ };
+    }),
+  syncEngineTabs: (tabs, activeTabId) =>
+    set(() => {
+      if (!Array.isArray(tabs) || tabs.length === 0) return {};
+      for (const t of tabs) {
+        if (!t || typeof t.id !== "string" || typeof t.url !== "string" || typeof t.title !== "string") {
+          return {};
+        }
+      }
+      const active = tabs.some((t) => t.id === activeTabId)
+        ? (activeTabId as string)
+        : tabs[0].id;
+      return { browserTabs: tabs, activeBrowserTabId: active };
     }),
 }));

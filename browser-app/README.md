@@ -1,8 +1,19 @@
 # Jambubrowser — Tauri Desktop App
 
 The native desktop wrapper for Jambubrowser. Wraps the React frontend in a
-Tauri 2 shell with proper code signing, notarization, auto-updates, and deep
-linking.
+Tauri 2 shell with code signing, notarization, and auto-update *pipeline*
+configuration.
+
+> **Status — known gaps (2026-09, tracked in `docs/FEATURE_MAP.md`):**
+> - Deep links (`jambubrowser://`) are registered in Info.plist but the
+>   runtime handler is not wired yet.
+> - The auto-updater plugin is configured, but the JS package, capability
+>   permission, and update-check UI are not shipped.
+> - The backend launcher assumes a repo checkout with system `python3`;
+>   the self-contained sidecar (`externalBin`) is TODO. The
+>   `llama-server`-in-`binaries/` layout below is aspirational.
+> - The browser pane paints polled CDP screenshots (~1 FPS) — real
+>   multi-webview rendering is the next milestone.
 
 ## Stack
 
@@ -34,8 +45,9 @@ linking.
 ┌───────────────────────▼──────────────────────────────────┐
 │  Rust Orchestrator (this app)                            │
 │  - Spawns the Python backend (uvicorn) on first launch   │
-│  - proxy_localhost forwards HTTP from WebView to backend │
-│  - Manages the app lifecycle + deep links                │
+│  - proxy_localhost forwards HTTP; proxy_stream forwards   │
+│    SSE chunks live to the WebView                        │
+│  - Manages the app lifecycle (deep links: TODO)          │
 └──────────────────────────────────────────────────────────┘
 ```
 

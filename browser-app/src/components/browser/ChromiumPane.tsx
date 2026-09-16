@@ -151,6 +151,15 @@ function cdpButton(button: number): string {
   return button === 1 ? "middle" : button === 2 ? "right" : "left";
 }
 
+// Shape of TabInfo returned by the Rust engine's browser_* commands.
+// The engine owns tab identity: its IDs must be adopted verbatim by the
+// store or every subsequent invoke() targets a tab that doesn't exist.
+export interface EngineTabInfo {
+  id: string;
+  url: string;
+  title: string;
+}
+
 // ── Main Component ───────────────────────────────────────────────
 
 const SCREENSHOT_INTERVAL = 1000;
@@ -159,7 +168,7 @@ export function ChromiumPane() {
   const {
     browserTabs, activeBrowserTabId, setActiveBrowserTab,
     closeBrowserTab, addBrowserTab, updateBrowserTab,
-    reorderBrowserTabs,
+    reorderBrowserTabs, syncEngineTabs,
   } = useAppStore();
 
   const activeTab = browserTabs.find((t) => t.id === activeBrowserTabId) || browserTabs[0];
@@ -399,16 +408,79 @@ export function ChromiumPane() {
     return results;
   }, [inputUrl, history, bookmarks, activeTab?.url]);
 
+  // ── Engine tab reconciliation ──
+  // The Rust engine starts with an empty tab map and wipes it on every
+  // restart (crash watchdog or user-triggered). The store, by contrast,
+  // may hold session-restored tabs whose IDs the engine has never seen.
+  // Reconcile by recreating the desired tabs in the engine and adopting
+  // its IDs, so no stale ID ever reaches an invoke().
+  const reconcilingRef = useRef(false);
+  const reconcileEngineTabs = useCallback(async () => {
+    if (!isTauri || reconcilingRef.current) return;
+    reconcilingRef.current = true;
+    try {
+      const existing = await invoke("browser_list_tabs") as EngineTabInfo[];
+      if (existing.length > 0) {
+        // Engine already has tabs (e.g. a second browser-ready event) —
+        // adopt its view rather than duplicating tabs.
+        const synced: BrowserTab[] = existing.map((t) => ({
+          id: t.id, url: t.url, title: t.title,
+        }));
+        syncEngineTabs(synced, synced[0].id);
+        return;
+      }
+      const desired = useAppStore.getState().browserTabs;
+      const prevActive = useAppStore.getState().activeBrowserTabId;
+      const created = await Promise.all(desired.map(async (t) => {
+        const info = await invoke("browser_new_tab", {
+          url: t.url || "about:blank",
+        }) as EngineTabInfo;
+        return {
+          id: info.id,
+          url: info.url || t.url,
+          title: t.title && t.title !== t.url ? t.title : info.title,
+        };
+      }));
+      const idx = desired.findIndex((t) => t.id === prevActive);
+      syncEngineTabs(created, created[idx >= 0 ? idx : 0]?.id);
+    } catch {
+      // Engine not up yet or shutting down — the next browser-ready /
+      // browser-restarted event triggers another pass.
+    } finally {
+      reconcilingRef.current = false;
+    }
+  }, [syncEngineTabs]);
+
   // ── Tauri events ──
   useEffect(() => {
     if (!isTauri) return;
     const cleanups: (() => void)[] = [];
-    listen("browser-ready", () => { setEngineReady(true); setErrorMsg(null); })
-      .then((fn) => cleanups.push(fn));
+    listen("browser-ready", () => {
+      setEngineReady(true);
+      setErrorMsg(null);
+      reconcileEngineTabs();
+    }).then((fn) => cleanups.push(fn));
     listen("browser-error", (e) => { setErrorMsg(String(e.payload)); })
       .then((fn) => cleanups.push(fn));
+    listen("browser-restarted", () => {
+      // The engine came back with an empty tab map — rebuild it.
+      reconcileEngineTabs();
+    }).then((fn) => cleanups.push(fn));
+
+    // `browser-ready` fires once per engine start. If this pane mounts
+    // *after* the engine came up (the user switched canvas tabs and
+    // back), the event is long gone — probe the engine on mount so
+    // readiness and tab reconciliation still happen.
+    invoke("browser_list_tabs")
+      .then(() => {
+        setEngineReady(true);
+        setErrorMsg(null);
+        reconcileEngineTabs();
+      })
+      .catch(() => { /* engine still starting — browser-ready will fire */ });
+
     return () => cleanups.forEach((fn) => fn());
-  }, []);
+  }, [reconcileEngineTabs]);
 
   // ── Sync URL input ──
   useEffect(() => {
@@ -490,18 +562,30 @@ export function ChromiumPane() {
     const url = "about:blank";
     if (isTauri && engineReady) {
       try {
-        const info = await invoke("browser_new_tab", { url }) as BrowserTab;
-        addBrowserTab(info.url, info.title || "New Tab");
-      } catch { addBrowserTab(url, "New Tab"); }
-    } else { addBrowserTab(url, "New Tab"); }
+        const info = await invoke("browser_new_tab", { url }) as EngineTabInfo;
+        const title = info.title && info.title !== info.url ? info.title : "New Tab";
+        // Adopt the engine-assigned ID — the store must never invent one.
+        addBrowserTab(info.url || url, title, info.id);
+        return;
+      } catch { /* engine hiccup — fall through to an app-only tab */ }
+    }
+    addBrowserTab(url, "New Tab");
   }, [engineReady, addBrowserTab]);
 
   const handleCloseTab = useCallback(async (id: string) => {
     if (isTauri && engineReady) {
-      try { await invoke("browser_close_tab", { tabId: id }); } catch { /* */ }
+      try {
+        if (useAppStore.getState().browserTabs.length === 1) {
+          // Closing the last tab: create the replacement in the engine
+          // first so store and engine never diverge on tab identity.
+          const info = await invoke("browser_new_tab", { url: "about:blank" }) as EngineTabInfo;
+          addBrowserTab(info.url || "about:blank", "New Tab", info.id);
+        }
+        await invoke("browser_close_tab", { tabId: id });
+      } catch { /* engine already gone — the store close below still runs */ }
     }
     closeBrowserTab(id);
-  }, [engineReady, closeBrowserTab]);
+  }, [engineReady, addBrowserTab, closeBrowserTab]);
 
   // ── Tab preview hover handlers ──
   // Debounced 300ms; aborts in-flight fetches when the user moves to a
@@ -668,6 +752,41 @@ return { filled: true, hasUser: !!bestUser, hasPass: true };
     }
   }, [activeTab, engineReady]);
 
+  // ── Native menu wiring ──
+  // The Tauri menu emits `menu-event` with the item id. Menu accelerators
+  // may or may not consume the keystroke before the webview sees it; the
+  // timestamp map lets the JS keyboard handler stand down when the native
+  // menu already handled the same action, so shortcuts never double-fire.
+  const menuHandledRef = useRef<Record<string, number>>({});
+  const wasHandledByMenu = useCallback((action: string): boolean => {
+    const at = menuHandledRef.current[action];
+    return typeof at === "number" && Date.now() - at < 300;
+  }, []);
+
+  const cycleTab = useCallback((delta: number) => {
+    const { browserTabs: tabs, activeBrowserTabId: activeId } = useAppStore.getState();
+    if (tabs.length < 2) return;
+    const idx = tabs.findIndex((t) => t.id === activeId);
+    const next = tabs[(idx + delta + tabs.length) % tabs.length];
+    if (next) setActiveBrowserTab(next.id);
+  }, [setActiveBrowserTab]);
+
+  const bookmarkAllTabs = useCallback(() => {
+    const tabs = useAppStore.getState().browserTabs;
+    const candidates = tabs.filter((t) => t.url && t.url !== "about:blank");
+    if (candidates.length === 0) return;
+    setBookmarks((prev) => {
+      let next = prev;
+      for (const t of candidates) {
+        if (!next.some((b) => b.url === t.url)) {
+          next = [{ id: crypto.randomUUID(), url: t.url, title: t.title || t.url, folder: "Other", addedAt: Date.now() }, ...next];
+        }
+      }
+      saveJson(BOOKMARKS_KEY, next);
+      return next;
+    });
+  }, []);
+
   // Keyboard shortcuts (Cmd/Ctrl + key)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -680,20 +799,59 @@ return { filled: true, hasUser: !!bestUser, hasPass: true };
         return;
       }
       switch (e.key.toLowerCase()) {
-        case "t": e.preventDefault(); handleNewTab(); break;
-        case "w": e.preventDefault(); if (activeTab) handleCloseTab(activeTab.id); break;
+        case "t": e.preventDefault(); if (!wasHandledByMenu("new_tab")) handleNewTab(); break;
+        case "w": e.preventDefault(); if (activeTab && !wasHandledByMenu("close_tab")) handleCloseTab(activeTab.id); break;
         case "l": e.preventDefault(); inputRef.current?.focus(); inputRef.current?.select(); break;
-        case "d": e.preventDefault(); if (activeTab?.url) toggleBookmark(activeTab.url, activeTab.title || activeTab.url); break;
-        case "r": e.preventDefault(); reload(); break;
-        case "f": e.preventDefault(); openFind(); break;
-        case "[": e.preventDefault(); goBack(); break;
-        case "]": e.preventDefault(); goForward(); break;
-        case "b": if (e.shiftKey) { e.preventDefault(); setShowBookmarks((v) => !v); } break;
+        case "d": e.preventDefault(); if (activeTab?.url && !wasHandledByMenu("bookmark_page")) toggleBookmark(activeTab.url, activeTab.title || activeTab.url); break;
+        case "r": e.preventDefault(); if (!wasHandledByMenu("reload")) reload(); break;
+        case "f": e.preventDefault(); if (!wasHandledByMenu("find")) openFind(); break;
+        case "[": e.preventDefault(); if (!wasHandledByMenu("go_back")) goBack(); break;
+        case "]": e.preventDefault(); if (!wasHandledByMenu("go_forward")) goForward(); break;
+        case "b": if (e.shiftKey) { e.preventDefault(); if (!wasHandledByMenu("toggle_bookmarks")) setShowBookmarks((v) => !v); } break;
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [browserTabs, activeTab, handleNewTab, handleCloseTab, toggleBookmark, reload, goBack, goForward, setActiveBrowserTab, openFind]);
+  }, [browserTabs, activeTab, handleNewTab, handleCloseTab, toggleBookmark, reload, goBack, goForward, setActiveBrowserTab, openFind, wasHandledByMenu]);
+
+  // Menu item dispatcher — kept in a ref so the (mount-once) menu-event
+  // listener below always calls the latest closures.
+  const menuActionRef = useRef<(id: string) => void>(() => {});
+  useEffect(() => {
+    menuActionRef.current = (id: string) => {
+      menuHandledRef.current[id] = Date.now();
+      const { browserTabs: tabs, activeBrowserTabId: activeId } = useAppStore.getState();
+      const active = tabs.find((t) => t.id === activeId) || tabs[0];
+      switch (id) {
+        case "new_tab": handleNewTab(); break;
+        case "close_tab": if (active) handleCloseTab(active.id); break;
+        case "reload": reload(); break;
+        case "go_back": goBack(); break;
+        case "go_forward": goForward(); break;
+        case "find": openFind(); break;
+        case "toggle_bookmarks": setShowBookmarks((v) => !v); break;
+        case "toggle_devtools": setDevtoolsOpen(!useDevtoolsStore.getState().devtoolsOpen); break;
+        case "bookmark_page":
+          if (active?.url && active.url !== "about:blank") {
+            toggleBookmark(active.url, active.title || active.url);
+          }
+          break;
+        case "bookmark_all_tabs": bookmarkAllTabs(); break;
+        case "next_tab": cycleTab(1); break;
+        case "prev_tab": cycleTab(-1); break;
+        case "show_history": useAppStore.getState().setActiveTab("history"); break;
+        default: break; // items without an action (e.g. New Window) are no-ops
+      }
+    };
+  });
+
+  useEffect(() => {
+    if (!isTauri) return;
+    let unlisten: (() => void) | undefined;
+    listen("menu-event", (e) => menuActionRef.current(String(e.payload)))
+      .then((fn) => { unlisten = fn; });
+    return () => { if (unlisten) unlisten(); };
+  }, []);
 
   const selectSuggestion = useCallback((url: string, title: string) => {
     setInputUrl(url);

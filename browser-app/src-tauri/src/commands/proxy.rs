@@ -10,12 +10,12 @@ use std::collections::HashMap;
 
 #[derive(Debug, Deserialize)]
 pub struct ProxyRequest {
-    url: String,
-    method: String,
+    pub url: String,
+    pub method: String,
     #[serde(default)]
-    headers: HashMap<String, String>,
+    pub headers: HashMap<String, String>,
     #[serde(default)]
-    body: Option<String>,
+    pub body: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize)]

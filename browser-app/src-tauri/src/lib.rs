@@ -3,6 +3,7 @@ mod commands;
 mod orchestrator;
 
 use chromium::manager::ChromiumManager;
+use commands::stream::StreamRegistry;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 use tauri::menu::{MenuBuilder, SubmenuBuilder, MenuItemBuilder};
@@ -45,6 +46,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(app_state)
+        .manage(StreamRegistry::default())
         .setup(move |app| {
             let handle = app.handle().clone();
 
@@ -55,10 +57,6 @@ pub fn run() {
                     .build(app)?)
                 .item(&MenuItemBuilder::with_id("close_tab", "Close Tab")
                     .accelerator("CmdOrCtrl+W")
-                    .build(app)?)
-                .separator()
-                .item(&MenuItemBuilder::with_id("new_window", "New Window")
-                    .accelerator("CmdOrCtrl+N")
                     .build(app)?)
                 .separator()
                 .quit()
@@ -81,15 +79,6 @@ pub fn run() {
             let view_menu = SubmenuBuilder::new(app, "View")
                 .item(&MenuItemBuilder::with_id("reload", "Reload Page")
                     .accelerator("CmdOrCtrl+R")
-                    .build(app)?)
-                .item(&MenuItemBuilder::with_id("zoom_in", "Zoom In")
-                    .accelerator("CmdOrCtrl+=")
-                    .build(app)?)
-                .item(&MenuItemBuilder::with_id("zoom_out", "Zoom Out")
-                    .accelerator("CmdOrCtrl+-")
-                    .build(app)?)
-                .item(&MenuItemBuilder::with_id("zoom_reset", "Actual Size")
-                    .accelerator("CmdOrCtrl+0")
                     .build(app)?)
                 .separator()
                 .item(&MenuItemBuilder::with_id("toggle_bookmarks", "Show Bookmark Bar")
@@ -125,10 +114,10 @@ pub fn run() {
                 .minimize()
                 .separator()
                 .item(&MenuItemBuilder::with_id("next_tab", "Show Next Tab")
-                    .accelerator("CmdOrCtrl+Tab")
+                    .accelerator("Control+Tab")
                     .build(app)?)
                 .item(&MenuItemBuilder::with_id("prev_tab", "Show Previous Tab")
-                    .accelerator("CmdOrCtrl+Shift+Tab")
+                    .accelerator("Control+Shift+Tab")
                     .build(app)?)
                 .build()?;
 
@@ -186,6 +175,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::proxy::proxy_localhost,
+            commands::stream::proxy_stream,
+            commands::stream::proxy_stream_cancel,
             commands::system::get_local_ip,
             commands::chromium::browser_new_tab,
             commands::chromium::browser_navigate,

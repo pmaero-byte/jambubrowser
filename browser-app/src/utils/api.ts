@@ -1,8 +1,10 @@
 // Unified API transport — works in web builds and inside the Tauri WebView.
 // In Tauri, HTTP is routed through the Rust `proxy_localhost` command so the
-// WebView CSP (which blocks arbitrary connect-src) stays tight.
+// WebView CSP (which blocks arbitrary connect-src) stays tight. Streaming
+// (SSE) responses use `proxy_stream`, which forwards chunks as they arrive
+// instead of buffering the whole body.
 
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, Channel } from "@tauri-apps/api/core";
 
 const DEFAULT_TIMEOUT_MS = 30000;
 
@@ -84,9 +86,127 @@ function combineSignals(a: AbortSignal, b?: AbortSignal | null): AbortSignal {
   return controller.signal;
 }
 
+// ── Streaming transport (SSE) ───────────────────────────────────────────────
+
+/** Messages sent by the Rust `proxy_stream` command over its IPC channel. */
+type ProxyStreamEvent =
+  | { kind: "init"; status: number; headers: Record<string, string> }
+  | { kind: "chunk"; data: string }
+  | { kind: "end" }
+  | { kind: "error"; message: string };
+
+function base64ToBytes(b64: string): Uint8Array {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+/**
+ * Like `localFetch`, but the returned `Response` body streams incrementally
+ * in both web and Tauri builds. Use for SSE endpoints (agent runs, audits)
+ * where waiting for the full body would defeat the point of streaming.
+ *
+ * In Tauri, chunks arrive over a Tauri IPC channel from `proxy_stream`;
+ * aborting `options.signal` cancels the Rust task via `proxy_stream_cancel`.
+ */
+export async function localFetchStream(
+  path: string,
+  options?: RequestInit,
+): Promise<Response> {
+  if (!isTauri()) return localFetch(path, options);
+
+  const url = `${backendOrigin()}${path}`;
+  const method = (options?.method ?? "GET").toUpperCase();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(options?.headers as Record<string, string> || {}),
+  };
+  const body = options?.body
+    ? typeof options.body === "string"
+      ? options.body
+      : JSON.stringify(options.body)
+    : undefined;
+
+  const streamId = crypto.randomUUID();
+  // Held in an object so TypeScript doesn't narrow the assignment inside
+  // `start()` away (closures aren't tracked by control-flow analysis).
+  const ctrl: { current: ReadableStreamDefaultController<Uint8Array> | null } = { current: null };
+  const stream = new ReadableStream<Uint8Array>({
+    start(c) { ctrl.current = c; },
+    cancel() {
+      invoke("proxy_stream_cancel", { streamId }).catch(() => { /* finished */ });
+    },
+  });
+
+  let settleInit!: (v: { status: number; headers: Record<string, string> }) => void;
+  let failInit!: (e: unknown) => void;
+  const initPromise = new Promise<{ status: number; headers: Record<string, string> }>(
+    (resolve, reject) => { settleInit = resolve; failInit = reject; },
+  );
+  let initDone = false;
+
+  const channel = new Channel<ProxyStreamEvent>();
+  channel.onmessage = (ev) => {
+    switch (ev.kind) {
+      case "init":
+        initDone = true;
+        settleInit({ status: ev.status, headers: ev.headers });
+        break;
+      case "chunk":
+        ctrl.current?.enqueue(base64ToBytes(ev.data));
+        break;
+      case "end":
+        ctrl.current?.close();
+        break;
+      case "error": {
+        const err = new Error(ev.message);
+        if (!initDone) { initDone = true; failInit(err); }
+        try { ctrl.current?.error(err); } catch { /* already closed */ }
+        break;
+      }
+    }
+  };
+
+  const onAbort = () => {
+    invoke("proxy_stream_cancel", { streamId }).catch(() => { /* finished */ });
+    const err = new DOMException("Aborted", "AbortError");
+    if (!initDone) { initDone = true; failInit(err); }
+    try { ctrl.current?.error(err); } catch { /* already closed */ }
+  };
+  if (options?.signal) {
+    if (options.signal.aborted) onAbort();
+    else options.signal.addEventListener("abort", onAbort, { once: true });
+  }
+
+  try {
+    await invoke("proxy_stream", {
+      request: { url, method, headers, body },
+      streamId,
+      onEvent: channel,
+    });
+  } catch (e) {
+    if (!initDone) { initDone = true; failInit(e); }
+    try { ctrl.current?.error(e); } catch { /* already closed */ }
+  }
+
+  const init = await initPromise;
+  return new Response(stream, { status: init.status, headers: init.headers });
+}
+
 export function createWebSocket(path: string): WebSocket {
   const wsUrl = `ws://localhost:8001${path}`;
   return new WebSocket(wsUrl);
+}
+
+/**
+ * Absolute origin for engine URLs that are shared/opened outside the app
+ * (report links, share links). Web dev proxies through the Vite origin;
+ * Tauri and built web builds talk to the engine directly on 127.0.0.1.
+ */
+export function engineOrigin(): string {
+  if (isTauri()) return "http://localhost:8001";
+  return import.meta.env.DEV ? window.location.origin : "http://localhost:8001";
 }
 
 // ── Knowledge graph ─────────────────────────────────────────────────────────
