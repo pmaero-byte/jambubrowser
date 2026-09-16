@@ -290,6 +290,8 @@ python3 -m pytest tests/test_e2e.py -v
 | Eval certificates | `/eval/suites` | GET | Eval suites + committed task ids |
 | Eval certificates | `/eval/certificates` | POST | Run a suite under a frozen spec, issue a signed certificate |
 | Eval certificates | `/eval/certificates/{id}` | GET | Certificate + signature/verdict recomputation |
+| A2A | `/.well-known/agent-card.json` | GET | Public agent card (skills, auth scheme) |
+| A2A | `/a2a` | POST | JSON-RPC: SendMessage / GetTask / CancelTask (agent hires) |
 | Consensus | `/consensus/vote` | POST | Cast vote |
 | Vision | `/vision/ocr` | POST | Extract text from image |
 | Vision | `/vision/ui-elements` | POST | Detect UI elements |
@@ -373,6 +375,7 @@ All components live in `browser-app/src/` and are shared between the desktop (Ta
 | **Evidence Bundles** | `backend/modules/evidence.py` | Ed25519-signed, third-party-verifiable claims (audit reports, receipt windows, DCM verdicts); standalone verifier in `scripts/verify_evidence_bundle.py` |
 | **Browser Sessions** | `backend/modules/browser_agent.py` | Agent browsing with allowlists, approval gates, PII scrubbing, per-step receipts (snapshot → catalog → dispatch by ref) |
 | **Eval Certificates** | `backend/modules/eval_cert.py` | Frozen-spec, coverage-checked, Ed25519-signed evaluation certificates over the 9 eval suites |
+| **A2A Agent** | `backend/modules/a2a.py` | Agent2Agent v0.3 JSON-RPC (SendMessage/GetTask/CancelTask) with audit, certification, and mesh-inference skills |
 | **MeshPay** | `backend/modules/meshpay/` | Independent DCM receipt-chain verification (JS-faithful serializer), epoch Merkle roots, USDC payout plans, Solana memo anchoring |
 | **DCM Client** | `backend/modules/dcm_client.py` | DecentraCode Mesh REST: status, models, join-info, earnings, settlement log |
 | **Remote MCP** | `backend/mcp_http.py` | Streamable-HTTP MCP transport with token auth + Server Card (stdio lives in `mcp_server.py`) |

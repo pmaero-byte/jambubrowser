@@ -4,6 +4,42 @@ All notable changes to Jambubrowser.
 
 ## [Unreleased]
 
+### Added — E6: A2A agent (other agents can hire this engine)
+
+Jambubrowser now speaks the Agent2Agent protocol (v0.3 JSON-RPC binding) as
+a hireable worker:
+
+- **`/.well-known/agent-card.json`** — public card with three skills
+  (`audit_web_app`, `agent_eval_certify`, `mesh_inference`), bearer security
+  scheme, and honest capabilities (`streaming: false`,
+  `pushNotifications: false`).
+- **`backend/modules/a2a.py`** — JSON-RPC methods `SendMessage` (blocking by
+  default), `GetTask`, `CancelTask` with spec-shaped Task/Message/Artifact
+  objects, the `TASK_STATE_*` enum, A2A error codes (-32001/-32002/-32003/
+  -32004) and the `@type` error-info payloads. Tasks persist in `a2a_tasks`
+  with message history (`ROLE_USER` → `ROLE_AGENT`); workers can be
+  cancelled; a task orphaned by an engine restart is marked FAILED with the
+  reason on first read.
+- **Three access doors**: engine API key, an **x402 payment** when the
+  paywall is enabled (`POST /a2a` is now a paid route, `a2a_task` $0.05 —
+  the middleware stamps `x402_paid` on the scope so anonymous agents can
+  hire us in USDC), or `JAMBU_A2A_OPEN=1` for local dev. Everything else
+  gets a `401` **with** a `WWW-Authenticate` challenge — which exposed and
+  fixed an engine bug: the custom HTTPException handler was dropping
+  `exc.headers`, silently mangling every challenge response.
+- **Live-verified**: card served; unauthenticated call 401 + challenge;
+  with an agent key, a text-only URL message inferred `audit_web_app` and
+  returned a completed task from a **real Playwright audit** (`audit_id=1`),
+  and a data-part message ran `agent_eval_certify` to a `PASS` certificate;
+  `GetTask` returned the full history.
+- **Tests (+18)** — card shape (public even when RPC requires auth),
+  dispatch (unknown method, invalid request, honest streaming/push refusals,
+  missing/unknown skill listings, URL inference), lifecycle (blocking
+  completion + artifacts, non-blocking + polling, failing skill → FAILED,
+  unknown task, cancel + not-cancelable, orphan recovery), and auth (401
+  default, API key, x402-paid access, 402 without payment when enabled).
+- Docs: `docs/A2A.md` (skills table, access doors, honest not-done list).
+
 ### Added — E5: agent-evaluation certificates (frozen spec, coverage, signed verdicts)
 
 The eval harness (9 suites) now issues **certificates** instead of scores
