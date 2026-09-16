@@ -1,0 +1,32 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.pmaero-byte/jambubrowser",
+  "description": "Audit web apps, drive a real browser, run mesh compute - 28 MCP tools.",
+  "version": "3.3.0",
+  "repository": {
+    "url": "https://github.com/pmaero-byte/jambubrowser",
+    "source": "github"
+  },
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "{baseUrl}/mcp/",
+      "variables": {
+        "baseUrl": {
+          "description": "HTTPS origin of a deployed Jambubrowser engine (e.g. https://jambu.example.com)",
+          "format": "string",
+          "isRequired": true
+        }
+      },
+      "headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer <engine API key> — create one with POST /api-keys/create (or set JAMBU_MCP_TOKEN on the server)",
+          "isRequired": true,
+          "isSecret": true
+        }
+      ]
+    }
+  ],
+  "websiteUrl": "https://github.com/pmaero-byte/jambubrowser"
+}

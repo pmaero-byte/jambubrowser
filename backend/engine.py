@@ -12,7 +12,7 @@ import gc
 import logging
 import os
 import time
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 
@@ -99,6 +99,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     get_mission_scheduler().set_research_handler(_mission_research)
 
+    # Remote MCP (Streamable HTTP) is mounted at /mcp; its session manager
+    # needs to run for the lifetime of the app (Starlette does not run
+    # lifespans of mounted sub-apps).
+    from backend.mcp_http import current_session_manager
+
+    mcp_session_stack = AsyncExitStack()
+    try:
+        await mcp_session_stack.enter_async_context(
+            current_session_manager().run()
+        )
+    except Exception:
+        log.warning("MCP session manager failed to start", exc_info=True)
+
     yield  # Application runs here
 
     # Shutdown cleanup. Inlined in the post-yield for-loop because
@@ -124,6 +137,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 await mod.get_shield().close()
         except Exception:
             pass
+
+    # Close the MCP session manager last (mounted app may still be draining).
+    try:
+        await mcp_session_stack.aclose()
+    except Exception:
+        pass
 
 
 # (The previous _shutdown_modules helper was removed because the bare
@@ -227,12 +246,17 @@ app.add_middleware(GZipMiddleware, minimum_size=500)
 app.add_middleware(RequestTimeoutMiddleware, timeout_seconds=30.0, exclude_paths=[
     "/research", "/scrape", "/exec", "/act", "/workflow", "/v2/",
     "/mlx/", "/mission", "/knowledge/ingest", "/login", "/discover_api",
-    "/audit/", "/proxy", "/sessions/recordings", "/dcm/",
+    "/audit/", "/proxy", "/sessions/recordings", "/dcm/", "/mcp",
 ])
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(TrustedHostMiddleware)
 app.add_middleware(RequestIDMiddleware)
 app.add_middleware(AccessLogMiddleware)
+
+# x402 paywall: charges configured routes (audits, mesh inference) per call
+# when JAMBU_X402_ENABLED=1. Disabled by default; API-key callers bypass it.
+from backend.modules.x402 import X402Middleware, DEFAULT_PAID_ROUTES
+app.add_middleware(X402Middleware, routes=DEFAULT_PAID_ROUTES)
 
 
 # ---------------------------------------------------------------------------
@@ -263,6 +287,14 @@ from backend.routes.audit import router as audit_router
 from backend.routes.audit_monitors import router as audit_monitors_router
 from backend.routes.dcm import router as dcm_router
 from backend.routes.meshpay import router as meshpay_router
+from backend.routes.x402 import router as x402_router
+from backend.routes.evidence import router as evidence_router
+from backend.routes.browser_sessions import router as browser_sessions_router
+from backend.mcp_http import (
+    card_routes as mcp_card_routes,
+    mcp_asgi_app,
+    LazyMcpMount,
+)
 from backend.routes.api_keys import router as api_keys_router
 from backend.routes.billing import router as billing_router
 from backend.routes.teams import router as teams_router
@@ -293,6 +325,14 @@ app.include_router(audit_router)
 app.include_router(audit_monitors_router)
 app.include_router(dcm_router)
 app.include_router(meshpay_router)
+app.include_router(x402_router)
+app.include_router(evidence_router)
+app.include_router(browser_sessions_router)
+
+# Remote MCP (Streamable HTTP) + public Server Card. The sub-app carries
+# its own token auth; the engine's middleware stack still applies to it.
+app.include_router(mcp_card_routes())
+app.mount("/mcp", LazyMcpMount())
 app.include_router(api_keys_router)
 app.include_router(billing_router)
 app.include_router(teams_router)

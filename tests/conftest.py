@@ -98,19 +98,24 @@ def _isolate_module_singletons():
     - Memory store (same table-creation-at-first-use hazard: a stale store
       points at a closed per-file DB and memory routes 500 with
       "no such table: procedural_memory")
+    - MCP session manager (the SDK allows one run per FastMCP instance;
+      each engine TestClient lifespan must start a fresh one)
     """
     from backend.core.rate_limiter import get_limiter
     from backend.core.audit import reset_audit_logger
     from backend.memory import reset_memory
     from backend.llm import reload_config
+    from backend.mcp_http import reset_session_manager
     get_limiter().reset()
     reload_config()
     reset_audit_logger()
     reset_memory()
+    reset_session_manager()
     yield
     get_limiter().reset()
     reset_audit_logger()
     reset_memory()
+    reset_session_manager()
 
 
 @pytest.fixture

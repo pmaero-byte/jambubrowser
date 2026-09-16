@@ -2,11 +2,16 @@
 
 Auto-generated from `backend/mcp_server.py` by `tools/mcp/generate_docs.py`. Do not edit by hand — re-run the generator after adding or renaming a tool.
 
-**Total tools:** 28
+**Total tools:** 33
 
 ## Table of contents
 
 - [`analyze_screenshot`](#analyze_screenshot)
+- [`browser_session_act`](#browser_session_act)
+- [`browser_session_close`](#browser_session_close)
+- [`browser_session_open`](#browser_session_open)
+- [`browser_session_receipts`](#browser_session_receipts)
+- [`browser_session_snapshot`](#browser_session_snapshot)
 - [`check_engine_health`](#check_engine_health)
 - [`click_element`](#click_element)
 - [`dcm_earnings`](#dcm_earnings)
@@ -52,6 +57,92 @@ Describe what the agent sees in the image.
 
 Args:
     image_data: Base64-encoded image data
+
+### `browser_session_act`
+
+**Signature**
+
+```python
+browser_session_act(session_id: str, action: str, ref: str, text: str = '', approve: bool = False)
+```
+
+**Description**
+
+Deterministic dispatch by catalog ref. Refusals are explicit: blocked
+domains, unknown refs, and actions needing approval (risky elements such
+as delete/pay/send always require approve=true).
+
+Args:
+    session_id: Session id
+    action: "click" or "type"
+    ref: Element ref from the last snapshot (e.g. @e3)
+    text: Text to type (for action="type")
+    approve: Explicit approval for input/risky actions
+
+### `browser_session_close`
+
+**Signature**
+
+```python
+browser_session_close(session_id: str)
+```
+
+**Description**
+
+Close a browser session (ephemeral context is torn down).
+
+Args:
+    session_id: Session id
+
+### `browser_session_open`
+
+**Signature**
+
+```python
+browser_session_open(allow_domains: str, require_approval: bool = True)
+```
+
+**Description**
+
+Open an isolated browser session for agent-driven work, restricted to a
+domain allowlist. Navigations outside it are refused; irreversible-looking
+actions need ``approve=true``; PII is scrubbed from snapshots.
+
+Args:
+    allow_domains: Comma-separated domains the session may visit (subdomains allowed)
+    require_approval: Require approve=true for input actions inside the allowlist
+
+### `browser_session_receipts`
+
+**Signature**
+
+```python
+browser_session_receipts(session_id: str)
+```
+
+**Description**
+
+Hash-chained receipt log for a session (every action, blocked or not),
+with the Merkle root that can be signed into an evidence bundle.
+
+Args:
+    session_id: Session id
+
+### `browser_session_snapshot`
+
+**Signature**
+
+```python
+browser_session_snapshot(session_id: str)
+```
+
+**Description**
+
+Perception step: accessibility-style snapshot with a typed element
+catalog (refs @e1…). Act on refs, never on selector guesses.
+
+Args:
+    session_id: Session from browser_session_open
 
 ### `check_engine_health`
 

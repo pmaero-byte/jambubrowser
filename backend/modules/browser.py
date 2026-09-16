@@ -276,6 +276,10 @@ class BrowserSession:
             self._page = await self._context.new_page()
         return self._page
 
+    async def get_page(self):
+        """Public accessor for the active page (agent sessions, scrapers)."""
+        return await self._ensure_page()
+
     async def save_state(self):
         """Persist cookies and state to database (persistent mode only)."""
         if not self._context or self.mode != SessionMode.PERSISTENT:

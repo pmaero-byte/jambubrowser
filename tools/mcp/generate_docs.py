@@ -47,14 +47,27 @@ def _import_mcp_server():
 
 
 def _iter_tools(mcp_server_module) -> list[tuple[str, Any, str]]:
-    """Return [(name, function, docstring_or_empty), ...] for every MCP tool."""
-    tools: list[tuple[str, Any, str]] = []
+    """Return [(name, function, docstring_or_empty), ...] for every MCP tool.
+
+    Reads the FastMCP tool registry (the source of truth) rather than
+    module members — module-level *helpers* like ``apply_tool_profile``
+    are not tools and must not be documented as ones.
+    """
+    mcp = getattr(mcp_server_module, "mcp", None)
+    manager = getattr(mcp, "_tool_manager", None)
+    if manager is not None:
+        tools: list[tuple[str, Any, str]] = []
+        for tool in manager.list_tools():
+            fn = getattr(tool, "fn", None) or tool
+            doc = inspect.getdoc(fn) or getattr(tool, "description", "") or ""
+            tools.append((tool.name, fn, doc))
+        tools.sort(key=lambda t: t[0])
+        return tools
+
+    # Fallback (older FastMCP without a tool manager): inspect module members.
+    tools = []
     for name, obj in inspect.getmembers(mcp_server_module, inspect.isfunction):
         if not name.startswith("_"):
-            # FastMCP decorates tool functions; the original function
-            # is still inspectable. We accept anything defined in this
-            # module (not imported) so we don't accidentally document
-            # private helpers.
             mod = getattr(obj, "__module__", "")
             if mod == mcp_server_module.__name__:
                 tools.append((name, obj, inspect.getdoc(obj) or ""))

@@ -593,6 +593,62 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
         "CREATE INDEX IF NOT EXISTS idx_meshpay_anchors ON meshpay_anchors(created_at DESC)"
     )
 
+    # ── x402 paywall receipts (HTTP-native agent payments) ─────────────
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS x402_receipts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            resource TEXT NOT NULL,
+            amount TEXT NOT NULL,
+            asset TEXT NOT NULL,
+            network TEXT NOT NULL,
+            pay_to TEXT NOT NULL,
+            payer TEXT,
+            tx TEXT,
+            nonce TEXT,
+            status TEXT NOT NULL,
+            facilitator TEXT NOT NULL,
+            receipt_hash TEXT NOT NULL,
+            created_at REAL DEFAULT (CAST(strftime('%s','now') AS REAL))
+        )
+    """)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_x402_receipts ON x402_receipts(created_at DESC)"
+    )
+
+    # ── Evidence bundles (signed, third-party-verifiable claims) ───────
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS evidence_bundles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            version INTEGER DEFAULT 1,
+            algorithm TEXT DEFAULT 'ed25519',
+            kind TEXT NOT NULL,
+            subject_json TEXT,
+            payload_canonical TEXT,
+            payload_hash TEXT NOT NULL,
+            statement_hash TEXT,
+            signature TEXT NOT NULL,
+            public_key TEXT NOT NULL,
+            created_at REAL DEFAULT (CAST(strftime('%s','now') AS REAL)),
+            anchor_signature TEXT,
+            anchor_cluster TEXT,
+            anchor_transport TEXT,
+            anchored_at REAL
+        )
+    """)
+    # Migration: the first cut of this table lacked version/algorithm, which
+    # made stored bundles fail verification on reconstruction.
+    for column, ddl in (
+        ("version", "ALTER TABLE evidence_bundles ADD COLUMN version INTEGER DEFAULT 1"),
+        ("algorithm", "ALTER TABLE evidence_bundles ADD COLUMN algorithm TEXT DEFAULT 'ed25519'"),
+    ):
+        try:
+            cursor.execute(f"SELECT {column} FROM evidence_bundles LIMIT 1")
+        except sqlite3.OperationalError:
+            cursor.execute(ddl)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_evidence_bundles ON evidence_bundles(created_at DESC)"
+    )
+
     conn.commit()
     return conn
 

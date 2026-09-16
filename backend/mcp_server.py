@@ -5,7 +5,7 @@ FastMCP server exposing the full Jambubrowser engine as MCP tools.
 External agents (Claude, Cursor, etc.) can use these tools to perform
 autonomous research, browser automation, and knowledge management.
 
-28 MCP tools covering:
+33 MCP tools covering:
 - Research & Search (5 tools)
 - Browser Actions (5 tools)
 - Vision & Perception (2 tools)
@@ -14,6 +14,7 @@ autonomous research, browser automation, and knowledge management.
 - System (4 tools: check_engine_health, get_system_stats, start_mission, stop_mission)
 - DecentraCode Mesh (5 tools: dcm_status, dcm_infer, dcm_models, dcm_earnings, dcm_settlement_log)
 - MeshPay (2 tools: meshpay_audit, meshpay_anchor)
+- Browser Sessions (5 tools: browser_session_open|snapshot|act|receipts|close)
 """
 
 import asyncio
@@ -792,8 +793,150 @@ async def meshpay_anchor(epoch_index: int = -1, epoch_size: int = 50) -> str:
 
 
 # ===================================================================
+# BROWSER SESSIONS (hardened agent browsing)
+# ===================================================================
+
+@mcp.tool()
+async def browser_session_open(allow_domains: str, require_approval: bool = True) -> str:
+    """
+    Open an isolated browser session for agent-driven work, restricted to a
+    domain allowlist. Navigations outside it are refused; irreversible-looking
+    actions need ``approve=true``; PII is scrubbed from snapshots.
+
+    Args:
+        allow_domains: Comma-separated domains the session may visit (subdomains allowed)
+        require_approval: Require approve=true for input actions inside the allowlist
+    """
+    domains = [d.strip() for d in (allow_domains or "").split(",") if d.strip()]
+    if not domains:
+        return "allow_domains must be a non-empty comma-separated list (sessions fail closed)."
+    result = await _call_engine("POST", "/browser/sessions", {
+        "allow_domains": domains, "require_approval": require_approval,
+    }, timeout=60.0)
+    if "error" in result:
+        return f"Session open failed: {result['error']}"
+    return (
+        f"Session {result['session_id']} open\n"
+        f"- allowlisted: {', '.join(result['allow_domains'])}\n"
+        f"- approval required: {result['require_approval']}\n"
+        f"- snapshot next: browser_session_snapshot"
+    )
+
+
+@mcp.tool()
+async def browser_session_snapshot(session_id: str) -> str:
+    """
+    Perception step: accessibility-style snapshot with a typed element
+    catalog (refs @e1…). Act on refs, never on selector guesses.
+
+    Args:
+        session_id: Session from browser_session_open
+    """
+    result = await _call_engine(
+        "GET", f"/browser/sessions/{session_id}/snapshot", timeout=60.0,
+    )
+    if "error" in result:
+        return f"Snapshot failed: {result['error']}"
+    lines = [f"# {result.get('title', '')} — {result.get('url', '')}\n"]
+    for e in (result.get("elements") or [])[:25]:
+        risk = f" ⚠{e['risk']}" if e.get("risk") else ""
+        lines.append(f"- `{e['ref']}` {e.get('tag')} {e.get('name', '')[:60]}{risk}")
+    if result.get("count", 0) > 25:
+        lines.append(f"… and {result['count'] - 25} more")
+    if result.get("text"):
+        lines.append(f"\nPage text (scrubbed):\n{result['text'][:600]}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def browser_session_act(session_id: str, action: str, ref: str,
+                              text: str = "", approve: bool = False) -> str:
+    """
+    Deterministic dispatch by catalog ref. Refusals are explicit: blocked
+    domains, unknown refs, and actions needing approval (risky elements such
+    as delete/pay/send always require approve=true).
+
+    Args:
+        session_id: Session id
+        action: "click" or "type"
+        ref: Element ref from the last snapshot (e.g. @e3)
+        text: Text to type (for action="type")
+        approve: Explicit approval for input/risky actions
+    """
+    result = await _call_engine("POST", f"/browser/sessions/{session_id}/act", {
+        "action": action, "ref": ref, "text": text, "approve": approve,
+    }, timeout=60.0)
+    if "error" in result:
+        return f"Action refused/failed: {result['error']}"
+    return f"ok — {result.get('outcome')} at {result.get('url')} (step {result.get('step', {}).get('seq')})"
+
+
+@mcp.tool()
+async def browser_session_receipts(session_id: str) -> str:
+    """
+    Hash-chained receipt log for a session (every action, blocked or not),
+    with the Merkle root that can be signed into an evidence bundle.
+
+    Args:
+        session_id: Session id
+    """
+    result = await _call_engine(
+        "GET", f"/browser/sessions/{session_id}/receipts", timeout=30.0,
+    )
+    if "error" in result:
+        return f"Receipts failed: {result['error']}"
+    lines = [f"# Receipts — {result.get('count', 0)} step(s)",
+             f"merkle_root: `{result.get('merkle_root')}`\n"]
+    for s in (result.get("steps") or [])[-10:]:
+        lines.append(
+            f"- #{s['seq']} {s['action']} [{s['outcome']}] {s.get('ref') or ''} {s.get('detail', '')[:60]}"
+        )
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def browser_session_close(session_id: str) -> str:
+    """
+    Close a browser session (ephemeral context is torn down).
+
+    Args:
+        session_id: Session id
+    """
+    result = await _call_engine(
+        "DELETE", f"/browser/sessions/{session_id}", timeout=30.0,
+    )
+    if "error" in result:
+        return f"Close failed: {result['error']}"
+    return f"Session {session_id} closed ({result.get('steps', 0)} steps recorded)."
+
+
+# ===================================================================
 # ENTRY POINT
 # ===================================================================
+
+# Tool profiles: `JAMBU_MCP_PROFILE=curated` keeps the surface compact for
+# better tool selection and drops arbitrary-execution tools — remote
+# deployments (backend/mcp_http.py) should default to curated; local stdio
+# installs keep the full surface.
+CURATED_EXCLUDES = ("execute_tool",)
+
+
+def apply_tool_profile(profile: str) -> list[str]:
+    """Remove non-curated tools from the live registry. Returns removals."""
+    if profile != "curated":
+        return []
+    removed = []
+    for name in CURATED_EXCLUDES:
+        try:
+            mcp.remove_tool(name)
+            removed.append(name)
+        except Exception:  # tool already absent
+            pass
+    return removed
+
+
+apply_tool_profile(os.environ.get("JAMBU_MCP_PROFILE", "full"))
+
 
 if __name__ == "__main__":
     mcp.run()
