@@ -4,6 +4,161 @@ All notable changes to Jambubrowser.
 
 ## [Unreleased]
 
+### Added — E4: browser sessions as a service (the agent loop, with rails)
+
+Agent-driven browsing now has the perception pattern the category validated
+(snapshot → typed catalog with refs → deterministic dispatch) plus the
+safety rails browser agents need:
+
+- **`backend/modules/browser_agent.py`** — sessions carry a **domain
+  allowlist** (fail closed on empty), **approval gates** (session-level plus
+  an always-on risk classifier for buy/pay/delete/send/transfer/… words),
+  **PII scrubbing** of snapshot text/names/hrefs through the shared
+  detector, and a **hash-chained receipt log** per step with a Merkle root.
+  Navigations, redirects and link clicks are all allowlist-checked; a
+  disallowed landing page is reverted to `about:blank` and recorded.
+- **Routes** — `/browser/sessions` open/list/info, `…/navigate`,
+  `…/snapshot`, `…/act`, `…/receipts`, `…/evidence` (signed session bundle
+  via E3), and DELETE to close. Refusals are 403s with machine-readable
+  reasons (`blocked_domain`, `approval_required`, `unsafe_url`,
+  `unknown_ref`, `session_limit`).
+- **MCP tools (33 total)** — `browser_session_open|snapshot|act|receipts|close`.
+- **Live-verified with real Playwright**: opened an ephemeral session
+  allowlisted to example.com, navigated, snapshotted the catalog, got 403 on
+  `iana.org`, got 403 on the *external link click* (refused before the
+  click), produced a 3-step receipt log (`ok, ok, blocked`), signed it into
+  an evidence bundle the standalone verifier accepted, and closed cleanly.
+- **Two real bugs found by the live run**: `BrowserSession.get_page` did
+  not exist (added a public accessor), and the MCP tool-doc generator was
+  documenting module *helpers* as tools (now reads the FastMCP registry —
+  33 tools, not 34).
+- **Tests (+24)** — allowlist (subdomain semantics, blocked navigation,
+  SSRF, redirect revert, external-link pre-check, sneaky post-click revert),
+  approval gates (session gate, always-risk, unknown refs), PII scrubbing
+  (on/off), receipt chain recomputation + Merkle root, session evidence
+  verification, service caps/TTL, and the full route flow. Docs:
+  `docs/BROWSER_SESSIONS.md` with the honest not-done list.
+
+### Added — E3: signed evidence bundles with a standalone verifier
+
+Claims about what the engine observed can now be signed so a third party
+verifies them **without running, installing, or trusting the codebase**:
+
+- **`backend/modules/evidence.py`** — Ed25519 bundles over three kinds:
+  saved audit reports (`audit_report`), x402 receipt windows
+  (`x402_receipts`, including the Merkle root), and independent DCM
+  settlement-chain verdicts (`dcm_settlement`). The exact canonical bytes
+  (MeshPay's JS-faithful serializer) are embedded and signed; the signing
+  statement also covers version/kind/created_at/subject, so metadata cannot
+  be swapped. Keys come from `JAMBU_EVIDENCE_KEY` or a `0600` file
+  (`~/.jambu/evidence_ed25519.key`, generated on first use).
+- **`scripts/verify_evidence_bundle.py`** — standalone verifier: stdlib +
+  `cryptography` only, no project imports. Checks required fields,
+  supported version/algorithm, `sha256(payload_canonical) == payload_hash`,
+  canonical↔payload equivalence, statement hash, and the Ed25519 signature.
+  Exit 0/1/2 with per-check PASS/FAIL output and the signer fingerprint.
+- **Routes** — `GET /evidence/key`, `POST /evidence/{audit/{id},x402-receipts,
+  dcm-settlement,verify,anchor}`, `GET /evidence/bundles[/{id}]`.
+  Anchoring writes the bundle's `payload_hash` via the MeshPay anchor module
+  (Solana memo program or the labelled mock transport) and refuses to
+  double-anchor.
+- **Storage** — `evidence_bundles` table keeps the canonical payload so a
+  stored bundle reconstructs byte-exactly (ship-blocking bug found live:
+  version/algorithm weren't persisted, so fetched bundles failed
+  verification — migration added).
+- **Live-verified**: paid audit → signed audit bundle → **standalone
+  verifier exit 0 (VALID)** with fingerprint; tampered bundle → **exit 1
+  (INVALID)**; x402 receipts bundle with Merkle root → VALID → anchored
+  (mock); DCM settlement bundle (chain_valid=True, checked=3, matching
+  DCM's own verdict) → VALID.
+- **Tests (+21)** — key management (env/file, 0600, fingerprint stability),
+  roundtrip validity, JS-style number serialization in the canonical bytes,
+  eight parametrized tamper cases, standalone verifier accept/reject/usage
+  exit codes, audit/x402/DCM bundle sources, anchor + conflict, and the
+  verify endpoint. Docs: `docs/EVIDENCE.md` (including what a signature
+  does and does not prove).
+- Also: MCP session-manager reset moved into the shared test-isolation
+  fixture (the SDK allows one run per instance; per-file resets were
+  whack-a-mole).
+
+### Added — E2: x402 paywall (agents pay per call in USDC)
+
+Metered endpoints can now be sold over **x402 v2** — HTTP-native agent
+payments (165M+ transactions, ~98.6% USDC, sub-$0.31 average):
+
+- **Spec-exact wire objects** (`backend/modules/x402.py`): 402 responses
+  carry the base64 ``PAYMENT-REQUIRED`` header with a v2 ``PaymentRequired``
+  object (CAIP-2 network, atomic-unit amount, ``payTo``, USDC ``extra``);
+  clients retry with ``PAYMENT-SIGNATURE``; buffered responses carry
+  ``PAYMENT-RESPONSE`` with the settlement.
+- **Charged routes**: ``POST /audit/quick`` ($0.02), ``POST /audit/run``
+  ($0.10), ``POST /dcm/infer`` ($0.001) — env-overridable prices, Base
+  Sepolia + its USDC as safe defaults, Base mainnet USDC documented.
+- **Authorization flow** (verify → resource → settle) implemented as a raw
+  ASGI middleware because FastAPI dependency teardown cannot attach the
+  settlement header; buffered bodies are held until settlement so
+  ``PAYMENT-RESPONSE`` is present, while SSE audits stream and settle at
+  body end with the receipt as the record.
+- **Honest money semantics**: mock facilitator is the default and is
+  labelled in ``/x402/config`` and every receipt; non-2xx responses are
+  **not** settled (``error_skipped`` receipts); replay of a settled nonce
+  is rejected server-side; enabled-without-``payTo`` fails closed with 503.
+- **Account path stays free**: a valid engine API key (``X-API-Key`` or
+  Bearer) bypasses the paywall and remains key/quota-metered — anonymous
+  agents pay per call, known users don't.
+- **Receipts feed MeshPay**: canonical receipt hashes (same JS-faithful
+  serialization discipline) and ``GET /x402/receipts/root`` returning the
+  Merkle root MeshPay anchors.
+- **Routes**: ``GET /x402/{config,receipts,receipts/root}``.
+- **Live-verified**: 402 with decodable header → paid ``/audit/quick``
+  streamed 9 SSE events and settled (receipt ``settled``, mocktx hash) →
+  root endpoint returned the Merkle root; ``/dcm/infer`` 402 without
+  payment and 502 (upstream offline) with an API key, proving the bypass.
+- **Tests (+25)**: wire shapes and header codec, mock/HTTP facilitator
+  (including error mapping), dependency→middleware flow (402 shape, invalid
+  reason, buffered header, stream settle-after-body, replay, bypass, fail
+  closed), receipts root vs Merkle recomputation, engine wiring for both
+  audit routes and DCM infer. Documents in ``docs/X402.md``.
+
+### Added — E1: Remote MCP (Streamable HTTP + token auth + Server Card)
+
+The 28-tool MCP surface is now reachable over **Streamable HTTP**, the
+transport 55% of registry servers use and the one the 2026 MCP roadmap
+builds on (SSE deprecated), instead of stdio-only:
+
+- **`backend/mcp_http.py`** — authed MCP endpoint at `POST /mcp/`, public
+  `/health` and `/.well-known/mcp-server-card.json`. Raw-ASGI auth gate
+  (MCP streams responses, so no body buffering) accepting
+  `Authorization: Bearer <engine API key>` or `X-API-Key`; static
+  `JAMBU_MCP_TOKEN` also supported. Unauthorized requests get 401 with a
+  `WWW-Authenticate: Bearer` challenge and a message naming the credential
+  to send — the registry census found thousands of unauthenticated remote
+  MCP servers; this cannot be deployed as one. No CORS: server-to-server
+  surface, not browser-facing.
+- **Tool profiles** — `JAMBU_MCP_PROFILE=curated` drops `execute_tool`
+  (arbitrary execution) and keeps the surface compact; default `full`.
+- **Server Card** — honest discovery payload (transports, auth method and
+  key source, active profile, tool names, no secrets), per the 2026
+  Server Card direction.
+- **Engine integration** — mounted at `/mcp` on the existing port with the
+  engine's middleware stack; `/mcp` exempted from the 30s request timeout
+  (audits and mesh inference legitimately run for minutes); the engine
+  lifespan runs the MCP session manager (Starlette does not run lifespans
+  of mounted sub-apps) and `reset_session_manager()` exists because the
+  SDK's session manager is single-run per instance.
+- **Registry ready** — `server.json` (schema-shaped, structurally tested)
+  plus `docs/MCP_REMOTE.md`. Publishing is deliberately deferred until an
+  HTTPS endpoint and namespace verification exist — documented rather than
+  faked with a placeholder.
+- **Live-verified**: official MCP client over HTTP → Bearer auth → 28
+  tools listed → `check_engine_health` returned real engine data
+  (RAM/CPU) through the engine REST loop; bearer-less requests rejected.
+- **Tests (+16)**: card shape/no-secrets/URL fallback, static-token and
+  DB-API-key validation, auth boundary (401 challenge, wrong token, bearer
+  and X-API-Key acceptance, public paths), curated/full profile reload,
+  manifest shape, engine mount card + auth, and a protocol E2E that spawns
+  the server and drives it with the official `streamablehttp_client`.
+
 ### Added — MeshPay: USDC settlement for mesh compute (verifiable receipt auditing + Solana anchoring)
 
 The DCM mesh meters every billable operation into a hash-chained

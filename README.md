@@ -268,6 +268,25 @@ python3 -m pytest tests/test_e2e.py -v
 | Missions | `/mission/schedule` | POST | Schedule mission |
 | Missions | `/mission/list` | GET | List missions |
 | Consensus | `/consensus/propose` | POST | Create proposal |
+| x402 | `/x402/config` | GET | Paywall settings (prices, network, facilitator mode) |
+| x402 | `/x402/receipts` | GET | Payment receipts (settled / failed settlements) |
+| x402 | `/x402/receipts/root` | GET | Merkle root over receipt hashes (MeshPay anchor payload) |
+| DCM | `/dcm/status` | GET | DecentraCode node overview (runtimes, models, peers) |
+| DCM | `/dcm/infer` | POST | Prompt completion on the mesh |
+| MeshPay | `/meshpay/audit` | GET | Independent receipt-chain verification + payout plan |
+| MeshPay | `/meshpay/anchor` | POST | Anchor an epoch Merkle root (Solana memo / mock) |
+| MCP (remote) | `/mcp/` | POST | Streamable-HTTP MCP endpoint (Bearer/API-key auth) |
+| MCP (remote) | `/.well-known/mcp-server-card.json` | GET | Public Server Card (discovery) |
+| Evidence | `/evidence/audit/{id}` | POST | Sign an audit report into a verifiable bundle |
+| Evidence | `/evidence/x402-receipts` | POST | Sign the payment-receipt window + Merkle root |
+| Evidence | `/evidence/dcm-settlement` | POST | Sign an independent DCM chain verdict |
+| Evidence | `/evidence/verify` | POST | Verify a posted bundle |
+| Evidence | `/evidence/anchor` | POST | Anchor a bundle's payload hash |
+| Browser sessions | `/browser/sessions` | POST | Open a hardened agent session (allowlist, approvals, PII scrub) |
+| Browser sessions | `/browser/sessions/{id}/snapshot` | GET | Typed element catalog (`@e1…`) + scrubbed text |
+| Browser sessions | `/browser/sessions/{id}/act` | POST | Deterministic click/type by ref (gated) |
+| Browser sessions | `/browser/sessions/{id}/receipts` | GET | Hash-chained step log + Merkle root |
+| Browser sessions | `/browser/sessions/{id}/evidence` | POST | Signed session bundle |
 | Consensus | `/consensus/vote` | POST | Cast vote |
 | Vision | `/vision/ocr` | POST | Extract text from image |
 | Vision | `/vision/ui-elements` | POST | Detect UI elements |
@@ -347,6 +366,14 @@ All components live in `browser-app/src/` and are shared between the desktop (Ta
 | MLX Provider | `backend/modules/mlx_provider.py` | Apple Silicon MLX integration, model registry, server lifecycle |
 | MLX VLM Server | `backend/scripts/mlx_vlm_server.py` | OpenAI-compatible FastAPI server for Gemma 3 via mlx-vlm |
 | **LLM Layer (v3)** | `backend/llm/` | Unified provider abstraction: 7 providers (incl. DecentraCode Mesh), registry, routing, cost estimation |
+| **x402 Paywall** | `backend/modules/x402.py` | Spec-exact x402 v2 agent payments: 402 + `PAYMENT-REQUIRED`, verify/settle via facilitator (mock or HTTP), receipts + Merkle root |
+| **Evidence Bundles** | `backend/modules/evidence.py` | Ed25519-signed, third-party-verifiable claims (audit reports, receipt windows, DCM verdicts); standalone verifier in `scripts/verify_evidence_bundle.py` |
+| **Browser Sessions** | `backend/modules/browser_agent.py` | Agent browsing with allowlists, approval gates, PII scrubbing, per-step receipts (snapshot → catalog → dispatch by ref) |
+| **MeshPay** | `backend/modules/meshpay/` | Independent DCM receipt-chain verification (JS-faithful serializer), epoch Merkle roots, USDC payout plans, Solana memo anchoring |
+| **DCM Client** | `backend/modules/dcm_client.py` | DecentraCode Mesh REST: status, models, join-info, earnings, settlement log |
+| **Remote MCP** | `backend/mcp_http.py` | Streamable-HTTP MCP transport with token auth + Server Card (stdio lives in `mcp_server.py`) |
+| **Audit Monitors** | `backend/modules/audit_monitor.py` | Recurring audits, finding diffing, regression alerts, scheduler |
+| **Visual Diff** | `backend/modules/visual_diff.py` | Screenshot change % + red-over-dim heatmap rendering |
 | **Agent Loop (v3)** | `backend/agent/` | ReAct/Plan-Execute loop with tool registry, verification, replanning, SSE events |
 | **Memory (v3)** | `backend/memory/` | 4-store memory system: user profile, session, semantic (with embeddings), procedural |
 | **V2 Endpoints (v3)** | `backend/engine.py:36xx+` | 16 new `/v2/*` endpoints: LLM chat, agent run, memory CRUD + recall |
@@ -368,7 +395,7 @@ cd browser-app && npm run build && npm run typecheck && npm run lint && npm test
 
 The CI workflow (`.github/workflows/test.yml`) runs all passing test categories on every push:
 core backend, LLM layer, memory, agent loop, security middleware stack (9 files),
-engine runtime, MCP server (stdio), eval, CLI, AI employees (6 specialist auditors),
+engine runtime, MCP server (stdio + remote Streamable HTTP, 28 tools), eval, CLI, AI employees (6 specialist auditors),
 and more. Tests requiring live services (E2E, real LLM, SearXNG, SOCKS proxy)
 are excluded from CI — run those manually when the corresponding service is up.
 
