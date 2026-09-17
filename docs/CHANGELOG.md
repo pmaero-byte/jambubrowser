@@ -4,6 +4,43 @@ All notable changes to Jambubrowser.
 
 ## [Unreleased]
 
+### Added — MeshPay Stage 1: wallets, payout batches, prepared USDC transactions
+
+Stage 0 proved what is owed; Stage 1 makes it payable without pretending:
+
+- **`backend/modules/meshpay/payouts.py`** — provider wallet binding
+  (validated base58 Solana addresses, `meshpay_wallets`), payout batches
+  built from an epoch's plan (`meshpay_payouts`, amounts in atomic USDC
+  units, unbound providers reported with their unpaid amount), fail-closed
+  approval (`JAMBU_ADMIN_API_KEY` required — an unset key disables payouts
+  entirely), and execution that **prepares or broadcasts, never pretends**:
+  per provider it builds a real SPL ``transfer_checked`` plus an idempotent
+  ATA creation; mock cluster/no keypair ⇒ ``status="prepared"`` with a
+  ``prepared:<sha>`` marker, the serialized transaction, a
+  ``treasury_is_placeholder`` flag and an explicit "not broadcast" note.
+- **Reconciliation** re-runs the plan against the live receipt window
+  (per-provider drift detection) and compares the epoch root with the anchor
+  log (``root_matches_anchor``).
+- **Bugs found by the work**: payout economic parameters weren't persisted,
+  so a zero-fee batch reconciled against the 15% default — and the
+  coalescing that caused it (``value or default`` on ``0.0``) was fixed in
+  reconcile; ``MeshPayConfig.is_mock`` was missing (added); the
+  ``meshpay_payouts.transaction`` column hit SQLite's reserved word (stored
+  as ``tx``, mapped at the API boundary).
+- **Routes** — /meshpay/{wallets, payouts, approve, execute, reconcile}
+  (12 meshpay routes total).
+- **Live with real DCM receipts**: two wallets bound (invalid rejected 422),
+  a batch of $0.102052 planned across two providers with exact atomic
+  amounts, approval 403 without the admin key / approved with it, execution
+  prepared 4 instructions into a 680-char serialized transaction flagged
+  "not broadcast", and reconciliation consistent with
+  ``root_matches_anchor=True`` after anchoring the epoch.
+- **Tests (+20)** — wallet validation/rebind/unbind, batch math against the
+  plan (fee applied before conversion), empty-window/out-of-range refusal,
+  fail-closed approval (unset key, wrong key, double approval), prepare vs
+  approval-required execution, missing batch 404s, drift detection in
+  reconciliation, and the full route flow. Docs: `docs/MESHPAY.md` Stage 1.
+
 ### Added — E7: verification tiers for paid compute (canaries + sampled redundancy)
 
 The DePIN verification ladder, implemented where this engine can honestly

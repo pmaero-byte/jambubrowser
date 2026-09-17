@@ -297,6 +297,11 @@ python3 -m pytest tests/test_e2e.py -v
 | Verification | `/verification/canary` | POST | Known-answer probes per worker |
 | Verification | `/verification/workers` | GET | Scorecards: canary pass rate, agreement, mismatches |
 | Verification | `/verification/evidence` | POST | Sign the verdict window (compute_verification bundle) |
+| MeshPay | `/meshpay/wallets` | GET/POST | Bind provider nodeIds to payout wallets |
+| MeshPay | `/meshpay/payouts` | GET/POST | Plan a payout batch from an epoch's receipts |
+| MeshPay | `/meshpay/payouts/{id}/approve` | POST | Operator approval (fail-closed, admin key) |
+| MeshPay | `/meshpay/payouts/{id}/execute` | POST | Prepare or broadcast the USDC payout transaction |
+| MeshPay | `/meshpay/payouts/{id}/reconcile` | GET | Re-check batch vs receipts + anchor root |
 | Consensus | `/consensus/vote` | POST | Cast vote |
 | Vision | `/vision/ocr` | POST | Extract text from image |
 | Vision | `/vision/ui-elements` | POST | Detect UI elements |
