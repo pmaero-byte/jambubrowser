@@ -685,6 +685,51 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
         "CREATE INDEX IF NOT EXISTS idx_worker_verdicts ON worker_verdicts(created_at DESC)"
     )
 
+    # ── MeshPay Stage 1: provider wallets + payout batches ─────────────
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS meshpay_wallets (
+            node_id TEXT PRIMARY KEY,
+            wallet_address TEXT NOT NULL,
+            source TEXT DEFAULT 'manual',
+            updated_at REAL DEFAULT (CAST(strftime('%s','now') AS REAL))
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS meshpay_payouts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            epoch_index INTEGER NOT NULL,
+            epoch_size INTEGER NOT NULL,
+            epoch_root TEXT,
+            dct_usd_rate REAL,
+            protocol_fee_pct REAL,
+            status TEXT NOT NULL,
+            cluster TEXT NOT NULL,
+            transport TEXT NOT NULL,
+            total_usdc REAL DEFAULT 0,
+            payable_usdc REAL DEFAULT 0,
+            instructions_json TEXT,
+            unbound_json TEXT,
+            tx TEXT,
+            approved_by TEXT,
+            approved_at REAL,
+            executed_at REAL,
+            error TEXT,
+            created_at REAL DEFAULT (CAST(strftime('%s','now') AS REAL)),
+            updated_at REAL DEFAULT (CAST(strftime('%s','now') AS REAL))
+        )
+    """)
+    for column, ddl in (
+        ("dct_usd_rate", "ALTER TABLE meshpay_payouts ADD COLUMN dct_usd_rate REAL"),
+        ("protocol_fee_pct", "ALTER TABLE meshpay_payouts ADD COLUMN protocol_fee_pct REAL"),
+    ):
+        try:
+            cursor.execute(f"SELECT {column} FROM meshpay_payouts LIMIT 1")
+        except sqlite3.OperationalError:
+            cursor.execute(ddl)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_meshpay_payouts ON meshpay_payouts(created_at DESC)"
+    )
+
     conn.commit()
     return conn
 

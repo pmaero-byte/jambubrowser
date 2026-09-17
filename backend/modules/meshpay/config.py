@@ -42,6 +42,11 @@ class MeshPayConfig:
             epoch_size=_env_int("JAMBU_MESHPAY_EPOCH_SIZE", 50),
         )
 
+    @property
+    def is_mock(self) -> bool:
+        """True when nothing should touch a chain (the default)."""
+        return self.cluster.strip().lower() in ("", "mock", "none", "local")
+
     def describe(self) -> dict:
         """Public, secret-free description for the UI."""
         return {

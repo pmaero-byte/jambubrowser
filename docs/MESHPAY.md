@@ -95,6 +95,56 @@ loudly** — a database must never claim a chain transaction that did not
 happen. Anchor records store the `epoch_size` they were computed with, so
 re-verification always regroups receipts the same way.
 
+## Stage 1 — payouts (wallets, batches, prepared transactions)
+
+Stage 0 proved *what is owed*. Stage 1 makes it payable without ever
+claiming money moved when it didn't:
+
+```
+POST /meshpay/wallets            {node_id, wallet_address}   # validated base58
+POST /meshpay/payouts            {epoch_index, epoch_size}   # plan a batch
+POST /meshpay/payouts/{id}/approve   X-Admin-Api-Key: …      # fail-closed
+POST /meshpay/payouts/{id}/execute                           # prepare or broadcast
+GET  /meshpay/payouts/{id}/reconcile                         # re-check vs receipts
+```
+
+- **Wallet binding** maps DCM `nodeId`s (which identify providers in the
+  receipts) to Solana addresses. Unbound providers are **reported, not
+  dropped**: the batch lists them under `unbound` with their unpaid amount.
+- **Batch economics are persisted** with the batch (rate, fee) so
+  reconciliation judges with the numbers the batch was built under — a
+  zero-fee batch must not silently reconcile against a 15% default.
+- **Approval is fail-closed**: `JAMBU_ADMIN_API_KEY` must be set *and*
+  presented; an unset key disables approval entirely (no dev bypass).
+- **Execution prepares or broadcasts, never pretends**: per instruction it
+  builds a real SPL `transfer_checked` from the treasury's USDC ATA plus an
+  idempotent ATA creation for the provider. With
+  `JAMBU_MESHPAY_CLUSTER=mock` (default) or no treasury keypair, the batch
+  records `status="prepared"` with a `prepared:<sha>` marker, the serialized
+  transaction for review, and an explicit "not broadcast" note. A real
+  cluster with a funded keypair signs and broadcasts via JSON-RPC; failures
+  are recorded as `failed`, never swallowed.
+- **Reconciliation** re-runs the plan against the live receipt window and
+  flags drift per provider, then compares the batch's epoch root with the
+  anchor log (`root_matches_anchor`).
+
+Live example (mock cluster, real DCM receipts):
+
+```
+bind peer-alpha: 200 → F7p7t2dkSYdQ…   | invalid address → 422
+batch #1: planned $0.102052 payable $0.102052, 2 instructions
+   peer-alpha → $0.068035 (68035 atomic, 1 receipt)
+   peer-beta  → $0.034017 (34017 atomic, 1 receipt)
+approve without key: 403 | with key: approved by=operator
+execute: prepared | 4 instructions | 680-char serialized tx | treasury placeholder: True
+anchor epoch 0: mock | reconcile: consistent=True root_matches_anchor=True
+```
+
+Two honest limits remain: the treasury/ATA accounts must exist and hold
+USDC (preflight is the operator's job today), and provider payout wallets
+are bound manually — importing DCM's `compute_nodes.wallet_address` needs
+a DCM endpoint that lists nodes with wallets.
+
 ## Devnet runbook
 
 ```bash
