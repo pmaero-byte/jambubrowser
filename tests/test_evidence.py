@@ -145,6 +145,27 @@ class TestBundleVerify:
         missing = run_verifier(tmp_path / "nope.json")
         assert missing.returncode == 2
 
+    @pytest.mark.parametrize("mutation", [
+        "missing_signature", "string_payload", "huge_int", "nan_float", "nested_bomb",
+    ])
+    def test_malformed_bundles_never_crash_the_verifier(self, mutation):
+        """Adversarial inputs must produce a verdict, not a traceback."""
+        bundle = build_bundle("x402_receipts", {"count": 1}, {"receipts": []})
+        if mutation == "missing_signature":
+            bundle.pop("signature")
+        elif mutation == "string_payload":
+            bundle["payload_canonical"] = "not json at all"
+        elif mutation == "huge_int":
+            bundle["payload"]["receipts"] = [10 ** 400]
+            bundle["payload_canonical"] = eval("'{\"receipts\":[1e400]}'")
+        elif mutation == "nan_float":
+            bundle["created_at"] = float("nan")
+        elif mutation == "nested_bomb":
+            bundle["payload"] = {"a": [[[[[1]]]]] * 3}
+        result = verify_bundle(bundle)
+        assert result["valid"] is False
+        assert isinstance(result["reason"], str)
+
 
 # ---------------------------------------------------------------------------
 # Routes: audit, x402 receipts, dcm settlement, anchor

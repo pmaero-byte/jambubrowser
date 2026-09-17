@@ -483,12 +483,72 @@ def _nonce_used(nonce: Optional[str]) -> bool:
     try:
         with get_db() as conn:
             row = conn.execute(
-                "SELECT 1 FROM x402_receipts WHERE nonce = ? AND status = 'settled' LIMIT 1",
+                "SELECT 1 FROM x402_nonce_claims WHERE nonce = ? "
+                "AND status = 'settled' LIMIT 1",
                 (nonce,),
             ).fetchone()
         return row is not None
     except Exception:
         return False
+
+
+CLAIM_TTL_SECONDS = 900  # abandoned in-flight claims are reclaimable
+
+
+def _claim_nonce(nonce: Optional[str], resource: str) -> bool:
+    """Atomically claim an authorization for one request.
+
+    Without this, two concurrent requests with the same PAYMENT-SIGNATURE
+    both verify (the receipt guard only sees settled payments) and the work
+    runs twice against one authorization. Claims are exclusive via the
+    primary key; stale claims (crashed workers) expire.
+    """
+    if not nonce:
+        return True  # unsigned dev flow: nothing to lock
+    from backend.core.database import get_db
+
+    try:
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE x402_nonce_claims SET status = 'abandoned' "
+                "WHERE status = 'pending' AND created_at < ?",
+                (time.time() - CLAIM_TTL_SECONDS,),
+            )
+            conn.execute(
+                "DELETE FROM x402_nonce_claims WHERE nonce = ? AND status = 'abandoned'",
+                (nonce,),
+            )
+            conn.execute(
+                "INSERT INTO x402_nonce_claims (nonce, resource, status, created_at) "
+                "VALUES (?, ?, 'pending', ?)",
+                (nonce, resource, time.time()),
+            )
+            conn.commit()
+        return True
+    except Exception:  # IntegrityError = already pending or settled
+        return False
+
+
+def _release_nonce(nonce: Optional[str], status: str) -> None:
+    """Mark a claim settled, or clear it so a failed request can retry."""
+    if not nonce:
+        return
+    from backend.core.database import get_db
+
+    try:
+        with get_db() as conn:
+            if status == "abandoned":
+                conn.execute(
+                    "DELETE FROM x402_nonce_claims WHERE nonce = ?", (nonce,),
+                )
+            else:
+                conn.execute(
+                    "UPDATE x402_nonce_claims SET status = ? WHERE nonce = ?",
+                    (status, nonce),
+                )
+            conn.commit()
+    except Exception:
+        log.warning("x402 claim release failed for %s", nonce, exc_info=True)
 
 
 class X402Middleware:
@@ -544,13 +604,17 @@ class X402Middleware:
 
         requirements = build_requirements(cfg, price_key, resource_url)
         nonce = str(_authorization(payload).get("nonce") or "") or None
-        if _nonce_used(nonce):
-            return await payment_required("nonce_already_used")
 
         facilitator = get_facilitator(cfg)
         verify = await facilitator.verify(payload, requirements)
         if not verify.is_valid:
             return await payment_required(verify.invalid_reason or "payment_invalid")
+
+        # One authorization = one execution. Claim after verification (so only
+        # the holder of a valid authorisation can lock a nonce) and before the
+        # resource runs (so concurrent duplicates cannot both execute).
+        if not _claim_nonce(nonce, resource_url):
+            return await payment_required("nonce_already_used")
 
         # Downstream routes (A2A) can see that the paywall already collected.
         scope.setdefault("state", {})["x402_paid"] = True
@@ -571,6 +635,8 @@ class X402Middleware:
                     )
                 except Exception:
                     log.warning("x402 receipt write failed", exc_info=True)
+                # The authorization was never settled → allow a legitimate retry.
+                _release_nonce(nonce, "abandoned")
                 return None
             settle = await facilitator.settle(payload, requirements)
             try:
@@ -583,6 +649,9 @@ class X402Middleware:
                 )
             except Exception:
                 log.warning("x402 receipt write failed", exc_info=True)
+            # Settled (or attempted-and-failed) authorizations must not be
+            # reusable: keep the claim blocking either way.
+            _release_nonce(nonce, "settled" if settle.success else "settle_failed")
             if not settle.success:
                 log.warning(
                     "x402 settle failed for %s: %s", resource_url, settle.error_reason,
@@ -654,7 +723,23 @@ class X402Middleware:
                 "more_body": False,
             })
 
-        await self.app(scope, receive, send_wrapper)
+        try:
+            await self.app(scope, receive, send_wrapper)
+        finally:
+            if not settled["done"]:
+                # The resource crashed (or the client vanished) before the
+                # response completed: the authorization was never settled, so
+                # release the claim and let a legitimate retry use it — but
+                # keep the audit trail complete.
+                try:
+                    record_receipt(
+                        resource=resource_url, requirements=requirements,
+                        payer=verify.payer, transaction=None, nonce=nonce,
+                        status="error_skipped", facilitator_mode=facilitator.mode,
+                    )
+                except Exception:
+                    log.warning("x402 receipt write failed", exc_info=True)
+                _release_nonce(nonce, "abandoned")
 
 
 def _header_api_key(header_map: dict) -> bool:

@@ -614,6 +614,16 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_x402_receipts ON x402_receipts(created_at DESC)"
     )
+    # In-flight payment claims: one authorisation can only be spent once, even
+    # under concurrent requests (the receipt row is written after settlement).
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS x402_nonce_claims (
+            nonce TEXT PRIMARY KEY,
+            resource TEXT,
+            status TEXT NOT NULL,
+            created_at REAL DEFAULT (CAST(strftime('%s','now') AS REAL))
+        )
+    """)
 
     # ── Evidence bundles (signed, third-party-verifiable claims) ───────
     cursor.execute("""

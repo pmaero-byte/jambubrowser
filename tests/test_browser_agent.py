@@ -95,6 +95,14 @@ class TestHelpers:
         assert host_allowed("evil-example.com", ["example.com"]) is False
         assert host_allowed("", ["example.com"]) is False
 
+    def test_wildcard_allowlist_is_deny_all_not_allow_all(self):
+        """A caller asking for '*' gets nothing (fail closed), not everything."""
+        assert host_allowed("example.com", ["*"]) is False
+        session = make_session(allow_domains=["*"])
+        with pytest.raises(SessionRefused) as e:
+            run(session.navigate("https://example.com/"))
+        assert e.value.reason == "blocked_domain"
+
     def test_risk_classifier(self):
         assert classify_risk("Delete account") == "delete"
         assert classify_risk("Buy now", "") == "buy"

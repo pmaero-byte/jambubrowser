@@ -4,6 +4,36 @@ All notable changes to Jambubrowser.
 
 ## [Unreleased]
 
+### Fixed — payment double-spend race + adversarial hardening of the new surfaces
+
+A security pass over the agent-platform build-out found one real race and
+closed a set of bypass attempts:
+
+- **Double-spend of one x402 authorization (fixed).** The replay guard only
+  rejected *settled* nonces, so two concurrent requests with the same
+  ``PAYMENT-SIGNATURE`` both verified and both executed the paid work before
+  either settled. A new ``x402_nonce_claims`` table now claims an
+  authorization atomically (after verification, before execution), with
+  TTL-based reclaim for crashed workers. Live-verified: two concurrent paid
+  audits with one authorization → exactly one 200, one 402, one settled
+  receipt.
+- **Crashed resources no longer burn authorizations.** If the paid work
+  raises before responding, the claim is released and an ``error_skipped``
+  receipt is written — a legitimate retry with the same authorization works
+  (tested).
+- **Paywall bypass attempts verified blocked**: query strings stay gated,
+  trailing-slash redirects and case changes never reach the resource, wrong
+  methods 405, and exactly zero handler invocations occur without payment.
+- **Browser allowlist ``"*"`` is deny-all** (fail closed), not allow-all —
+  pinned by test.
+- **Evidence verifier survives fuzzed bundles** (missing signature, non-JSON
+  canonical payload, oversized numbers, NaN timestamps, nested structures) —
+  always a verdict, never a traceback.
+- **Tests (+11)**: the concurrent double-spend race (two threads, one
+  authorization), claim exclusivity/stale reclaim, failed-work retry,
+  settled-nonce blocking, route-variant bypasses, wildcard allowlist, and
+  the verifier fuzz cases.
+
 ### Added — MeshPay Stage 1: wallets, payout batches, prepared USDC transactions
 
 Stage 0 proved what is owed; Stage 1 makes it payable without pretending:

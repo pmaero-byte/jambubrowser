@@ -258,6 +258,128 @@ class TestPaywallFlow:
         with TestClient(dummy_app()) as client:
             assert client.post("/paid").status_code == 200
 
+    def test_concurrent_requests_cannot_double_spend_one_authorization(
+        self, x402_env, monkeypatch,
+    ):
+        """Two simultaneous requests with the same PAYMENT-SIGNATURE: exactly
+        one executes. Without the nonce claim both verify (the receipt guard
+        only sees settled payments) and the work runs twice."""
+        import threading
+        import time as _time
+
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        calls: list[float] = []
+
+        app = FastAPI()
+        app.add_middleware(
+            x402.X402Middleware, routes={("POST", "/slow"): "audit_quick"},
+        )
+
+        @app.post("/slow")
+        async def slow():
+            calls.append(_time.time())
+            _time.sleep(0.4)  # hold the request open so the race is real
+            return {"ok": True}
+
+        headers = payment_header(nonce="mock-race-1")
+        results: list[int] = []
+        lock = threading.Lock()
+
+        def hit():
+            with TestClient(app) as c:
+                status = c.post("/slow", headers=headers).status_code
+            with lock:
+                results.append(status)
+
+        threads = [threading.Thread(target=hit) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert sorted(results) == [200, 402], results
+        assert len(calls) == 1                       # executed exactly once
+
+    def test_claim_is_exclusive_and_reclaims_stale(self, x402_env):
+        import time as _time
+
+        from backend.core.database import get_db
+        from backend.modules.x402 import _claim_nonce, _release_nonce
+
+        assert _claim_nonce("mock-claim-1", "http://t/paid") is True
+        assert _claim_nonce("mock-claim-1", "http://t/paid") is False
+
+        # Released (abandoned) claims are reusable...
+        _release_nonce("mock-claim-1", "abandoned")
+        assert _claim_nonce("mock-claim-1", "http://t/paid") is True
+
+        # ...and a crashed worker's stale pending claim expires.
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE x402_nonce_claims SET created_at = ? WHERE nonce = ?",
+                (_time.time() - 3600, "mock-claim-1"),
+            )
+            conn.commit()
+        assert _claim_nonce("mock-claim-1", "http://t/paid") is True
+
+    def test_failed_work_does_not_burn_the_authorization(self, x402_env):
+        """A 5xx records error_skipped and clears the claim, so a legitimate
+        retry with the same authorization is possible."""
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        app = FastAPI()
+        app.add_middleware(
+            x402.X402Middleware, routes={("POST", "/boom"): "audit_quick"},
+        )
+
+        @app.post("/boom")
+        async def boom():
+            raise RuntimeError("upstream exploded")
+
+        headers = payment_header(nonce="mock-retry-1")
+        with TestClient(app, raise_server_exceptions=False) as c:
+            first = c.post("/boom", headers=headers)
+            second = c.post("/boom", headers=headers)
+        assert first.status_code == 500
+        assert second.status_code == 500      # retried, not blocked with 402
+        receipts = x402.list_receipts(5)
+        assert receipts[0]["status"] == "error_skipped"
+
+    def test_settled_nonce_blocks_later_reuse(self, x402_env):
+        with TestClient(dummy_app()) as client:
+            assert client.post("/paid", headers=payment_header(nonce="mock-once")).status_code == 200
+            again = client.post("/paid", headers=payment_header(nonce="mock-once"))
+        assert again.status_code == 402
+        assert again.json()["error"] == "nonce_already_used"
+
+    def test_route_variants_do_not_bypass(self, x402_env):
+        """Trailing slashes, case changes and methods must not reach the
+        resource without payment."""
+        executed: list[str] = []
+
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        app = FastAPI()
+        app.add_middleware(
+            x402.X402Middleware, routes={("POST", "/paid"): "audit_quick"},
+        )
+
+        @app.post("/paid")
+        async def paid():
+            executed.append("paid")
+            return {"ok": True}
+
+        with TestClient(app, follow_redirects=False) as c:
+            assert c.post("/paid?utm=x").status_code == 402      # query still gated
+            assert c.post("/paid/").status_code in (307, 308, 404)
+            assert c.get("/paid").status_code == 405             # wrong method
+            assert c.post("/Paid").status_code == 404            # case-sensitive
+        assert executed == []                                    # nothing ran
+
     def test_unpriced_routes_are_never_charged(self, x402_env):
         with TestClient(dummy_app()) as client:
             assert client.get("/free").status_code == 200
