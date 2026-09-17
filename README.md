@@ -292,6 +292,11 @@ python3 -m pytest tests/test_e2e.py -v
 | Eval certificates | `/eval/certificates/{id}` | GET | Certificate + signature/verdict recomputation |
 | A2A | `/.well-known/agent-card.json` | GET | Public agent card (skills, auth scheme) |
 | A2A | `/a2a` | POST | JSON-RPC: SendMessage / GetTask / CancelTask (agent hires) |
+| Verification | `/verification/policy` | GET | Tier model (SIGNED/CANARY/REDUNDANT/ATTESTED) + thresholds |
+| Verification | `/verification/redundant` | POST | Run on two executors; compare under a tolerance |
+| Verification | `/verification/canary` | POST | Known-answer probes per worker |
+| Verification | `/verification/workers` | GET | Scorecards: canary pass rate, agreement, mismatches |
+| Verification | `/verification/evidence` | POST | Sign the verdict window (compute_verification bundle) |
 | Consensus | `/consensus/vote` | POST | Cast vote |
 | Vision | `/vision/ocr` | POST | Extract text from image |
 | Vision | `/vision/ui-elements` | POST | Detect UI elements |
@@ -376,6 +381,7 @@ All components live in `browser-app/src/` and are shared between the desktop (Ta
 | **Browser Sessions** | `backend/modules/browser_agent.py` | Agent browsing with allowlists, approval gates, PII scrubbing, per-step receipts (snapshot → catalog → dispatch by ref) |
 | **Eval Certificates** | `backend/modules/eval_cert.py` | Frozen-spec, coverage-checked, Ed25519-signed evaluation certificates over the 9 eval suites |
 | **A2A Agent** | `backend/modules/a2a.py` | Agent2Agent v0.3 JSON-RPC (SendMessage/GetTask/CancelTask) with audit, certification, and mesh-inference skills |
+| **Verification Tiers** | `backend/modules/verification.py` | Value-at-risk policy, known-answer canaries, sampled redundant execution with tolerance comparison + worker scorecards |
 | **MeshPay** | `backend/modules/meshpay/` | Independent DCM receipt-chain verification (JS-faithful serializer), epoch Merkle roots, USDC payout plans, Solana memo anchoring |
 | **DCM Client** | `backend/modules/dcm_client.py` | DecentraCode Mesh REST: status, models, join-info, earnings, settlement log |
 | **Remote MCP** | `backend/mcp_http.py` | Streamable-HTTP MCP transport with token auth + Server Card (stdio lives in `mcp_server.py`) |

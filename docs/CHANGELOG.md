@@ -4,6 +4,41 @@ All notable changes to Jambubrowser.
 
 ## [Unreleased]
 
+### Added — E7: verification tiers for paid compute (canaries + sampled redundancy)
+
+The DePIN verification ladder, implemented where this engine can honestly
+climb it:
+
+- **`backend/modules/verification.py`** — tier model
+  (`SIGNED` < `CANARY` < `REDUNDANT` < `ATTESTED`, the last explicitly
+  *not implemented*), a value-at-risk policy
+  (`required_tier(price_usdc)`, env-tunable thresholds), pluggable
+  executors (a worker is any async `run(text) -> str`), and sealed runs
+  (`execution_hash` per execution).
+- **Canaries** — known-answer probes with must-contain checks; PASS/FAIL per
+  worker, recorded.
+- **Redundant execution** — a second executor runs the same task and outputs
+  are compared (`exact` or `similarity` with a tolerance); verdicts
+  `MATCH`/`MISMATCH`/`ERROR` carry both execution receipts. Divergence is
+  what a substituted model or truncated output looks like.
+- **Scorecards** — `GET /verification/workers` aggregates canary pass rate
+  and redundancy agreement per worker; `faulty-echo` ships as a clearly
+  labelled fault-injection double so the detection path is demonstrable.
+- **Evidence** — `POST /verification/evidence` signs the verdict window into
+  a `compute_verification` bundle (verified by the standalone script).
+- **Routes** — policy, redundant, canary, workers, verdicts, evidence.
+- **Live-verified**: canaries PASS on `echo` and `mock-llm`, FAIL on the
+  faulty double; `mock-llm×2` redundancy MATCH (agreement 1.0) while
+  `echo×faulty` MISMATCH (agreement 0.6087 < 0.85 tolerance); scorecards
+  scored the mismatch; the signed bundle verified with exit 0.
+- **Tests (+24)** — tier policy, comparators (drift vs substitution),
+  sealing determinism, canary pass/fail per worker, redundancy
+  MATCH/MISMATCH/ERROR, unknown worker/comparator rejection, scorecard
+  aggregation (scoped worker ids because the verdict DB is shared), evidence
+  verification, and route validation. Docs: `docs/VERIFICATION.md` with the
+  honest limits (lexical similarity, explicit sampling cost, no
+  auto-suspension, ATTESTED marked not-implemented).
+
 ### Added — E6: A2A agent (other agents can hire this engine)
 
 Jambubrowser now speaks the Agent2Agent protocol (v0.3 JSON-RPC binding) as
