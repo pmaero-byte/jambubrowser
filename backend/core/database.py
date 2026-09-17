@@ -669,6 +669,22 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
         "CREATE INDEX IF NOT EXISTS idx_a2a_tasks ON a2a_tasks(updated_at DESC)"
     )
 
+    # ── Worker verdicts (verification tiers for paid compute) ──────────
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS worker_verdicts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind TEXT NOT NULL,
+            worker_id TEXT NOT NULL,
+            verdict TEXT NOT NULL,
+            tier TEXT NOT NULL,
+            detail_json TEXT,
+            created_at REAL DEFAULT (CAST(strftime('%s','now') AS REAL))
+        )
+    """)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_worker_verdicts ON worker_verdicts(created_at DESC)"
+    )
+
     conn.commit()
     return conn
 
