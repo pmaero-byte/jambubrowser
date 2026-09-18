@@ -1180,6 +1180,62 @@ async def browser_export_playwright(steps: str, name: str = "jambubrowser flow",
     return result.get("code", "")
 
 
+@mcp.tool()
+async def browser_task(url: str, goal: str, inputs: str = "{}",
+                       local: bool = True, approve: bool = False) -> str:
+    """
+    One-call meta-tool: turn a goal into a test flow and run it. Plans the
+    flow (template/LLM), substitutes any {{placeholders}} from `inputs`, then
+    executes it and returns the pass/fail report. Use this when you don't
+    want to author steps yourself.
+
+    Args:
+        url: App URL, e.g. http://localhost:3000
+        goal: What to test, e.g. "test login with a valid user"
+        inputs: JSON object filling placeholders, e.g. {"email":"a@b.com","password":"..."}
+        local: Allow loopback/private hosts (default true)
+        approve: Approve risky/input actions for every step
+    """
+    import json as _json
+
+    try:
+        values = _json.loads(inputs) if isinstance(inputs, str) else (inputs or {})
+    except _json.JSONDecodeError as exc:
+        return f"inputs is not valid JSON: {exc}"
+
+    plan = await _call_engine("POST", "/browser/sessions/plan", {
+        "url": url, "goal": goal,
+    }, timeout=120.0)
+    if "error" in plan:
+        return f"Plan failed: {plan['error']}"
+
+    steps = plan.get("steps") or []
+    missing = []
+    for step in steps:
+        for key, val in list(step.items()):
+            if isinstance(val, str) and "{{" in val:
+                for name, replacement in values.items():
+                    val = val.replace("{{" + name + "}}", str(replacement))
+                step[key] = val
+                for ph in plan.get("placeholders") or []:
+                    if "{{" + ph + "}}" in val:
+                        missing.append(ph)
+    missing = sorted(set(missing))
+    if missing:
+        return (
+            f"# Plan ready ({plan.get('kind')}) — needs inputs: {', '.join(missing)}\n"
+            f"Call browser_task again with inputs={{\"{missing[0]}\": \"...\"}}\n\n"
+            + _json.dumps(steps, indent=1)
+        )
+
+    result = await _call_engine("POST", "/browser/sessions/run", {
+        "url": url, "steps": steps, "local": local, "approve": approve,
+    }, timeout=300.0)
+    if "error" in result:
+        return f"Run failed: {result['error']}"
+    return f"(planned: {plan.get('kind')})\n" + _render_flow(result)
+
+
 # ===================================================================
 # AGENT EVALUATION CERTIFICATES
 # ===================================================================
@@ -1253,19 +1309,46 @@ async def agent_eval_verify(certificate_id: int) -> str:
 # installs keep the full surface.
 CURATED_EXCLUDES = ("execute_tool",)
 
+# The `developer` profile keeps only the high-level browser-testing verbs, so
+# an agent choosing among tools pays the smallest possible selection cost.
+DEVELOPER_TOOLS = {
+    "browser_task",
+    "browser_test_flow",
+    "browser_test_plan",
+    "browser_test_matrix",
+    "browser_session_run",
+    "browser_export_playwright",
+    "check_engine_health",
+}
+
 
 def apply_tool_profile(profile: str) -> list[str]:
-    """Remove non-curated tools from the live registry. Returns removals."""
-    if profile != "curated":
-        return []
-    removed = []
-    for name in CURATED_EXCLUDES:
+    """Remove non-profile tools from the live registry. Returns removals."""
+    if profile == "curated":
+        removed = []
+        for name in CURATED_EXCLUDES:
+            try:
+                mcp.remove_tool(name)
+                removed.append(name)
+            except Exception:  # tool already absent
+                pass
+        return removed
+    if profile == "developer":
         try:
-            mcp.remove_tool(name)
-            removed.append(name)
-        except Exception:  # tool already absent
-            pass
-    return removed
+            names = [t.name for t in mcp._tool_manager.list_tools()]
+        except Exception:
+            names = list(DEVELOPER_TOOLS)
+        removed = []
+        for name in names:
+            if name in DEVELOPER_TOOLS:
+                continue
+            try:
+                mcp.remove_tool(name)
+                removed.append(name)
+            except Exception:
+                pass
+        return removed
+    return []
 
 
 apply_tool_profile(os.environ.get("JAMBU_MCP_PROFILE", "full"))

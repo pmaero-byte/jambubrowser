@@ -55,6 +55,10 @@ class ActRequest(BaseModel):
     approve: bool = False
 
 
+class TakeoverRequest(BaseModel):
+    active: bool = True
+
+
 class RunFlowRequest(BaseModel):
     steps: list[dict]
     approve: bool = False
@@ -91,6 +95,15 @@ class PlanRequest(BaseModel):
     kind: Optional[str] = None
     use_llm: bool = False
     provider: str = ""
+
+
+class SemanticDiffRequest(BaseModel):
+    before_elements: list[dict] = []
+    after_elements: list[dict] = []
+    before_screenshot: Optional[str] = None
+    after_screenshot: Optional[str] = None
+    use_vision: bool = False
+    explain: bool = False
 
 
 class MatrixRequest(BaseModel):
@@ -204,6 +217,27 @@ async def export_flow(req: ExportRequest):
     }
 
 
+@router.post("/semantic-diff")
+async def semantic_diff(req: SemanticDiffRequest):
+    """Human-readable UI diff over element catalogs and/or screenshots."""
+    from backend.modules.semantic_diff import (
+        explain_diff,
+        semantic_diff_elements,
+        semantic_diff_images,
+    )
+
+    result: dict = {}
+    if req.before_elements or req.after_elements:
+        result.update(semantic_diff_elements(req.before_elements, req.after_elements))
+    if req.before_screenshot and req.after_screenshot:
+        result["image"] = await semantic_diff_images(
+            req.before_screenshot, req.after_screenshot, use_vision=req.use_vision,
+        )
+    if req.explain:
+        result["explanation"] = explain_diff(result)
+    return result
+
+
 @router.post("/matrix")
 async def matrix_flow(req: MatrixRequest):
     """Run the same flow across viewports/locales concurrently."""
@@ -268,6 +302,31 @@ async def run_flow(session_id: str, req: RunFlowRequest):
 @router.get("/{session_id}/receipts")
 async def receipts(session_id: str):
     return _get(session_id).receipts()
+
+
+@router.get("/{session_id}/screenshot")
+async def session_screenshot(session_id: str, full_page: bool = False):
+    """Current frame as base64 PNG — the live-view source for human takeover."""
+    session = _get(session_id)
+    data = await session.capture_screenshot(full_page)
+    if data is None:
+        raise HTTPException(status_code=501, detail="screenshots unavailable for this session")
+    return {
+        "session_id": session_id,
+        "screenshot_base64": data,
+        "human_takeover": session.human_takeover,
+    }
+
+
+@router.post("/{session_id}/takeover")
+async def set_takeover(session_id: str, req: TakeoverRequest):
+    """Pause/resume agent control for a human (CAPTCHA, 2FA, visual checks).
+
+    Backend state hook — the desktop UI drives the live view.
+    """
+    session = _get(session_id)
+    session.human_takeover = req.active
+    return {"session_id": session_id, "human_takeover": session.human_takeover}
 
 
 @router.post("/{session_id}/evidence")

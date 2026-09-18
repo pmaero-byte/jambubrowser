@@ -816,3 +816,68 @@ class TestRoutes:
         resp = client.post(f"/browser/sessions/{session.id}/run",
                            json={"steps": []})
         assert resp.status_code == 403
+
+
+class TestLiveView:
+    @pytest.fixture
+    def client(self):
+        from fastapi.testclient import TestClient
+        from backend.engine import app
+        from backend.modules import browser_agent
+
+        browser_agent.reset_browser_agent_service()
+        with TestClient(app) as c:
+            yield c
+        browser_agent.reset_browser_agent_service()
+
+    def _install(self):
+        from backend.modules import browser_agent
+
+        page = FlowPage()
+        seed(page)
+        session = make_session(page)
+        browser_agent.get_browser_agent_service()._sessions[session.id] = session
+        return session
+
+    def test_screenshot_endpoint(self, client):
+        session = self._install()
+        resp = client.get(f"/browser/sessions/{session.id}/screenshot")
+        assert resp.status_code == 200
+        assert resp.json()["screenshot_base64"] == "QUJD"
+
+    def test_takeover_toggle(self, client):
+        session = self._install()
+        resp = client.post(f"/browser/sessions/{session.id}/takeover",
+                           json={"active": True})
+        assert resp.status_code == 200
+        assert resp.json()["human_takeover"] is True
+        receipts = client.get(f"/browser/sessions/{session.id}/receipts").json()
+        assert receipts["human_takeover"] is True
+
+    def test_screenshot_unsupported_session(self, client):
+        from backend.modules.browser_agent import BrowserAgentSession
+
+        class NoShotPage:
+            url = "about:blank"
+
+            async def goto(self, url):
+                self.url = url
+
+            async def snapshot(self):
+                return {"url": self.url, "title": "", "elements": [], "text": ""}
+
+            async def click(self, ref):
+                pass
+
+            async def type_text(self, ref, text):
+                pass
+
+            async def current_url(self):
+                return self.url
+
+        session = BrowserAgentSession("bs-noshot", NoShotPage(),
+                                      allow_domains=["example.com"])
+        from backend.modules import browser_agent
+        browser_agent.get_browser_agent_service()._sessions[session.id] = session
+        resp = client.get(f"/browser/sessions/{session.id}/screenshot")
+        assert resp.status_code == 501

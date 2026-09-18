@@ -2,7 +2,7 @@
 
 Auto-generated from `backend/mcp_server.py` by `tools/mcp/generate_docs.py`. Do not edit by hand — re-run the generator after adding or renaming a tool.
 
-**Total tools:** 40
+**Total tools:** 41
 
 ## Table of contents
 
@@ -16,6 +16,7 @@ Auto-generated from `backend/mcp_server.py` by `tools/mcp/generate_docs.py`. Do 
 - [`browser_session_receipts`](#browser_session_receipts)
 - [`browser_session_run`](#browser_session_run)
 - [`browser_session_snapshot`](#browser_session_snapshot)
+- [`browser_task`](#browser_task)
 - [`browser_test_flow`](#browser_test_flow)
 - [`browser_test_matrix`](#browser_test_matrix)
 - [`browser_test_plan`](#browser_test_plan)
@@ -226,6 +227,28 @@ catalog (refs @e1…). Act on refs, never on selector guesses.
 
 Args:
     session_id: Session from browser_session_open
+
+### `browser_task`
+
+**Signature**
+
+```python
+browser_task(url: str, goal: str, inputs: str = '{}', local: bool = True, approve: bool = False)
+```
+
+**Description**
+
+One-call meta-tool: turn a goal into a test flow and run it. Plans the
+flow (template/LLM), substitutes any {{placeholders}} from `inputs`, then
+executes it and returns the pass/fail report. Use this when you don't
+want to author steps yourself.
+
+Args:
+    url: App URL, e.g. http://localhost:3000
+    goal: What to test, e.g. "test login with a valid user"
+    inputs: JSON object filling placeholders, e.g. {"email":"a@b.com","password":"..."}
+    local: Allow loopback/private hosts (default true)
+    approve: Approve risky/input actions for every step
 
 ### `browser_test_flow`
 

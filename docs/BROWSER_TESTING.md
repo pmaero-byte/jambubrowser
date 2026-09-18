@@ -221,6 +221,29 @@ each run and alerting (desktop + webhook) on failure. A scheduler starts with
 the engine. This turns a one-off debug session into permanent regression
 protection.
 
+### Semantic diff
+`POST /browser/sessions/semantic-diff` produces a human-readable change
+summary over element catalogs (added / removed / renamed / state changes),
+optionally explaining it with the LLM (`explain: true`) and/or adding a vision
+description over two screenshots (`use_vision: true`). Pixel diffing stays as
+the deterministic fallback.
+
+### One-call meta-tool
+MCP `browser_task(url, goal, inputs)` plans a flow from a goal, substitutes
+`{{placeholder}}` values from `inputs`, and runs it — one tool call.
+
+### Developer MCP profile
+`JAMBU_MCP_PROFILE=developer` exposes only the seven high-level browser-testing
+verbs (`browser_task`, `browser_test_flow`, `browser_test_plan`,
+`browser_test_matrix`, `browser_session_run`, `browser_export_playwright`,
+`check_engine_health`), minimising tool-selection cost.
+
+### Live view / human takeover (backend)
+`GET /browser/sessions/{id}/screenshot` returns the current frame as base64;
+`POST /browser/sessions/{id}/takeover {active}` pauses/resumes agent control
+for CAPTCHA/2FA or visual checks. The desktop UI that consumes these is the
+remaining (Rust/webview) milestone.
+
 ## Token accounting
 
 | Scenario | Calls (before) | Calls (now) |

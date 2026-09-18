@@ -553,6 +553,10 @@ class BrowserAgentSession:
         self.last_url = ""
         self.closed = False
         self._source_maps: dict[str, Optional[SourceMapData]] = {}
+        # Human-in-the-loop hook: interactive sessions can pause for a human
+        # (CAPTCHA/2FA) and resume. The desktop UI drives this; the backend
+        # exposes the state and frame.
+        self.human_takeover = False
 
     # -- helpers -------------------------------------------------------------
 
@@ -1240,6 +1244,13 @@ class BrowserAgentSession:
                                        else f"{len(failed_reqs)} failed request(s)")
         raise SessionRefused("unknown_assertion", f"unsupported assertion kind: {kind}")
 
+    async def capture_screenshot(self, full_page: bool = False) -> Optional[str]:
+        """Current frame as base64 PNG (live-view / takeover source)."""
+        try:
+            return await self._call_optional("screenshot", full_page)
+        except SessionRefused:
+            return None
+
     def receipts(self) -> dict:
         hashes = [s.step_hash for s in self.steps if s.step_hash]
         return {
@@ -1249,6 +1260,7 @@ class BrowserAgentSession:
             "merkle_root": merkle_root(hashes),
             "chain_head": hashes[-1] if hashes else None,
             "allow_domains": self.allow_domains,
+            "human_takeover": self.human_takeover,
         }
 
 
