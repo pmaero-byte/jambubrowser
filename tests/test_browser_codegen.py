@@ -220,3 +220,72 @@ class TestImportV2:
             "await test.step('go', async () => { await page.goto('http://x'); });"
         )
         assert doc["steps"] == [{"action": "navigate", "url": "http://x"}]
+
+    def test_each_expands_positional_rows(self):
+        doc = playwright_to_flow("""
+          test.each([['alice', 'a1'], ['bob', 'b2']])('login %s', async (user, pw) => {
+            await page.getByLabel('Email').fill(user);
+            await page.getByLabel('Password').fill(pw);
+          });
+        """)
+        assert "variants" in doc
+        assert len(doc["variants"]) == 2
+        first = doc["variants"][0]["steps"]
+        assert first[0] == {"action": "type", "target": "Email", "value": "alice"}
+        assert first[1] == {"action": "type", "target": "Password", "value": "a1"}
+        assert doc["variants"][1]["steps"][0]["value"] == "bob"
+        assert doc["unparsed"] == []
+
+    def test_each_expands_object_rows(self):
+        doc = playwright_to_flow("""
+          test.each([{ user: 'alice' }])('login', async ({ user }) => {
+            await page.getByText(user).click();
+          });
+        """)
+        assert doc["variants"][0]["steps"] == [
+            {"action": "click", "target": "alice"}
+        ]
+
+    def test_each_with_setup_prepended(self):
+        doc = playwright_to_flow("""
+          test.beforeEach(async ({ page }) => {
+            await page.goto('http://x');
+          });
+          test.each([['a']])('t', async (v) => {
+            await page.getByText(v).click();
+          });
+        """)
+        variant = doc["variants"][0]
+        assert variant["steps"][0] == {"action": "navigate", "url": "http://x"}
+        assert variant["steps"][1] == {"action": "click", "target": "a"}
+
+    def test_before_each_setup_prepended(self):
+        doc = playwright_to_flow("""
+          test.beforeEach(async ({ page }) => {
+            await page.goto('http://x/login');
+          });
+          test('a', async ({ page }) => {
+            await page.getByText('Go').click();
+          });
+        """)
+        assert doc["steps"][0] == {"action": "navigate", "url": "http://x/login"}
+        assert doc["steps"][1] == {"action": "click", "target": "Go"}
+
+    def test_use_base_url_resolves_relative_goto(self):
+        doc = playwright_to_flow("""
+          test.use({ baseURL: 'http://localhost:3000' });
+          test('a', async ({ page }) => {
+            await page.goto('/dashboard');
+          });
+        """)
+        assert doc["base_url"] == "http://localhost:3000"
+        assert doc["steps"] == [
+            {"action": "navigate", "url": "http://localhost:3000/dashboard"}
+        ]
+
+    def test_use_storage_state_path_extracted(self):
+        doc = playwright_to_flow("""
+          test.use({ storageState: 'auth.json' });
+          test('a', async ({ page }) => { await page.goto('http://x'); });
+        """)
+        assert doc["storage_state_path"] == "auth.json"

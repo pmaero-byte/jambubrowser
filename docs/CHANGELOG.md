@@ -4,6 +4,35 @@ All notable changes to Jambubrowser.
 
 ## [Unreleased]
 
+### Added — one-call browser testing, debug loop, dual-mode tabs
+
+The developer-facing build-out: give an AI agent everything it needs to test a
+local product in as few calls as possible, then debug what it finds.
+
+- **One-call test flows** (`backend/modules/browser_agent.py`) — declarative
+  step lists (navigate/click/type/press/wait/assert_*) run in a real Playwright
+  browser and return one compact pass/fail report. `POST /browser/sessions/run`,
+  MCP `browser_test_flow`, CLI `jambu test`. 40–50 tool calls → 1.
+- **Intent + selector addressing** — `ref`, human `target`
+  (name/`"role name"`/substring) or `selector` (CSS/XPath); unclassified
+  selector actions require `approve=true`.
+- **Debug telemetry** — request mocking (`mocks/fail/delay/offline`), per-step
+  cause attribution (console errors, failed requests, DOM delta),
+  trace/HAR/video artifacts, source-map error mapping, a11y and
+  performance-budget assertions, storage-state seeding, HMR settle.
+- **Authoring** — `POST /browser/sessions/plan` (template + optional LLM),
+  MCP `browser_task` meta-tool, session recording into replayable flows.
+- **Scale/permanence** — viewport/locale matrix, flow monitors with alerts,
+  Playwright export **and** import (getBy/locator/keyboard/expect/beforeEach/
+  test.use/test.each/route/evaluate; unparsed lines reported with reasons).
+- **Desktop** — CDP live-view screencast, human-takeover pause/resume,
+  copy-page-text, and **dual-mode tabs** (CDP stream vs native system webview;
+  `browser-native-view` family, Tauri `unstable` feature).
+- **CLI** — `jambu test|watch|plan|export|import|record|dev-servers`; packaging
+  metadata for PyPI/Homebrew (`docs/PUBLISHING.md`).
+- Tests: backend +~180 (flow/debug/plan/codegen/monitors/dev-server/packaging),
+  frontend +~20 (screencast/takeover/native-view/flow-monitors).
+
 ### Fixed — payment double-spend race + adversarial hardening of the new surfaces
 
 A security pass over the agent-platform build-out found one real race and

@@ -3,6 +3,7 @@ pub mod cdp;
 pub mod downloads;
 pub mod extensions;
 pub mod manager;
+pub mod native_view;
 pub mod privacy;
 pub mod settings;
 pub mod tab;

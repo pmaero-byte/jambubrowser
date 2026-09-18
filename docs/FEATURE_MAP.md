@@ -174,12 +174,12 @@ the page being audited.
   Playwright.
 
 ### What still hurts (improvement targets)
-1. **Desktop browser rendering** — the Tauri pane now has a **live CDP
-   screencast** (`Page.startScreencast` → `useScreencast` → `ChromiumPane`,
-   Rust commands `browser_start_screencast`/`browser_stop_screencast`) giving
-   smooth frames in place of the old ~1 FPS poll. Remaining milestone: **real
-   multi-webview tabs** (true independent rendering/text selection) and a
-   full input hand-off UX for human takeover.
+1. **Desktop browser rendering** — the Tauri pane streams live frames over a
+   CDP `Page.startScreencast` channel (~30–60 FPS) with the polled screenshot
+   as a fallback. **Dual-mode tabs** now also allow a per-tab native system
+   webview (`browser_native_view`) for real caret/selection at the cost of
+   audit parity (clearly labelled). Remaining: measured desktop spike and
+   native-mode parity shims — see `docs/MULTIWEBVIEW_PLAN.md`.
 2. **DevTools performance-trace comparison** — the network waterfall now
    exports to HAR/CSV (`networkExport.ts` toolbar buttons, resolved
    2026-08), but there's no side-by-side comparison of two audits'

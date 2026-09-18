@@ -280,6 +280,13 @@ stream (`browser_start_screencast` / `browser_stop_screencast`) pushes JPEG
 frames at ~30–60 FPS to the `useScreencast` hook, which the `ChromiumPane`
 renders in place of the polled screenshot (polling remains the fallback).
 
+**Dual-mode tabs:** a per-tab toggle switches between the CDP **stream** view
+(default — automation and audits have full parity) and a **native** system
+webview child (`browser_native_view`, positioned over the viewport). Native
+mode gives real caret/selection/context menus but is a different engine: no
+CDP input, no audits, no fingerprint scripts — the pane labels it. See
+`docs/MULTIWEBVIEW_PLAN.md`.
+
 ### Dev-server discovery & settle
 `GET /browser/dev-servers` (CLI: `jambu dev-servers`) scans common ports and
 identifies the framework (Vite/Next/CRA/Nuxt/Remix/SvelteKit/Astro/Angular/

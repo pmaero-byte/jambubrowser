@@ -521,6 +521,22 @@ def classify_risk(*parts: str) -> Optional[str]:
     return None
 
 
+def estimate_tokens(payload) -> int:
+    """Rough token estimate for a payload (~4 chars per token).
+
+    Reports how much context a flow report actually costs the agent, so
+    token claims are measured, not marketing.
+    """
+    if isinstance(payload, str):
+        text = payload
+    else:
+        try:
+            text = json.dumps(payload, separators=(",", ":"))
+        except Exception:
+            text = str(payload)
+    return max(1, len(text) // 4)
+
+
 def normalize_flow_steps(steps) -> list[dict]:
     """Accept a JSON string, a ``{"steps": [...]}`` wrapper, or a list.
 
@@ -555,7 +571,9 @@ def render_flow_report(report: dict, *, max_errors: int = 5) -> str:
     head = (
         f"# Browser test {icon} — {report.get('passed', 0)}/{report.get('total', 0)} steps "
         f"in {report.get('duration_ms', 0)}ms\n"
-        f"final: {report.get('title', '') or '(untitled)'} — {report.get('final_url', '')}"
+        f"final: {report.get('title', '') or '(untitled)'} — {report.get('final_url', '')}\n"
+        f"~{report.get('tokens_estimate', estimate_tokens(report))} tokens"
+        f"{' · uses JS evaluate' if report.get('uses_evaluate') else ''}"
     )
     lines = [head, ""]
     for step in report.get("steps") or []:
@@ -643,6 +661,7 @@ class BrowserAgentSession:
         self.recording = False
         self.recorded_steps: list[dict] = []
         self._settle_ms = 0
+        self._forbid_evaluate = False
 
     # -- helpers -------------------------------------------------------------
 
@@ -1012,7 +1031,7 @@ class BrowserAgentSession:
         self, steps, *, approve: bool = False, stop_on_failure: bool = False,
         observe: bool = True, network: Optional[dict] = None,
         freeze_animations: bool = True, resolve_sources: bool = False,
-        settle_ms: int = 0,
+        settle_ms: int = 0, forbid_evaluate: bool = False,
     ) -> dict:
         """Execute a declarative list of steps and return one compact report.
 
@@ -1031,6 +1050,7 @@ class BrowserAgentSession:
         passed = failed = 0
         started = time.time()
         self._settle_ms = max(0, int(settle_ms or 0))
+        self._forbid_evaluate = bool(forbid_evaluate)
 
         network_info: dict = {"rules": 0, "offline": False}
         if network:
@@ -1105,6 +1125,10 @@ class BrowserAgentSession:
             report["console_errors_source"] = await self._resolve_sources(
                 telemetry.get("console_errors_detail") or [],
             )
+        report["uses_evaluate"] = any(
+            (s.get("action") or "").lower() == "evaluate" for s in normalized
+        )
+        report["tokens_estimate"] = estimate_tokens(report)
         self._record(
             "run_flow", "ok" if report["ok"] else "failed",
             detail=f"{passed}/{len(results)} steps passed",
@@ -1308,6 +1332,11 @@ class BrowserAgentSession:
             script = step.get("script") or step.get("value") or ""
             if not script.strip():
                 raise SessionRefused("invalid_step", "evaluate requires 'script'")
+            if self._forbid_evaluate:
+                raise SessionRefused(
+                    "evaluate_forbidden",
+                    "this flow forbids JS-dependent steps (forbid_evaluate)",
+                )
             if not approve:
                 raise SessionRefused(
                     "approval_required",
@@ -1678,7 +1707,7 @@ class BrowserAgentService:
         context_options: Optional[dict] = None, trace: bool = False,
         har: bool = False, video: bool = False,
         artifacts_dir: Optional[str] = None, settle_ms: int = 0,
-        detect_dev_server: bool = False,
+        detect_dev_server: bool = False, forbid_evaluate: bool = False,
     ) -> dict:
         """One-shot: open an ephemeral session, run a flow, close, return report.
 
@@ -1709,6 +1738,7 @@ class BrowserAgentService:
                 flow, approve=approve, stop_on_failure=stop_on_failure,
                 network=network, resolve_sources=resolve_sources,
                 freeze_animations=freeze_animations, settle_ms=settle_ms,
+                forbid_evaluate=forbid_evaluate,
             )
             receipts = session.receipts()
         finally:

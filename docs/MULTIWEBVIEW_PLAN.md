@@ -69,6 +69,27 @@ profile; the UI must say so. The two modes answer different jobs.
 
 ## Status
 
-Not started. The screencast live view + takeover toggle + copy-text are the
-deliberate interim: they close the *functional* gaps (see it live, pause the
-agent, take over, copy) while this plan waits for a go decision.
+**Phase 2 shipped (2026-09).** Dual-mode tabs are implemented:
+
+- Rust: `ChromiumPane` can host a native system-webview child over the
+  viewport rect via `browser_native_view` / `browser_native_set_rect` /
+  `browser_native_url` / `browser_native_close` / `browser_native_action`
+  (`browser-app/src-tauri/src/chromium/native_view.rs`, requires Tauri's
+  `unstable` feature for `Window::add_child`).
+- Frontend: `useNativeView` mounts/resizes/polls the child and tears it down
+  on tab switch/close; the pane has a per-tab view toggle (layers icon) with
+  a "Native view — system engine, no audits" badge; URL, reload, back, and
+  forward route through the native child in native mode.
+- The CDP stream view is the default and is paused while a native child is
+  mounted.
+
+**Not yet done:** Phase 1's measured spike (latency/resize benchmarking on a
+real desktop build), Phase 3 parity shims beyond navigation (downloads,
+find-in-page, copy-text currently use the CDP/screenshot path and are
+disabled in native mode), and Phase 4 hardening (crash fallback, security
+review of what native mode does *not* inherit — fingerprint/privacy scripts).
+The mode is opt-in per tab and clearly labelled; automation and audits
+continue to run against the CDP tab.
+
+The screencast live view + takeover toggle + copy-text remain the streaming
+mode's feature set.

@@ -930,6 +930,89 @@ def _load_flow_file(path: str) -> dict:
     return data
 
 
+def _snapshot_mtimes(paths: list[str]) -> dict[str, float]:
+    """Map every watched file to its mtime (dirs walked, junk skipped)."""
+    import os as _os
+
+    skip_dirs = {"node_modules", ".git", "__pycache__", ".venv", "dist",
+                 "build", ".next", ".nuxt", "coverage", ".pytest_cache"}
+    out: dict[str, float] = {}
+    for base in paths or []:
+        if not base:
+            continue
+        if _os.path.isfile(base):
+            try:
+                out[base] = _os.path.getmtime(base)
+            except OSError:
+                pass
+        elif _os.path.isdir(base):
+            for root, dirs, files in _os.walk(base):
+                dirs[:] = [d for d in dirs
+                           if d not in skip_dirs and not d.startswith(".")]
+                for name in files:
+                    if name.startswith(".") or name.endswith((".pyc", ".log")):
+                        continue
+                    full = _os.path.join(root, name)
+                    try:
+                        out[full] = _os.path.getmtime(full)
+                    except OSError:
+                        pass
+    return out
+
+
+def _changed_files(before: dict[str, float], after: dict[str, float]) -> list[str]:
+    changed = [p for p, m in after.items() if before.get(p) != m]
+    changed += [p for p in before if p not in after]
+    return sorted(changed)
+
+
+def cmd_watch(args) -> int:
+    """Rerun a flow whenever watched files change (dev-loop staple)."""
+    import argparse as _argparse
+
+    watch_paths = [args.flow] + list(args.watch_dir or [])
+    test_args = _argparse.Namespace(
+        url=args.url, flow=args.flow, local=args.local, approve=args.approve,
+        stop_on_failure=args.stop_on_failure, trace=args.trace, har=args.har,
+        video=args.video, resolve_sources=args.resolve_sources, json=args.json,
+        forbid_evaluate=args.forbid_evaluate,
+    )
+
+    def run_once() -> int:
+        # Reload the flow from disk each run so edits apply immediately.
+        try:
+            _load_flow_file(args.flow)
+        except Exception as exc:
+            print(f"Could not read flow file {args.flow}: {exc}")
+            return EXIT_ENGINE_ERROR
+        print(f"--- jambu watch: {time.strftime('%H:%M:%S')} ---")
+        return cmd_test(test_args)
+
+    if args.once:
+        return run_once()
+
+    print(f"Watching {len(watch_paths)} path(s), every {args.interval:g}s "
+          f"(Ctrl-C to stop).")
+    last = _snapshot_mtimes(watch_paths)
+    code = run_once()
+    if code not in (EXIT_OK, EXIT_GATE_FAILED):
+        print("(engine unreachable — will keep retrying on change)")
+    try:
+        while True:
+            time.sleep(args.interval)
+            current = _snapshot_mtimes(watch_paths)
+            changed = _changed_files(last, current)
+            last = current
+            if not changed:
+                continue
+            print(f"changed: {', '.join(changed[:5])}"
+                  + (f" (+{len(changed) - 5} more)" if len(changed) > 5 else ""))
+            cmd_test(test_args)
+    except KeyboardInterrupt:
+        print("\nStopped watching.")
+    return EXIT_OK
+
+
 def cmd_test(args) -> int:
     """Run a browser test flow (local dev friendly) and report pass/fail."""
     flow: dict = {}
@@ -956,6 +1039,7 @@ def cmd_test(args) -> int:
         "har": args.har,
         "video": args.video,
         "resolve_sources": args.resolve_sources,
+        "forbid_evaluate": args.forbid_evaluate,
         "network": flow.get("network"),
     }
     result = api_request("POST", "/browser/sessions/run", payload)
@@ -1199,6 +1283,9 @@ def main():
     p_test.add_argument("--video", action="store_true", help="Record video")
     p_test.add_argument("--resolve-sources", dest="resolve_sources",
                         action="store_true", help="Map console errors via source maps")
+    p_test.add_argument("--forbid-evaluate", dest="forbid_evaluate",
+                        action="store_true",
+                        help="Refuse JS-dependent evaluate steps")
     p_test.add_argument("--json", action="store_true", help="Print the full report JSON")
 
     p_export = subparsers.add_parser(
@@ -1236,6 +1323,35 @@ def main():
                           help="Stop recording and save the flow")
     p_record.add_argument("--out", help="Output flow JSON path")
     p_record.add_argument("--url", help="Entry URL to store with the flow")
+
+    p_watch = subparsers.add_parser(
+        "watch", help="Rerun a flow whenever watched files change",
+    )
+    p_watch.add_argument("flow", help="Flow JSON file")
+    p_watch.add_argument("--url", help="App URL (or from the flow file)")
+    p_watch.add_argument("--watch-dir", dest="watch_dir", action="append",
+                         default=[],
+                         help="Extra dir to watch (repeatable; default: the flow file)")
+    p_watch.add_argument("--interval", type=float, default=2.0,
+                         help="Poll interval in seconds (default 2)")
+    p_watch.add_argument("--local", action="store_true",
+                         help="Allow localhost/private hosts")
+    p_watch.add_argument("--approve", action="store_true",
+                         help="Approve risky/input actions")
+    p_watch.add_argument("--stop-on-failure", dest="stop_on_failure",
+                         action="store_true")
+    p_watch.add_argument("--trace", action="store_true")
+    p_watch.add_argument("--har", action="store_true")
+    p_watch.add_argument("--video", action="store_true")
+    p_watch.add_argument("--resolve-sources", dest="resolve_sources",
+                         action="store_true")
+    p_watch.add_argument("--forbid-evaluate", dest="forbid_evaluate",
+                         action="store_true",
+                         help="Refuse JS-dependent evaluate steps")
+    p_watch.add_argument("--json", action="store_true",
+                         help="Print the full report JSON each run")
+    p_watch.add_argument("--once", action="store_true",
+                         help="Run once and exit (no watching)")
 
     p_devs = subparsers.add_parser(
         "dev-servers", help="Scan for a running local dev server",
@@ -1341,6 +1457,8 @@ def main():
         code = cmd_plan(args)
     elif args.command == "record":
         code = cmd_record(args)
+    elif args.command == "watch":
+        code = cmd_watch(args)
     elif args.command == "dev-servers":
         code = cmd_dev_servers(args)
     elif args.command == "monitor":

@@ -133,8 +133,10 @@ browser_import_playwright(code: str)
 **Description**
 
 Convert a Playwright Test (.spec.ts) source into a declarative flow for
-browser_test_flow. Translates the common getBy/keyboard/expect subset;
-every line it cannot translate is reported so you know what needs a hand.
+browser_test_flow. Translates the common getBy/keyboard/expect subset,
+beforeEach setup, test.use baseURL/storageState, test.each data variants,
+and page.route() policies; every line it cannot translate is reported so
+you know what needs a hand.
 
 Args:
     code: Playwright Test source text
@@ -214,7 +216,7 @@ Args:
 **Signature**
 
 ```python
-browser_session_run(session_id: str, steps: str, approve: bool = False, stop_on_failure: bool = False, network: str = '', resolve_sources: bool = False)
+browser_session_run(session_id: str, steps: str, approve: bool = False, stop_on_failure: bool = False, network: str = '', resolve_sources: bool = False, forbid_evaluate: bool = False)
 ```
 
 **Description**
@@ -229,6 +231,7 @@ Args:
     stop_on_failure: Stop at the first failed step
     network: Optional JSON request-interception policy (see browser_test_flow)
     resolve_sources: Map console errors through source maps
+    forbid_evaluate: Refuse JS-dependent evaluate steps
 
 ### `browser_session_snapshot`
 
@@ -273,7 +276,7 @@ Args:
 **Signature**
 
 ```python
-browser_test_flow(url: str, steps: str = '[]', allow_domains: str = '', local: bool = False, approve: bool = False, stop_on_failure: bool = False, network: str = '', trace: bool = False, har: bool = False, video: bool = False, resolve_sources: bool = False, storage_state: str = '')
+browser_test_flow(url: str, steps: str = '[]', allow_domains: str = '', local: bool = False, approve: bool = False, stop_on_failure: bool = False, network: str = '', trace: bool = False, har: bool = False, video: bool = False, resolve_sources: bool = False, storage_state: str = '', forbid_evaluate: bool = False)
 ```
 
 **Description**
@@ -311,6 +314,7 @@ Args:
     video: Capture a video recording
     resolve_sources: Map console errors through source maps to original files
     storage_state: Optional JSON storage state ({cookies,origins}) to seed auth
+    forbid_evaluate: Refuse JS-dependent evaluate steps (evaluate-free coverage)
 
 ### `browser_test_matrix`
 

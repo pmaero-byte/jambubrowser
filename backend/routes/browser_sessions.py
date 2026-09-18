@@ -69,6 +69,7 @@ class RunFlowRequest(BaseModel):
     resolve_sources: bool = False
     freeze_animations: bool = True
     settle_ms: int = 0
+    forbid_evaluate: bool = False
 
 
 class RecordRequest(BaseModel):
@@ -95,6 +96,7 @@ class TestFlowRequest(BaseModel):
     artifacts_dir: Optional[str] = None
     settle_ms: int = 0
     detect_dev_server: bool = False
+    forbid_evaluate: bool = False
 
 
 class PlanRequest(BaseModel):
@@ -235,7 +237,39 @@ async def import_flow(req: ImportRequest):
     """Convert a Playwright Test source into a flow (unparsed lines reported)."""
     from backend.modules.browser_codegen import playwright_to_flow
 
-    return playwright_to_flow(req.code)
+    doc = playwright_to_flow(req.code)
+    path = doc.get("storage_state_path")
+    if path:
+        state = _load_storage_state(path)
+        if state is not None:
+            doc["storage_state"] = state
+        else:
+            doc["storage_state_note"] = (
+                f"referenced storageState file {path!r} could not be loaded; "
+                "pass its contents as storage_state"
+            )
+    return doc
+
+
+def _load_storage_state(path: str) -> Optional[dict]:
+    """Load a Playwright storageState file, confined to the working directory."""
+    import json as _json
+    import os
+
+    from backend.core.security import is_safe_path
+
+    try:
+        base = os.path.realpath(os.getcwd())
+        candidate = os.path.realpath(os.path.join(base, path))
+        if not is_safe_path(candidate, base):
+            return None
+        if os.path.getsize(candidate) > 256 * 1024:
+            return None
+        with open(candidate, "r", encoding="utf-8") as fh:
+            data = _json.load(fh)
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
 
 
 @router.post("/semantic-diff")
@@ -302,6 +336,7 @@ async def test_flow(req: TestFlowRequest):
             artifacts_dir=req.artifacts_dir,
             settle_ms=req.settle_ms,
             detect_dev_server=req.detect_dev_server,
+            forbid_evaluate=req.forbid_evaluate,
         )
     except SessionRefused as refusal:
         raise _refusal_to_http(refusal)
@@ -317,6 +352,7 @@ async def run_flow(session_id: str, req: RunFlowRequest):
             stop_on_failure=req.stop_on_failure, observe=req.observe,
             network=req.network, resolve_sources=req.resolve_sources,
             freeze_animations=req.freeze_animations, settle_ms=req.settle_ms,
+            forbid_evaluate=req.forbid_evaluate,
         )
     except SessionRefused as refusal:
         raise _refusal_to_http(refusal)

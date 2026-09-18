@@ -1112,3 +1112,38 @@ class TestTakeoverEnforced:
         run(session._read_state())
         result = run(session.act("click", "@e1", approve=True))
         assert result["outcome"] == "ok"
+
+
+class TestTokensAndCoverage:
+    def test_report_carries_token_estimate(self):
+        session = make_session()
+        report = run(session.run_flow([
+            {"action": "navigate", "url": "https://example.com/"},
+        ]))
+        assert report["tokens_estimate"] > 0
+        assert f"~{report['tokens_estimate']} tokens" in render_flow_report(report)
+
+    def test_uses_evaluate_flag(self):
+        session = make_session()
+        report = run(session.run_flow([
+            {"action": "evaluate", "script": "1+1", "approve": True},
+        ]))
+        assert report["ok"] is True
+        assert report["uses_evaluate"] is True
+        assert "uses JS evaluate" in render_flow_report(report)
+
+    def test_forbid_evaluate_refuses(self):
+        session = make_session()
+        report = run(session.run_flow(
+            [{"action": "evaluate", "script": "1+1", "approve": True}],
+            forbid_evaluate=True,
+        ))
+        assert report["ok"] is False
+        assert report["steps"][0]["reason"] == "evaluate_forbidden"
+        assert report["uses_evaluate"] is True
+
+    def test_estimate_tokens_helper(self):
+        from backend.modules.browser_agent import estimate_tokens
+
+        assert estimate_tokens("x" * 400) == 100
+        assert estimate_tokens({}) >= 1

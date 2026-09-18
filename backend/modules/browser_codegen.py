@@ -331,9 +331,12 @@ def _parse_line(line: str, symbols: dict):
             symbols[decl.group(1)] = address
         return _SKIP
 
-    # await page.goto('…')
+    # await page.goto('…') — relative URLs resolve against test.use baseURL
     goto = re.search(r"page\.goto\((.+)\)", stripped)
     if goto and (url := _quoted(goto.group(1), 0)):
+        base = symbols.get("__base_url", "")
+        if base and url.startswith("/") and not url.startswith("//"):
+            url = base.rstrip("/") + url
         return {"action": "navigate", "url": url}
 
     if "page.reload(" in stripped:
@@ -475,13 +478,63 @@ def _expect_to_assert(inner: str, negated: bool, assertion: str,
 def playwright_to_flow(source: str) -> dict:
     """Translate a Playwright Test source to a flow document.
 
-    Returns ``{"steps", "network", "unparsed" ([{line, text, reason?}]), "count"}``.
-    ``network`` carries any ``page.route()`` mock/abort policy found.
+    Returns ``{"steps", "network", "unparsed" ([{line, text, reason?}]),
+    "count"}`` plus ``base_url`` / ``storage_state_path`` when the source
+    declares them via ``test.use()``. A ``beforeEach`` hook body is parsed
+    first and its steps prepended as shared setup.
     """
+    text = str(source or "")
+    use = _extract_test_use(text)
+    each_blocks, without_each = _extract_each_blocks(text)
+    setup_src, main_src = _extract_before_each(without_each)
     steps: list[dict] = []
     unparsed: list[dict] = []
     symbols: dict = {}
-    for lineno, statement in _join_statements(source):
+    if use.get("base_url"):
+        symbols["__base_url"] = use["base_url"]
+    setup_steps: list[dict] = []
+    if setup_src.strip():
+        setup_steps, setup_unparsed = _parse_fragment(setup_src, symbols)
+        steps.extend(setup_steps)
+        unparsed.extend(setup_unparsed)
+    variants: list[dict] = []
+    for block in each_blocks:
+        for index, row in enumerate(block["rows"]):
+            body = _substitute_params(block["body"], block["params"], row)
+            sub_symbols = dict(symbols)
+            vsteps, vunparsed = _parse_fragment(body, sub_symbols)
+            variants.append({
+                "case": f"{block['name']} [{index + 1}]",
+                "data": row,
+                "steps": list(setup_steps) + vsteps,
+                "unparsed": vunparsed,
+            })
+    main_steps, main_unparsed = _parse_fragment(main_src, symbols)
+    steps.extend(main_steps)
+    unparsed.extend(main_unparsed)
+    network = _extract_route_policies(text)
+    doc: dict = {"steps": steps, "network": network,
+                 "unparsed": unparsed, "count": len(steps)}
+    if variants:
+        doc["variants"] = [
+            {**v, "count": len(v["steps"])} for v in variants
+        ]
+    if use.get("base_url"):
+        doc["base_url"] = use["base_url"]
+    if use.get("storage_state_path"):
+        doc["storage_state_path"] = use["storage_state_path"]
+    if use.get("storage_state_inline"):
+        doc["storage_state_note"] = (
+            "inline storageState object is not portable; save it to a file "
+            "and pass it as storage_state"
+        )
+    return doc
+
+
+def _parse_fragment(fragment: str, symbols: dict) -> tuple[list, list]:
+    steps: list[dict] = []
+    unparsed: list[dict] = []
+    for lineno, statement in _join_statements(fragment):
         parsed = _parse_line(statement, symbols)
         if parsed is _SKIP:
             continue
@@ -495,9 +548,161 @@ def playwright_to_flow(source: str) -> dict:
                 unparsed.append(item)
         else:
             steps.append(parsed)
-    network = _extract_route_policies(str(source or ""))
-    return {"steps": steps, "network": network,
-            "unparsed": unparsed, "count": len(steps)}
+    return steps, unparsed
+
+
+def _extract_test_use(source: str) -> dict:
+    """Extract ``test.use({ baseURL, storageState })`` options."""
+    out: dict = {}
+    for match in re.finditer(r"test\.use\(\s*\{", source or ""):
+        block = _balanced(source[match.end() - 1:], "{", "}")
+        if not block:
+            continue
+        inner = block[1:-1]
+        base = re.search(r"baseURL\s*:\s*(['\"])(.*?)\1", inner)
+        if base:
+            out.setdefault("base_url", base.group(2))
+        storage = re.search(r"storageState\s*:\s*(['\"])(.*?)\1", inner)
+        if storage:
+            out.setdefault("storage_state_path", storage.group(2))
+        elif re.search(r"storageState\s*:\s*\{", inner):
+            out["storage_state_inline"] = True
+    return out
+
+
+def _extract_before_each(source: str) -> tuple[str, str]:
+    """Split out a ``beforeEach`` hook body; return (setup, remaining)."""
+    match = re.search(
+        r"(?:test\.)?beforeEach\s*\(\s*async\s*\([^)]*\)\s*=>\s*\{", source or "")
+    if not match:
+        return "", source
+    body = _balanced(source[match.end() - 1:], "{", "}")
+    if not body:
+        return "", source
+    inner = body[1:-1]
+    end = match.end() - 1 + len(body)
+    tail = re.match(r"\s*\)\s*;?", source[end:])
+    if tail:
+        end += tail.end()
+    remaining = source[:match.start()] + source[end:]
+    return inner, remaining
+
+
+def _loose_json_array(text: str):
+    """Parse JS array literals leniently (single quotes, bare keys, trailing commas)."""
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+    fixed = re.sub(
+        r"'((?:\\.|[^'\\])*)'",
+        lambda m: '"' + m.group(1).replace('"', '\\"') + '"', text,
+    )
+    fixed = re.sub(r"([{,]\s*)([A-Za-z_$][\w$]*)\s*:", r'\1"\2":', fixed)
+    fixed = re.sub(r",\s*([\]}])", r"\1", fixed)
+    return json.loads(fixed)
+
+
+def _extract_each_blocks(source: str) -> tuple[list, str]:
+    """Find expandable ``test.each(data)(name, async (params) => {...})`` blocks.
+
+    Returns (blocks, remaining_source); only blocks whose data parses are
+    removed. Each block: {name, params, rows, body}.
+    """
+    blocks: list[dict] = []
+    remaining = str(source or "")
+    while True:
+        match = re.search(r"test\.each\(\s*(\[)", remaining)
+        if not match:
+            break
+        arr_raw = _balanced(remaining[match.end() - 1:], "[", "]")
+        if not arr_raw:
+            break
+        after_arr = match.end() - 1 + len(arr_raw)
+        head = re.match(
+            r"\s*\)\s*\(\s*(['\"])(.*?)\1\s*,\s*async\s*\(([^)]*)\)\s*=>\s*\{",
+            remaining[after_arr:],
+        )
+        if not head:
+            break
+        body = _balanced(remaining[after_arr + head.end() - 1:], "{", "}")
+        if not body:
+            break
+        try:
+            rows = _loose_json_array(arr_raw)
+            assert isinstance(rows, list)
+        except Exception:
+            break  # leave it; inner lines parse individually with reasons
+        params = [p.strip().strip("{} ").strip() for p in head.group(3).split(",")]
+        params = [p for p in params if p]
+        end = after_arr + head.end() - 1 + len(body)
+        tail = re.match(r"\s*\)\s*;?", remaining[end:])
+        if tail:
+            end += tail.end()
+        blocks.append({
+            "name": head.group(2), "params": params, "rows": rows,
+            "body": body[1:-1],
+        })
+        remaining = remaining[:match.start()] + remaining[end:]
+    return blocks, remaining
+
+
+def _substitute_params(body: str, params: list[str], row) -> str:
+    """Replace param references with a data row's values (strings aware).
+
+    Maps positional rows to params in order, dict rows by key. Substitutes
+    bare identifiers outside string literals plus ``${…}`` interpolations
+    inside template literals.
+    """
+    if isinstance(row, dict):
+        mapping = {p: row.get(p) for p in params}
+    else:
+        values = list(row) if isinstance(row, (list, tuple)) else [row]
+        mapping = {p: (values[i] if i < len(values) else None)
+                   for i, p in enumerate(params)}
+    encoded = {k: json.dumps(v) for k, v in mapping.items()}
+
+    out: list[str] = []
+    i, n = 0, len(body)
+    quote = None
+    while i < n:
+        ch = body[i]
+        if quote:
+            if ch == "\\":
+                out.append(body[i:i + 2])
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+                out.append(ch)
+                i += 1
+                continue
+            if quote == "`" and body.startswith("${", i):
+                end = body.find("}", i + 2)
+                if end >= 0:
+                    expr = body[i + 2:end]
+                    for name, rep in encoded.items():
+                        expr = re.sub(r"\b" + re.escape(name) + r"\b", rep, expr)
+                    out.append("${" + expr + "}")
+                    i = end + 1
+                    continue
+            out.append(ch)
+            i += 1
+            continue
+        if ch in ("'", '"', "`"):
+            quote = ch
+            out.append(ch)
+            i += 1
+            continue
+        match = re.match(r"[A-Za-z_$][\w$]*", body[i:])
+        if match:
+            word = match.group(0)
+            out.append(encoded.get(word, word))
+            i += len(word)
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
 
 
 def _is_block_opener(line: str) -> bool:

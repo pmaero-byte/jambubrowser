@@ -812,3 +812,47 @@ class TestJambuBrowserCommands:
         assert "Wrote" in text
         assert json.loads(out.read_text())["steps"][0]["action"] == "navigate"
 
+    def test_watch_once(self, tmp_path):
+        flow = tmp_path / "flow.json"
+        flow.write_text(json.dumps({"url": "http://x", "steps": []}))
+        response = {"ok": True, "passed": 0, "total": 0, "steps": [],
+                    "final_url": "http://x"}
+        text, code = self._run(
+            ["watch", str(flow), "--url", "http://x", "--local", "--once"], response)
+        assert code == 0
+        assert "PASS" in text
+
+    def test_watch_reruns_on_change(self, tmp_path, monkeypatch):
+        from cli import jambu
+
+        flow = tmp_path / "flow.json"
+        flow.write_text(json.dumps({"url": "http://x", "steps": []}))
+        calls = []
+
+        def fake_api_request(method, path, data=None, stream=False):
+            calls.append(path)
+            return {"ok": True, "passed": 0, "total": 0, "steps": [],
+                    "final_url": "http://x"}
+
+        sleeps = {"n": 0}
+
+        def fake_sleep(_s):
+            sleeps["n"] += 1
+            if sleeps["n"] == 1:
+                flow.write_text(json.dumps(
+                    {"url": "http://x", "steps": [{"action": "reload"}]}))
+            else:
+                raise KeyboardInterrupt
+
+        monkeypatch.setattr(jambu, "api_request", fake_api_request)
+        monkeypatch.setattr(jambu.time, "sleep", fake_sleep)
+        captured = io.StringIO()
+        with patch.object(sys, "argv",
+                          ["jambu", "watch", str(flow), "--interval", "0.01",
+                           "--url", "http://x", "--local"]), \
+             patch.object(sys, "stdout", captured):
+            code = jambu.main()
+        assert code == 0
+        assert len(calls) >= 2
+        assert "changed" in captured.getvalue()
+

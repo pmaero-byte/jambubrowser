@@ -170,14 +170,14 @@ and optional vision description over screenshots (pixel diff fallback).
 
 ## 3. Remaining work (explicit, with plans)
 
-### 3.1 Multi-webview tabs — architectural milestone (not started)
-See `docs/MULTIWEBVIEW_PLAN.md`. Tauri webviews are the *system* engine, not
-Chromium — adopting them forks rendering, CDP parity, fingerprinting, and
-audits. Recommendation: dual-mode tabs (`stream` for automation/audit,
-`native` system webview for reading/forms/CAPTCHA), phased with decision
-gates: (1) spike positioning/lifecycle, (2) per-tab view mode + URL sync,
-(3) parity shims (downloads/find/copy), (4) hardening + security review.
-**Do not start without product sign-off on the engine fork.**
+### 3.1 Multi-webview tabs — dual-mode implemented, hardening remains
+See `docs/MULTIWEBVIEW_PLAN.md`. Dual-mode tabs now ship: the CDP **stream**
+view (default, automation/audit parity) and a **native** system-webview child
+(`browser_native_view et al.`) for reading/forms/CAPTCHA, with a per-tab
+toggle and an explicit "no audits" badge. Remaining: Phase-1 measured spike on
+a real desktop build, Phase-3 parity shims (downloads/find/copy in native
+mode), and Phase-4 hardening (crash fallback, security review of what native
+mode does not inherit).
 
 ### 3.2 Full-fidelity spec parsing — bounded by design
 Static translation of fixtures, page objects, and control flow is not

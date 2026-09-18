@@ -41,8 +41,8 @@ const OnboardingWizard = lazy(() =>
 const MissionsPanel = lazy(() =>
   import("./components/missions/MissionsPanel").then((m) => ({ default: m.MissionsPanel }))
 );
-const MonitorsPanel = lazy(() =>
-  import("./components/monitors/MonitorsPanel").then((m) => ({ default: m.MonitorsPanel }))
+const MonitorsView = lazy(() =>
+  import("./components/monitors/MonitorsView").then((m) => ({ default: m.MonitorsView }))
 );
 const DcmNodePanel = lazy(() =>
   import("./components/dcm/DcmNodePanel").then((m) => ({ default: m.DcmNodePanel }))
@@ -198,7 +198,7 @@ export default function App() {
       case "missions":
         return <MissionsPanel />;
       case "monitors":
-        return <MonitorsPanel />;
+        return <MonitorsView />;
       case "dcm-node":
         return <DcmNodePanel />;
       case "meshpay":

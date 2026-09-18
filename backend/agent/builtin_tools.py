@@ -361,6 +361,7 @@ async def browser_test_flow(
     har: Annotated[bool, "Capture a HAR network archive"] = False,
     video: Annotated[bool, "Capture a video recording"] = False,
     resolve_sources: Annotated[bool, "Map console errors through source maps"] = False,
+    forbid_evaluate: Annotated[bool, "Refuse JS-dependent evaluate steps"] = False,
 ) -> dict:
     """Test a web app end-to-end in ONE call.
 
@@ -381,6 +382,7 @@ async def browser_test_flow(
             url=url, steps=parsed, local=local, approve=approve,
             stop_on_failure=stop_on_failure, network=net,
             trace=trace, har=har, video=video, resolve_sources=resolve_sources,
+            forbid_evaluate=forbid_evaluate,
         )
     except Exception as e:
         return {"url": url, "error": str(e)}
@@ -562,6 +564,10 @@ def register_builtin_tools(registry: Optional[ToolRegistry] = None) -> ToolRegis
                 "resolve_sources": {
                     "type": "boolean", "default": False,
                     "description": "Map console errors through source maps to original files",
+                },
+                "forbid_evaluate": {
+                    "type": "boolean", "default": False,
+                    "description": "Refuse JS-dependent evaluate steps",
                 },
             },
             "required": ["url", "steps"],

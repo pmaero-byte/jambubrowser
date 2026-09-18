@@ -5,12 +5,13 @@ import {
   ArrowLeft, ArrowRight, RotateCcw, Home, Plus, X,
   Globe, Bug, BugOff, Cpu, Star, Clock, Bookmark,
   Shield, FileText, Download, BookOpen, KeyRound,
-  EllipsisVertical, FileDown, FileUp, Hand, Copy, Check,
+  EllipsisVertical, FileDown, FileUp, Hand, Copy, Check, Layers,
 } from "lucide-react";
 import { useAppStore, BrowserTab } from "../../store/appStore";
 import { useBrowsingHistoryStore } from "../../store/browsingHistoryStore";
 import { useDevtoolsStore } from "../../store/devtoolsStore";
 import { useScreencast } from "../../hooks/useScreencast";
+import { useNativeView } from "../../hooks/useNativeView";
 import { savedTakeoverSessionId, saveTakeoverSessionId, setAgentTakeover } from "./takeover";
 import { copyPageText } from "./copyPageText";
 import { DevToolsPanel } from "./DevToolsPanel";
@@ -210,10 +211,26 @@ export function ChromiumPane() {
 
   // Live view: CDP screencast frames when available; the polled screenshot
   // below stays as a fallback (non-Tauri, or if the stream errors).
+  // Dual-mode tabs: "stream" (CDP Chromium, automation parity) vs "native"
+  // (system webview child — real feel, but no audits or fingerprinting).
+  const [viewModes, setViewModes] = useState<Record<string, "stream" | "native">>({});
+  const viewMode = (activeBrowserTabId && viewModes[activeBrowserTabId]) || "stream";
+  const nativeSlotRef = useRef<HTMLDivElement>(null);
   const { frame: liveFrame } = useScreencast(activeBrowserTabId, {
-    enabled: !!activeBrowserTabId,
+    enabled: !!activeBrowserTabId && viewMode === "stream",
     quality: takeover ? 85 : 70,
   });
+  const { liveUrl: nativeUrl, error: nativeError } = useNativeView(
+    activeBrowserTabId,
+    activeTab?.url,
+    nativeSlotRef,
+    viewMode === "native",
+  );
+
+  // Keep the address bar in sync with the native child's own navigations.
+  useEffect(() => {
+    if (viewMode === "native" && nativeUrl) setInputUrl(nativeUrl);
+  }, [viewMode, nativeUrl]);
 
   // ── State ──
   const [inputUrl, setInputUrl] = useState(activeTab?.url || "");
@@ -592,13 +609,23 @@ export function ChromiumPane() {
 
     if (isTauri && engineReady) {
       try {
-        await invoke("browser_navigate", { tabId: activeTab.id, url: next });
+        if (viewModes[activeTab.id] === "native") {
+          const rect = nativeSlotRef.current?.getBoundingClientRect();
+          await invoke("browser_native_view", {
+            tabId: activeTab.id, url: next,
+            x: rect?.x ?? 0, y: rect?.y ?? 0,
+            width: Math.max(1, rect?.width ?? 800),
+            height: Math.max(1, rect?.height ?? 600),
+          });
+        } else {
+          await invoke("browser_navigate", { tabId: activeTab.id, url: next });
+        }
       } catch (e) { setErrorMsg(String(e)); }
     }
     updateBrowserTab(activeTab.id, { url: next, title: next });
     setInputUrl(next);
     addToHistory(next, next);
-  }, [activeTab, engineReady, updateBrowserTab, addToHistory]);
+  }, [activeTab, engineReady, viewModes, updateBrowserTab, addToHistory]);
 
   const handleNewTab = useCallback(async () => {
     const url = "about:blank";
@@ -625,7 +652,16 @@ export function ChromiumPane() {
         }
         await invoke("browser_close_tab", { tabId: id });
       } catch { /* engine already gone — the store close below still runs */ }
+      try {
+        await invoke("browser_native_close", { tabId: id });
+      } catch { /* no native child — nothing to tear down */ }
     }
+    setViewModes((m) => {
+      if (!(id in m)) return m;
+      const next = { ...m };
+      delete next[id];
+      return next;
+    });
     closeBrowserTab(id);
   }, [engineReady, addBrowserTab, closeBrowserTab]);
 
@@ -774,25 +810,43 @@ return { filled: true, hasUser: !!bestUser, hasPass: true };
     setSpinning(true); setTimeout(() => setSpinning(false), 700);
     screenshotRef.current = null; setScreenshot(null);
     if (isTauri && engineReady) {
-      try { await invoke("browser_reload", { tabId: activeTab.id }); } catch { /* */ }
+      try {
+        if (viewModes[activeTab.id] === "native") {
+          await invoke("browser_native_action", { tabId: activeTab.id, action: "reload" });
+        } else {
+          await invoke("browser_reload", { tabId: activeTab.id });
+        }
+      } catch { /* */ }
     }
-  }, [activeTab, engineReady]);
+  }, [activeTab, engineReady, viewModes]);
 
   const goBack = useCallback(async () => {
     if (!activeTab) return;
     screenshotRef.current = null; setScreenshot(null);
     if (isTauri && engineReady) {
-      try { await invoke("browser_go_back", { tabId: activeTab.id }); } catch { /* */ }
+      try {
+        if (viewModes[activeTab.id] === "native") {
+          await invoke("browser_native_action", { tabId: activeTab.id, action: "back" });
+        } else {
+          await invoke("browser_go_back", { tabId: activeTab.id });
+        }
+      } catch { /* */ }
     }
-  }, [activeTab, engineReady]);
+  }, [activeTab, engineReady, viewModes]);
 
   const goForward = useCallback(async () => {
     if (!activeTab) return;
     screenshotRef.current = null; setScreenshot(null);
     if (isTauri && engineReady) {
-      try { await invoke("browser_go_forward", { tabId: activeTab.id }); } catch { /* */ }
+      try {
+        if (viewModes[activeTab.id] === "native") {
+          await invoke("browser_native_action", { tabId: activeTab.id, action: "forward" });
+        } else {
+          await invoke("browser_go_forward", { tabId: activeTab.id });
+        }
+      } catch { /* */ }
     }
-  }, [activeTab, engineReady]);
+  }, [activeTab, engineReady, viewModes]);
 
   // ── Native menu wiring ──
   // The Tauri menu emits `menu-event` with the item id. Menu accelerators
@@ -1140,6 +1194,20 @@ return { filled: true, hasUser: !!bestUser, hasPass: true };
             title="Copy page text">
             {copied ? <Check size={14} /> : <Copy size={14} />}
           </Button>
+          <Button variant="ghost" size="icon"
+            className={`h-7 w-7 transition-all duration-200 ${viewMode === "native" ? "text-accent glow-accent" : "text-muted-foreground hover:text-foreground hover:bg-muted/50"}`}
+            onClick={() => {
+              if (!activeBrowserTabId) return;
+              setViewModes((m) => ({
+                ...m,
+                [activeBrowserTabId]: viewMode === "native" ? "stream" : "native",
+              }));
+            }}
+            title={viewMode === "native"
+              ? "Stream view (CDP Chromium — audits work)"
+              : "Native view (system webview — real feel, no audits)"}>
+            <Layers size={14} />
+          </Button>
         </div>
 
         {/* URL bar with autocomplete */}
@@ -1409,7 +1477,14 @@ return { filled: true, hasUser: !!bestUser, hasPass: true };
               </div>
             </motion.div>
           )}
-          {(liveFrame ?? screenshot) && activeTab?.url && activeTab.url !== "about:blank" ? (
+          {viewMode === "native" && activeTab?.url && activeTab.url !== "about:blank" ? (
+            <>
+              <div ref={nativeSlotRef} className="absolute inset-0" />
+              <div className="absolute left-2 top-2 z-20 rounded border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-[10px] text-sky-200 backdrop-blur-sm">
+                Native view — system engine, no audits{nativeError ? ` (${nativeError})` : ""}
+              </div>
+            </>
+          ) : (liveFrame ?? screenshot) && activeTab?.url && activeTab.url !== "about:blank" ? (
             <motion.img key={`ss-${activeBrowserTabId}`} src={liveFrame ?? screenshot ?? undefined} alt={activeTab.title || "Page"}
               ref={imgRef} draggable={false}
               className="h-full w-full object-contain bg-white select-none"

@@ -918,12 +918,22 @@ async def browser_session_close(session_id: str) -> str:
 
 def _render_flow(result: dict) -> str:
     """Compact pass/fail digest of a flow report (token-lean)."""
+    import json as _json
+
     icon = "PASS" if result.get("ok") else "FAIL"
+    tokens = result.get("tokens_estimate")
+    if tokens is None:
+        try:
+            tokens = max(1, len(_json.dumps(result, separators=(",", ":"))) // 4)
+        except Exception:
+            tokens = None
     lines = [
         f"# Browser test {icon} — {result.get('passed', 0)}/{result.get('total', 0)} steps "
         f"in {result.get('duration_ms', 0)}ms",
         f"final: {result.get('title', '') or '(untitled)'} — {result.get('final_url', '')}",
     ]
+    if tokens is not None:
+        lines[1] += f"\n~{tokens} tokens" + (" · uses JS evaluate" if result.get("uses_evaluate") else "")
     for step in result.get("steps") or []:
         mark = "ok " if step.get("status") == "passed" else "FAIL"
         bit = f"{mark} #{step.get('i')} {step.get('action')}"
@@ -977,7 +987,8 @@ async def browser_test_flow(url: str, steps: str = "[]", allow_domains: str = ""
                             network: str = "", trace: bool = False,
                             har: bool = False, video: bool = False,
                             resolve_sources: bool = False,
-                            storage_state: str = "") -> str:
+                            storage_state: str = "",
+                            forbid_evaluate: bool = False) -> str:
     """
     Test a web app end-to-end in ONE call: opens a browser session, runs a
     declarative step list (navigate / click / type / press / wait / assert_*),
@@ -1012,6 +1023,7 @@ async def browser_test_flow(url: str, steps: str = "[]", allow_domains: str = ""
         video: Capture a video recording
         resolve_sources: Map console errors through source maps to original files
         storage_state: Optional JSON storage state ({cookies,origins}) to seed auth
+        forbid_evaluate: Refuse JS-dependent evaluate steps (evaluate-free coverage)
     """
     import json as _json
 
@@ -1033,6 +1045,7 @@ async def browser_test_flow(url: str, steps: str = "[]", allow_domains: str = ""
         "local": local, "approve": approve, "stop_on_failure": stop_on_failure,
         "network": _load(network, None), "trace": trace, "har": har, "video": video,
         "resolve_sources": resolve_sources, "storage_state": _load(storage_state, None),
+        "forbid_evaluate": forbid_evaluate,
     }, timeout=300.0)
     if "error" in result:
         return f"Test flow failed: {result['error']}"
@@ -1044,7 +1057,8 @@ async def browser_session_run(session_id: str, steps: str,
                               approve: bool = False,
                               stop_on_failure: bool = False,
                               network: str = "",
-                              resolve_sources: bool = False) -> str:
+                              resolve_sources: bool = False,
+                              forbid_evaluate: bool = False) -> str:
     """
     Run a declarative step flow against an existing browser session and return
     a compact pass/fail report (one call instead of many snapshot/act calls).
@@ -1056,6 +1070,7 @@ async def browser_session_run(session_id: str, steps: str,
         stop_on_failure: Stop at the first failed step
         network: Optional JSON request-interception policy (see browser_test_flow)
         resolve_sources: Map console errors through source maps
+        forbid_evaluate: Refuse JS-dependent evaluate steps
     """
     import json as _json
 
@@ -1067,7 +1082,7 @@ async def browser_session_run(session_id: str, steps: str,
     result = await _call_engine("POST", f"/browser/sessions/{session_id}/run", {
         "steps": parsed or [], "approve": approve,
         "stop_on_failure": stop_on_failure, "network": net,
-        "resolve_sources": resolve_sources,
+        "resolve_sources": resolve_sources, "forbid_evaluate": forbid_evaluate,
     }, timeout=300.0)
     if "error" in result:
         return f"Flow failed: {result['error']}"
@@ -1185,8 +1200,10 @@ async def browser_export_playwright(steps: str, name: str = "jambubrowser flow",
 async def browser_import_playwright(code: str) -> str:
     """
     Convert a Playwright Test (.spec.ts) source into a declarative flow for
-    browser_test_flow. Translates the common getBy/keyboard/expect subset;
-    every line it cannot translate is reported so you know what needs a hand.
+    browser_test_flow. Translates the common getBy/keyboard/expect subset,
+    beforeEach setup, test.use baseURL/storageState, test.each data variants,
+    and page.route() policies; every line it cannot translate is reported so
+    you know what needs a hand.
 
     Args:
         code: Playwright Test source text
@@ -1197,6 +1214,11 @@ async def browser_import_playwright(code: str) -> str:
     if "error" in result:
         return f"Import failed: {result['error']}"
     lines = [f"# Imported {result.get('count', 0)} step(s)"]
+    variants = result.get("variants") or []
+    if variants:
+        lines.append(f"data variants ({len(variants)}): " + ", ".join(
+            str(v.get("case")) for v in variants[:6]))
+        lines.append("run a variant's own steps array to execute that case")
     network = result.get("network") or {}
     if network.get("mocks") or network.get("fail"):
         lines.append(

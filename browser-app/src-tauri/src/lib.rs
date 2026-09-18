@@ -5,6 +5,7 @@ mod orchestrator;
 use chromium::manager::ChromiumManager;
 use commands::stream::StreamRegistry;
 use commands::chromium::ScreencastRegistry;
+use chromium::native_view::NativeViewRegistry;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 use tauri::menu::{MenuBuilder, SubmenuBuilder, MenuItemBuilder};
@@ -49,6 +50,7 @@ pub fn run() {
         .manage(app_state)
         .manage(StreamRegistry::default())
         .manage(ScreencastRegistry::default())
+        .manage(NativeViewRegistry::default())
         .setup(move |app| {
             let handle = app.handle().clone();
 
@@ -189,6 +191,11 @@ pub fn run() {
             commands::chromium::browser_capture_screenshot,
             commands::chromium::browser_start_screencast,
             commands::chromium::browser_stop_screencast,
+            chromium::native_view::browser_native_view,
+            chromium::native_view::browser_native_set_rect,
+            chromium::native_view::browser_native_url,
+            chromium::native_view::browser_native_close,
+            chromium::native_view::browser_native_action,
             commands::chromium::browser_evaluate,
             commands::chromium::browser_mouse_event,
             commands::chromium::browser_key_event,
