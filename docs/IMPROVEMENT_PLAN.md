@@ -156,7 +156,7 @@ and optional vision description over screenshots (pixel diff fallback).
 
 ## 2. Verification evidence (how we know it works)
 
-- **Unit/integration:** 64+ backend test files; flow, debug, plan, codegen,
+- **Unit/integration:** 71 backend test files; flow, debug, plan, codegen,
   monitor, dev-server, and route suites run against scripted fake pages
   (no browser needed); receipts, PII scrubbing, and approval gates pinned.
 - **Live:** real Playwright against a real `http.server` on localhost —
