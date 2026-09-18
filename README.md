@@ -282,7 +282,9 @@ python3 -m pytest tests/test_e2e.py -v
 | Evidence | `/evidence/dcm-settlement` | POST | Sign an independent DCM chain verdict |
 | Evidence | `/evidence/verify` | POST | Verify a posted bundle |
 | Evidence | `/evidence/anchor` | POST | Anchor a bundle's payload hash |
-| Browser sessions | `/browser/sessions` | POST | Open a hardened agent session (allowlist, approvals, PII scrub) |
+| Browser sessions | `/browser/sessions` | POST | Open a hardened agent session (allowlist, approvals, PII scrub; `allow_private` for local dev) |
+| Browser sessions | `/browser/sessions/run` | POST | **One-call test flow** — open → run declarative steps → close, with telemetry |
+| Browser sessions | `/browser/sessions/{id}/run` | POST | Run a declarative step flow against an existing session |
 | Browser sessions | `/browser/sessions/{id}/snapshot` | GET | Typed element catalog (`@e1…`) + scrubbed text |
 | Browser sessions | `/browser/sessions/{id}/act` | POST | Deterministic click/type by ref (gated) |
 | Browser sessions | `/browser/sessions/{id}/receipts` | GET | Hash-chained step log + Merkle root |

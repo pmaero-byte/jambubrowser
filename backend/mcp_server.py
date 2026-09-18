@@ -14,7 +14,7 @@ autonomous research, browser automation, and knowledge management.
 - System (4 tools: check_engine_health, get_system_stats, start_mission, stop_mission)
 - DecentraCode Mesh (5 tools: dcm_status, dcm_infer, dcm_models, dcm_earnings, dcm_settlement_log)
 - MeshPay (2 tools: meshpay_audit, meshpay_anchor)
-- Browser Sessions (5 tools: browser_session_open|snapshot|act|receipts|close)
+- Browser Sessions (7 tools: browser_session_open|snapshot|act|run|receipts|close + browser_test_flow)
 - Agent Evaluation (2 tools: agent_eval_certify, agent_eval_verify)
 """
 
@@ -909,6 +909,118 @@ async def browser_session_close(session_id: str) -> str:
     if "error" in result:
         return f"Close failed: {result['error']}"
     return f"Session {session_id} closed ({result.get('steps', 0)} steps recorded)."
+
+
+# ===================================================================
+# TOKEN-EFFICIENT BROWSER TESTING (one call for a whole flow)
+# ===================================================================
+
+def _render_flow(result: dict) -> str:
+    """Compact pass/fail digest of a flow report (token-lean)."""
+    icon = "PASS" if result.get("ok") else "FAIL"
+    lines = [
+        f"# Browser test {icon} — {result.get('passed', 0)}/{result.get('total', 0)} steps "
+        f"in {result.get('duration_ms', 0)}ms",
+        f"final: {result.get('title', '') or '(untitled)'} — {result.get('final_url', '')}",
+    ]
+    for step in result.get("steps") or []:
+        mark = "ok " if step.get("status") == "passed" else "FAIL"
+        bit = f"{mark} #{step.get('i')} {step.get('action')}"
+        if step.get("detail"):
+            bit += f" — {step['detail']}"
+        if step.get("status") == "failed":
+            bit += f" — {step.get('reason')}: {step.get('error')}"
+        lines.append(bit)
+        for cand in step.get("candidates") or []:
+            lines.append(f"      candidate {cand.get('ref')}: {cand.get('name')}")
+    errors = result.get("console_errors") or []
+    if errors:
+        lines.append(f"console errors ({len(errors)}):")
+        lines.extend(f"  - {e[:160]}" for e in errors[:5])
+    failed = result.get("failed_requests") or []
+    if failed:
+        lines.append(f"failed requests ({len(failed)}):")
+        lines.extend(f"  - {r.get('method')} {r.get('url', '')[:110]} — {r.get('failure', '')[:70]}"
+                     for r in failed[:5])
+    bad = result.get("bad_responses") or []
+    if bad:
+        lines.append(f"HTTP >=400 ({len(bad)}):")
+        lines.extend(f"  - {r.get('status')} {r.get('method')} {r.get('url', '')[:110]}"
+                     for r in bad[:5])
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def browser_test_flow(url: str, steps: str = "[]", allow_domains: str = "",
+                            local: bool = False, approve: bool = False,
+                            stop_on_failure: bool = False) -> str:
+    """
+    Test a web app end-to-end in ONE call: opens a browser session, runs a
+    declarative step list (navigate / click / type / press / wait / assert_*),
+    and returns a compact pass/fail report with console errors and failed
+    requests already attached. Prefer this over open→snapshot→act loops to
+    save tool calls.
+
+    Set local=true for localhost / private dev servers (e.g. http://localhost:3000).
+
+    Args:
+        url: Starting URL (also the default allowlist host), e.g. http://localhost:3000
+        steps: JSON array of step objects. Actions: navigate{url}, click{target|ref},
+            type{target|ref,value}, press{key,target?}, hover, select{value},
+            check/uncheck, reload, back, forward, wait{selector|text|url_contains},
+            screenshot, assert_visible/assert_not_visible/assert_text{value}/
+            assert_text_equals/assert_value/assert_url/assert_title/assert_count/
+            assert_checked/assert_unchecked/assert_enabled/assert_disabled/
+            assert_console_clean/assert_no_failed_requests. 'target' matches
+            element text by exact name, unique substring, or "role name".
+        allow_domains: Optional comma-separated allowlist (defaults to url host)
+        local: Allow loopback/private hosts (local dev testing)
+        approve: Approve risky/input actions for every step (delete/pay/send…)
+        stop_on_failure: Stop at the first failed step
+    """
+    import json as _json
+
+    try:
+        parsed = _json.loads(steps) if isinstance(steps, str) else steps
+    except _json.JSONDecodeError as exc:
+        return f"steps is not valid JSON: {exc}"
+    domains = [d.strip() for d in (allow_domains or "").split(",") if d.strip()]
+    result = await _call_engine("POST", "/browser/sessions/run", {
+        "url": url, "steps": parsed or [], "allow_domains": domains,
+        "local": local, "approve": approve, "stop_on_failure": stop_on_failure,
+    }, timeout=300.0)
+    if "error" in result:
+        return f"Test flow failed: {result['error']}"
+    return _render_flow(result)
+
+
+@mcp.tool()
+async def browser_session_run(session_id: str, steps: str,
+                              approve: bool = False,
+                              stop_on_failure: bool = False) -> str:
+    """
+    Run a declarative step flow against an existing browser session and return
+    a compact pass/fail report (one call instead of many snapshot/act calls).
+
+    Args:
+        session_id: Session from browser_session_open
+        steps: JSON array of step objects (see browser_test_flow for actions)
+        approve: Approve risky/input actions for every step
+        stop_on_failure: Stop at the first failed step
+    """
+    import json as _json
+
+    try:
+        parsed = _json.loads(steps) if isinstance(steps, str) else steps
+    except _json.JSONDecodeError as exc:
+        return f"steps is not valid JSON: {exc}"
+    result = await _call_engine("POST", f"/browser/sessions/{session_id}/run", {
+        "steps": parsed or [], "approve": approve,
+        "stop_on_failure": stop_on_failure,
+    }, timeout=300.0)
+    if "error" in result:
+        return f"Flow failed: {result['error']}"
+    return _render_flow(result)
 
 
 # ===================================================================

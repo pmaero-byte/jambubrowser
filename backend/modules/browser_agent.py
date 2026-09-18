@@ -26,7 +26,9 @@ tested without a browser.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import json
 import logging
 import time
 import uuid
@@ -44,6 +46,22 @@ SESSION_TTL_SECONDS = 900
 MAX_STEPS = 200
 MAX_ELEMENTS = 200
 MAX_TEXT_CHARS = 4000
+
+# Flow runner (declarative multi-step agent testing in one tool call).
+MAX_FLOW_STEPS = 100
+MAX_TARGET_CANDIDATES = 5
+MAX_TELEMETRY = 100
+DEFAULT_STEP_TIMEOUT_MS = 5000
+MAX_ASSERT_TEXT = 2000
+
+# Actions that change page state and therefore trigger an internal re-observe.
+_MUTATING_ACTIONS = {
+    "click", "type", "press", "select", "hover", "navigate", "reload",
+    "back", "forward", "check", "uncheck",
+}
+
+# Loopback / private hosts that a *local* test session is allowed to reach.
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0", "host.docker.internal"}
 
 # Words that mark an action as irreversible/high-stakes regardless of session
 # settings. Matched case-insensitively against element name/role/href.
@@ -64,10 +82,16 @@ SNAPSHOT_JS = """
     el.setAttribute('data-jambu-ref', ref);
     const name = (el.innerText || el.value || el.getAttribute('aria-label')
                   || el.getAttribute('placeholder') || '').trim().slice(0, 120);
+    const rect = el.getBoundingClientRect();
+    const style = window.getComputedStyle(el);
+    const visible = rect.width > 0 && rect.height > 0
+                    && style.visibility !== 'hidden' && style.display !== 'none';
     out.elements.push({
       ref, tag: el.tagName.toLowerCase(),
       role: el.getAttribute('role') || '', type: el.getAttribute('type') || '',
       name, href: el.href || '',
+      value: (typeof el.value === 'string' ? el.value.slice(0, 200) : ''),
+      visible, disabled: !!el.disabled, checked: !!el.checked,
     });
     if (out.elements.length >= %d) break;
   }
@@ -89,11 +113,91 @@ class PageAdapter(Protocol):
     async def current_url(self) -> str: ...
 
 
+class Telemetry:
+    """Bounded per-session buffer of console/network/page signals.
+
+    Collected between steps and drained into every flow report, so an agent
+    never has to spend a separate tool call asking "were there console
+    errors?". Bounded on all axes to keep payloads small.
+    """
+
+    def __init__(self, cap: int = MAX_TELEMETRY):
+        self.cap = cap
+        self.console: list[dict] = []
+        self.page_errors: list[str] = []
+        self.failed_requests: list[dict] = []
+        self.bad_responses: list[dict] = []
+
+    @staticmethod
+    def _trim(seq: list, cap: int) -> None:
+        if len(seq) > cap:
+            del seq[: len(seq) - cap]
+
+    def add_console(self, level: str, text: str) -> None:
+        self.console.append({"level": level, "text": (text or "")[:300]})
+        self._trim(self.console, self.cap)
+
+    def add_page_error(self, text: str) -> None:
+        self.page_errors.append((text or "")[:300])
+        self._trim(self.page_errors, self.cap)
+
+    def add_failed_request(self, method: str, url: str, failure: str) -> None:
+        self.failed_requests.append({
+            "method": method, "url": (url or "")[:300], "failure": (failure or "")[:200],
+        })
+        self._trim(self.failed_requests, self.cap)
+
+    def add_response(self, method: str, url: str, status: int) -> None:
+        self.bad_responses.append({
+            "method": method, "url": (url or "")[:300], "status": status,
+        })
+        self._trim(self.bad_responses, self.cap)
+
+    def errors(self) -> list[str]:
+        """Console errors + uncaught page errors as plain strings."""
+        out = [c["text"] for c in self.console if c.get("level") == "error"]
+        return out + list(self.page_errors)
+
+    def snapshot(self) -> dict:
+        return {
+            "console_errors": self.errors(),
+            "console_warnings": [c["text"] for c in self.console if c.get("level") == "warning"],
+            "failed_requests": list(self.failed_requests),
+            "bad_responses": list(self.bad_responses),
+        }
+
+    def drain(self) -> dict:
+        data = self.snapshot()
+        self.console.clear()
+        self.page_errors.clear()
+        self.failed_requests.clear()
+        self.bad_responses.clear()
+        return data
+
+
 class PlaywrightPage:
-    """Adapter over a Playwright page (created by ``BrowserSession``)."""
+    """Adapter over a Playwright page (created by ``BrowserSession``).
+
+    Attaches telemetry listeners at construction so console errors, uncaught
+    exceptions, failed requests and >=400 responses are captured continuously
+    and can be drained per flow rather than fetched with extra calls.
+    """
 
     def __init__(self, page):
         self._page = page
+        self.telemetry = Telemetry()
+        try:
+            page.on("console", lambda msg: self.telemetry.add_console(msg.type, msg.text))
+            page.on("pageerror", lambda exc: self.telemetry.add_page_error(str(exc)))
+            page.on("requestfailed", lambda req: self.telemetry.add_failed_request(
+                req.method, req.url,
+                (req.failure or "") if isinstance(req.failure, str) else str(req.failure or ""),
+            ))
+            page.on("response", lambda resp: self.telemetry.add_response(
+                resp.request.method, resp.url, resp.status,
+            ) if resp.status >= 400 else None)
+        except Exception:  # adapters/fakes without event support
+            pass
 
     async def goto(self, url: str) -> None:
         await self._page.goto(url, wait_until="domcontentloaded", timeout=20000)
@@ -109,6 +213,55 @@ class PlaywrightPage:
 
     async def current_url(self) -> str:
         return self._page.url
+
+    # -- optional capabilities (used by the flow runner when present) ---------
+
+    async def wait_for(self, *, timeout_ms: int = DEFAULT_STEP_TIMEOUT_MS) -> None:
+        await self._page.wait_for_load_state("networkidle", timeout=timeout_ms)
+
+    async def wait_for_selector(self, selector: str,
+                                timeout_ms: int = DEFAULT_STEP_TIMEOUT_MS) -> None:
+        await self._page.wait_for_selector(selector, timeout=timeout_ms)
+
+    async def wait_for_text(self, text: str,
+                            timeout_ms: int = DEFAULT_STEP_TIMEOUT_MS) -> None:
+        await self._page.get_by_text(text, exact=False).first.wait_for(
+            state="visible", timeout=timeout_ms,
+        )
+
+    async def press(self, ref: str, key: str) -> None:
+        target = f'[data-jambu-ref="{ref}"]' if ref else "body"
+        await self._page.press(target, key, timeout=10000)
+
+    async def hover(self, ref: str) -> None:
+        await self._page.hover(f'[data-jambu-ref="{ref}"]', timeout=10000)
+
+    async def select_option(self, ref: str, value: str) -> None:
+        await self._page.select_option(f'[data-jambu-ref="{ref}"]', value, timeout=10000)
+
+    async def check(self, ref: str, checked: bool = True) -> None:
+        await self._page.set_checked(f'[data-jambu-ref="{ref}"]', checked, timeout=10000)
+
+    async def reload(self) -> None:
+        await self._page.reload(wait_until="domcontentloaded", timeout=20000)
+
+    async def go_back(self) -> None:
+        await self._page.go_back(wait_until="domcontentloaded", timeout=20000)
+
+    async def go_forward(self) -> None:
+        await self._page.go_forward(wait_until="domcontentloaded", timeout=20000)
+
+    async def screenshot(self, full_page: bool = False) -> str:
+        import base64
+
+        raw = await self._page.screenshot(full_page=full_page)
+        return base64.b64encode(raw).decode("ascii")
+
+    def drain_telemetry(self) -> dict:
+        return self.telemetry.drain()
+
+    def peek_telemetry(self) -> dict:
+        return self.telemetry.snapshot()
 
 
 # ---------------------------------------------------------------------------
@@ -139,9 +292,10 @@ class Step:
 class SessionRefused(Exception):
     """A safety rail refused the action (allowlist, approval, SSRF)."""
 
-    def __init__(self, reason: str, detail: str = ""):
+    def __init__(self, reason: str, detail: str = "", candidates: Optional[list] = None):
         self.reason = reason
         self.detail = detail
+        self.candidates = candidates or []
         super().__init__(detail or reason)
 
 
@@ -173,6 +327,72 @@ def classify_risk(*parts: str) -> Optional[str]:
     return None
 
 
+def normalize_flow_steps(steps) -> list[dict]:
+    """Accept a JSON string, a ``{"steps": [...]}`` wrapper, or a list.
+
+    Bare strings become navigate steps (``["https://x", ...]``), which keeps
+    the common smoke-test case terse.
+    """
+    if isinstance(steps, str):
+        try:
+            steps = json.loads(steps)
+        except json.JSONDecodeError as exc:
+            raise SessionRefused("invalid_flow", f"steps is not valid JSON: {exc}") from exc
+    if isinstance(steps, dict):
+        steps = steps.get("steps")
+    if not isinstance(steps, list) or not steps:
+        raise SessionRefused("invalid_flow", "steps must be a non-empty list")
+    if len(steps) > MAX_FLOW_STEPS:
+        raise SessionRefused("flow_too_long", f"max {MAX_FLOW_STEPS} steps per flow")
+    out: list[dict] = []
+    for step in steps:
+        if isinstance(step, dict):
+            out.append(step)
+        elif isinstance(step, str):
+            out.append({"action": "navigate", "url": step})
+        else:
+            raise SessionRefused("invalid_step", f"unsupported step: {step!r}")
+    return out
+
+
+def render_flow_report(report: dict, *, max_errors: int = 5) -> str:
+    """Render a flow report as a compact, token-lean Markdown digest."""
+    icon = "PASS" if report.get("ok") else "FAIL"
+    head = (
+        f"# Browser test {icon} — {report.get('passed', 0)}/{report.get('total', 0)} steps "
+        f"in {report.get('duration_ms', 0)}ms\n"
+        f"final: {report.get('title', '') or '(untitled)'} — {report.get('final_url', '')}"
+    )
+    lines = [head, ""]
+    for step in report.get("steps") or []:
+        mark = "ok " if step.get("status") == "passed" else "FAIL"
+        bit = f"{mark} #{step.get('i')} {step.get('action')}"
+        if step.get("detail"):
+            bit += f" — {step['detail']}"
+        if step.get("status") == "failed":
+            bit += f" — {step.get('reason')}: {step.get('error')}"
+        lines.append(bit)
+        for cand in step.get("candidates") or []:
+            lines.append(f"      candidate {cand.get('ref')}: {cand.get('name')}")
+
+    errors = report.get("console_errors") or []
+    if errors:
+        lines.append(f"\nconsole errors ({len(errors)}):")
+        lines.extend(f"  - {e[:160]}" for e in errors[:max_errors])
+    failed_reqs = report.get("failed_requests") or []
+    if failed_reqs:
+        lines.append(f"\nfailed requests ({len(failed_reqs)}):")
+        lines.extend(
+            f"  - {r.get('method')} {r.get('url')[:120]} — {r.get('failure')[:80]}"
+            for r in failed_reqs[:max_errors]
+        )
+    bad = report.get("bad_responses") or []
+    if bad:
+        lines.append(f"\nHTTP >=400 ({len(bad)}):")
+        lines.extend(f"  - {r.get('status')} {r.get('method')} {r.get('url')[:120]}" for r in bad[:max_errors])
+    return "\n".join(lines)
+
+
 class BrowserAgentSession:
     """One agent-facing session: catalog snapshots, gated actions, receipts."""
 
@@ -184,6 +404,7 @@ class BrowserAgentSession:
         allow_domains: list[str],
         require_approval: bool = True,
         scrub_pii: bool = True,
+        allow_private: bool = False,
         created_at: Optional[float] = None,
     ):
         if not allow_domains:
@@ -193,6 +414,9 @@ class BrowserAgentSession:
         self.allow_domains = [d.strip() for d in allow_domains if d.strip()]
         self.require_approval = require_approval
         self.scrub_pii = scrub_pii
+        # Local dev testing: permit loopback/private hosts, but only for hosts
+        # that also appear in the explicit allowlist (both gates must agree).
+        self.allow_private = allow_private
         self.created_at = created_at or time.time()
         self.steps: list[Step] = []
         self.catalog: dict[str, dict] = {}
@@ -231,7 +455,7 @@ class BrowserAgentSession:
         return step
 
     def _check_navigation(self, url: str) -> None:
-        if not is_safe_url(url):
+        if not is_safe_url(url, allow_private=self.allow_private):
             raise SessionRefused("unsafe_url", f"URL failed safety checks: {url}")
         if not host_allowed(_host(url), self.allow_domains):
             raise SessionRefused(
@@ -263,6 +487,7 @@ class BrowserAgentSession:
             "allow_domains": self.allow_domains,
             "require_approval": self.require_approval,
             "scrub_pii": self.scrub_pii,
+            "allow_private": self.allow_private,
             "created_at": self.created_at,
             "age_seconds": round(time.time() - self.created_at, 1),
             "steps": len(self.steps),
@@ -292,7 +517,12 @@ class BrowserAgentSession:
         step = self._record("navigate", "ok", url=self.last_url)
         return {"url": self.last_url, "step": step.to_dict()}
 
-    async def snapshot(self) -> dict:
+    async def _read_state(self) -> dict:
+        """Fetch + scrub the current page state and refresh the catalog.
+
+        Does *not* append a receipt — internal re-observations between flow
+        steps should not pollute the audited step log.
+        """
         raw = await self.page.snapshot()
         elements = []
         for element in (raw.get("elements") or [])[:MAX_ELEMENTS]:
@@ -303,6 +533,10 @@ class BrowserAgentSession:
                 "type": element.get("type"),
                 "name": self._scrub(element.get("name") or ""),
                 "href": self._scrub(element.get("href") or ""),
+                "value": self._scrub(element.get("value") or ""),
+                "visible": element.get("visible", True),
+                "disabled": bool(element.get("disabled", False)),
+                "checked": element.get("checked"),
                 "risk": classify_risk(
                     element.get("name") or "", element.get("href") or "",
                 ),
@@ -310,8 +544,6 @@ class BrowserAgentSession:
         self.catalog = {e["ref"]: e for e in elements if e.get("ref")}
         text = self._scrub((raw.get("text") or "")[:MAX_TEXT_CHARS])
         self.last_url = raw.get("url") or self.last_url
-        self._record("snapshot", "ok", url=self.last_url,
-                     detail=f"{len(elements)} elements")
         return {
             "url": self.last_url,
             "title": self._scrub(raw.get("title") or ""),
@@ -319,6 +551,12 @@ class BrowserAgentSession:
             "elements": elements,
             "count": len(elements),
         }
+
+    async def snapshot(self) -> dict:
+        state = await self._read_state()
+        self._record("snapshot", "ok", url=self.last_url,
+                     detail=f"{state['count']} elements")
+        return state
 
     async def act(self, action: str, ref: str, *, text: str = "",
                   approve: bool = False) -> dict:
@@ -370,6 +608,367 @@ class BrowserAgentSession:
                             detail=(text[:40] if action == "type" and text else ""))
         return {"outcome": "ok", "url": self.last_url, "step": step.to_dict()}
 
+    # -- target resolution (act by intent, not just by ref) ------------------
+
+    def resolve_target(self, target: str) -> str:
+        """Resolve a ref or a human-readable target to a catalog ref.
+
+        Accepts ``@e3`` refs, exact names, role-prefixed names
+        ("button Sign in"), and unique substrings. Ambiguity raises with a
+        bounded candidate list so the agent can retry in one fewer round trip.
+        """
+        if not target or not str(target).strip():
+            raise SessionRefused("target_required", "step needs a 'ref' or 'target'")
+        t = str(target).strip()
+        if t in self.catalog:
+            return t
+        if t.startswith("@e"):
+            raise SessionRefused(
+                "unknown_ref", f"{t} is not in the current snapshot — snapshot again",
+            )
+        low = t.lower()
+
+        def match(pred) -> list[str]:
+            return [r for r, e in self.catalog.items() if pred(e)]
+
+        exact = match(lambda e: (e.get("name") or "").strip().lower() == low)
+        if len(exact) == 1:
+            return exact[0]
+
+        parts = low.split(None, 1)
+        if len(parts) == 2 and parts[0] in {
+            "button", "link", "input", "select", "textarea", "tab", "checkbox", "a",
+        }:
+            role, rest = parts
+            role_hits = match(
+                lambda e: (e.get("role") or e.get("tag") or "").lower() == role
+                and rest in (e.get("name") or "").lower()
+            )
+            if len(role_hits) == 1:
+                return role_hits[0]
+
+        contains = match(lambda e: low in (e.get("name") or "").lower())
+        if len(contains) == 1:
+            return contains[0]
+
+        pool = exact or contains
+        candidates = [
+            {
+                "ref": r, "tag": self.catalog[r].get("tag"),
+                "role": self.catalog[r].get("role"),
+                "name": (self.catalog[r].get("name") or "")[:60],
+            }
+            for r in pool[:MAX_TARGET_CANDIDATES]
+        ]
+        if candidates:
+            raise SessionRefused(
+                "target_ambiguous",
+                f"{target!r} matched {len(pool)} elements; use a ref",
+                candidates=candidates,
+            )
+        raise SessionRefused(
+            "target_not_found",
+            f"no element matches {target!r}",
+            candidates=[
+                {"ref": r, "name": (e.get("name") or "")[:50]}
+                for r, e in list(self.catalog.items())[:MAX_TARGET_CANDIDATES]
+            ],
+        )
+
+    async def _target(self, step: dict) -> str:
+        if not self.catalog:
+            await self._read_state()
+        target = step.get("ref") or step.get("target") or step.get("name") or ""
+        return self.resolve_target(target)
+
+    # -- optional adapter capabilities --------------------------------------
+
+    async def _call_optional(self, name: str, *args, **kwargs):
+        fn = getattr(self.page, name, None)
+        if fn is None:
+            raise SessionRefused(
+                "unsupported_action", f"page adapter does not support {name!r}",
+            )
+        return await fn(*args, **kwargs)
+
+    def _drain_telemetry(self) -> dict:
+        drain = getattr(self.page, "drain_telemetry", None)
+        if callable(drain):
+            try:
+                return drain() or {}
+            except Exception:
+                return {}
+        return {}
+
+    def _peek_telemetry(self) -> dict:
+        peek = getattr(self.page, "peek_telemetry", None)
+        if callable(peek):
+            try:
+                return peek() or {}
+            except Exception:
+                return {}
+        return {}
+
+    async def _safe_state(self) -> dict:
+        try:
+            return await self._read_state()
+        except Exception:
+            return {"url": self.last_url, "title": "", "text": "", "elements": [], "count": 0}
+
+    # -- declarative flow runner --------------------------------------------
+
+    async def run_flow(
+        self, steps, *, approve: bool = False, stop_on_failure: bool = False,
+        observe: bool = True,
+    ) -> dict:
+        """Execute a declarative list of steps and return one compact report.
+
+        This is the token-efficiency centrepiece: the agent describes the whole
+        test once; the runner performs navigation, intent-based clicks/types,
+        waits, assertions and re-observation internally, and hands back a
+        pass/fail digest plus auto-collected console/network telemetry — no
+        snapshot/act round trips per step.
+        """
+        normalized = normalize_flow_steps(steps)
+        results: list[dict] = []
+        passed = failed = 0
+        started = time.time()
+
+        for i, step in enumerate(normalized, 1):
+            t0 = time.time()
+            action = (step.get("action") or "?").strip().lower()
+            result: dict = {"i": i, "action": action, "status": "passed"}
+            try:
+                step_approve = bool(step.get("approve", approve))
+                detail, evidence = await self._run_step(
+                    step, approve=step_approve, observe=observe,
+                )
+                if detail:
+                    result["detail"] = detail
+                if evidence:
+                    result.update(evidence)
+                passed += 1
+            except SessionRefused as refusal:
+                result["status"] = "failed"
+                result["reason"] = refusal.reason
+                result["error"] = refusal.detail or refusal.reason
+                if refusal.candidates:
+                    result["candidates"] = refusal.candidates
+                failed += 1
+            except Exception as exc:  # unexpected page/tool error
+                result["status"] = "failed"
+                result["reason"] = "error"
+                result["error"] = str(exc)[:300]
+                failed += 1
+            result["ms"] = int((time.time() - t0) * 1000)
+            results.append(result)
+            if result["status"] == "failed" and stop_on_failure:
+                break
+
+        telemetry = self._drain_telemetry()
+        state = await self._safe_state()
+        report = {
+            "ok": failed == 0,
+            "passed": passed,
+            "failed": failed,
+            "total": len(results),
+            "steps": results,
+            "console_errors": telemetry.get("console_errors", []),
+            "console_warnings": telemetry.get("console_warnings", []),
+            "failed_requests": telemetry.get("failed_requests", []),
+            "bad_responses": telemetry.get("bad_responses", []),
+            "final_url": state.get("url", self.last_url),
+            "title": state.get("title", ""),
+            "duration_ms": int((time.time() - started) * 1000),
+        }
+        self._record(
+            "run_flow", "ok" if report["ok"] else "failed",
+            detail=f"{passed}/{len(results)} steps passed",
+        )
+        return report
+
+    async def _run_step(self, step: dict, *, approve: bool, observe: bool):
+        action = (step.get("action") or "").strip().lower()
+        if not action:
+            raise SessionRefused("invalid_step", "step is missing 'action'")
+        timeout = int(step.get("timeout", DEFAULT_STEP_TIMEOUT_MS))
+
+        if action == "navigate":
+            url = step.get("url") or step.get("value") or ""
+            if not url:
+                raise SessionRefused("invalid_step", "navigate requires 'url'")
+            res = await self.navigate(url)
+            if observe:
+                await self._read_state()
+            return f"→ {res['url']}", {}
+
+        if action in ("reload", "back", "forward"):
+            await self._call_optional({"reload": "reload", "back": "go_back",
+                                       "forward": "go_forward"}[action])
+            await self._read_state()
+            return action, {}
+
+        if action in ("click", "type"):
+            ref = await self._target(step)
+            if action == "click":
+                res = await self.act("click", ref, approve=approve)
+                if observe:
+                    await self._read_state()
+                return f"clicked {ref}", {"url": res["url"]}
+            value = step.get("value", step.get("text", ""))
+            await self.act("type", ref, text=value, approve=approve)
+            if observe:
+                await self._read_state()
+            return f"typed {value[:40]!r} into {ref}", {}
+
+        if action == "press":
+            key = step.get("key") or step.get("value") or "Enter"
+            ref = ""
+            if step.get("target") or step.get("ref"):
+                ref = await self._target(step)
+            await self._call_optional("press", ref, key)
+            await self._read_state()
+            return f"pressed {key}", {}
+
+        if action == "hover":
+            ref = await self._target(step)
+            await self._call_optional("hover", ref)
+            if observe:
+                await self._read_state()
+            return f"hovered {ref}", {}
+
+        if action == "select":
+            ref = await self._target(step)
+            await self._call_optional("select_option", ref, step.get("value", ""))
+            if observe:
+                await self._read_state()
+            return f"selected in {ref}", {}
+
+        if action in ("check", "uncheck"):
+            ref = await self._target(step)
+            await self._call_optional("check", ref, action == "check")
+            if observe:
+                await self._read_state()
+            return f"{action} {ref}", {}
+
+        if action in ("wait", "wait_for"):
+            await self._run_wait(step, timeout)
+            await self._read_state()
+            return "waited", {}
+
+        if action == "screenshot":
+            b64 = await self._call_optional("screenshot", bool(step.get("full_page", False)))
+            return "screenshot captured", {
+                "screenshot_base64": b64,
+                "screenshot_bytes": len(b64) * 3 // 4,
+            }
+
+        if action == "assert" or action.startswith("assert_"):
+            state = await self._read_state()
+            passed, message = self._evaluate_assert(step, state)
+            if not passed:
+                raise SessionRefused("assertion_failed", message)
+            return message, {}
+
+        raise SessionRefused("unknown_action", f"unsupported action: {action}")
+
+    async def _run_wait(self, step: dict, timeout: int) -> None:
+        if step.get("selector"):
+            await self._call_optional("wait_for_selector", step["selector"], timeout)
+            return
+        if step.get("text"):
+            await self._call_optional("wait_for_text", step["text"], timeout)
+            return
+        if step.get("url_contains"):
+            deadline = time.time() + timeout / 1000
+            while time.time() < deadline:
+                if step["url_contains"] in await self.page.current_url():
+                    return
+                await asyncio.sleep(0.1)
+            raise SessionRefused(
+                "wait_timeout", f"url never contained {step['url_contains']!r}",
+            )
+        await self._call_optional("wait_for", timeout_ms=timeout)
+
+    def _evaluate_assert(self, step: dict, state: dict) -> tuple[bool, str]:
+        action = (step.get("action") or "").strip().lower()
+        kind = (step.get("kind") or
+                (action[len("assert_"):] if action.startswith("assert_") else "")).strip().lower()
+        kind = kind or "visible"
+        target = step.get("target") or step.get("name") or ""
+        value = str(step.get("value", step.get("expected", "")))
+
+        element = None
+        if target:
+            try:
+                element = self.catalog.get(self.resolve_target(target))
+            except SessionRefused:
+                element = None
+
+        if kind == "visible":
+            if element is not None:
+                ok = element.get("visible") is not False
+                return ok, (f"visible: {target}" if ok else f"not visible: {target}")
+            # Non-interactive content (headings, panels, text) is not in the
+            # element catalog; fall back to rendered page text (innerText
+            # respects display:none, so hidden content stays hidden).
+            text_hit = (target or "").lower() in (state.get("text") or "").lower()
+            return text_hit, (f"visible text: {target}" if text_hit
+                              else f"element/text missing: {target}")
+        if kind in ("not_visible", "hidden"):
+            if element is not None:
+                ok = element.get("visible") is False
+                return ok, (f"not visible: {target}" if ok else f"still visible: {target}")
+            text_hit = (target or "").lower() in (state.get("text") or "").lower()
+            return (not text_hit), (f"not visible: {target}" if not text_hit
+                                    else f"text still present: {target}")
+        if kind in ("text", "text_contains"):
+            blob = (element or {}).get("name") if element else state.get("text", "")
+            blob = blob or (state.get("text", "") if not element else "")
+            ok = value.lower() in (blob or "").lower()
+            return ok, (f"text contains {value!r}" if ok else f"text missing {value!r}")
+        if kind == "text_equals":
+            blob = (element or {}).get("name") if element else state.get("text", "")
+            ok = (blob or "").strip() == value.strip()
+            return ok, (f"text == {value!r}" if ok else f"text != {value!r}")
+        if kind == "value":
+            ok = value.lower() in ((element or {}).get("value") or "").lower()
+            return ok, (f"value contains {value!r}" if ok else f"value missing {value!r}")
+        if kind == "url":
+            ok = value in state.get("url", "")
+            return ok, (f"url contains {value!r}" if ok else f"url does not contain {value!r}")
+        if kind == "title":
+            ok = value.lower() in (state.get("title", "") or "").lower()
+            return ok, (f"title contains {value!r}" if ok else f"title missing {value!r}")
+        if kind == "count":
+            if target:
+                n = sum(1 for e in self.catalog.values()
+                        if target.lower() in (e.get("name") or "").lower())
+            else:
+                n = len(self.catalog)
+            ok = n == int(value or 0)
+            return ok, (f"count == {n}" if ok else f"count {n} != {value}")
+        if kind == "checked":
+            ok = bool(element) and element.get("checked") is True
+            return ok, ("checked" if ok else f"not checked: {target}")
+        if kind in ("unchecked", "not_checked"):
+            ok = element is None or element.get("checked") is not True
+            return ok, ("unchecked" if ok else f"checked: {target}")
+        if kind == "enabled":
+            ok = bool(element) and not element.get("disabled")
+            return ok, ("enabled" if ok else f"disabled/missing: {target}")
+        if kind == "disabled":
+            ok = bool(element) and element.get("disabled")
+            return ok, ("disabled" if ok else f"enabled/missing: {target}")
+        if kind in ("console_clean", "no_console_errors"):
+            errors = self._peek_telemetry().get("console_errors", [])
+            return (not errors), ("console clean" if not errors else f"{len(errors)} console error(s)")
+        if kind in ("no_failed_requests", "network_clean"):
+            failed_reqs = self._peek_telemetry().get("failed_requests", [])
+            return (not failed_reqs), ("no failed requests" if not failed_reqs
+                                       else f"{len(failed_reqs)} failed request(s)")
+        raise SessionRefused("unknown_assertion", f"unsupported assertion kind: {kind}")
+
     def receipts(self) -> dict:
         hashes = [s.step_hash for s in self.steps if s.step_hash]
         return {
@@ -407,6 +1006,7 @@ class BrowserAgentService:
     async def open(
         self, *, allow_domains: list[str], require_approval: bool = True,
         scrub_pii: bool = True, privacy_level: Optional[str] = None,
+        allow_private: bool = False,
     ) -> BrowserAgentSession:
         self._prune()
         if len(self._sessions) >= self.max_sessions:
@@ -428,6 +1028,7 @@ class BrowserAgentService:
         agent = BrowserAgentSession(
             session_id, PlaywrightPage(page), allow_domains=allow_domains,
             require_approval=require_approval, scrub_pii=scrub_pii,
+            allow_private=allow_private,
         )
         self._sessions[session_id] = agent
         self._browser_sessions[session_id] = browser_session
@@ -439,6 +1040,45 @@ class BrowserAgentService:
         if session is None:
             raise SessionRefused("not_found", f"no such session: {session_id}")
         return session
+
+    async def run_test(
+        self, *, url: str, steps=None, allow_domains: Optional[list[str]] = None,
+        local: bool = False, approve: bool = False, stop_on_failure: bool = False,
+        privacy_level: Optional[str] = None, scrub_pii: bool = True,
+    ) -> dict:
+        """One-shot: open an ephemeral session, run a flow, close, return report.
+
+        The single-call entry point for agents testing a local app. The
+        allowlist defaults to the target URL's host; ``local=True`` additionally
+        permits loopback/private hosts (the dev server case).
+        """
+        host = _host(url).lower()
+        if not host:
+            raise SessionRefused("invalid_url", f"could not parse a host from {url!r}")
+        domains = [d.strip().lower() for d in (allow_domains or []) if d and d.strip()]
+        if local or not domains:
+            if host not in domains:
+                domains.append(host)
+        session = await self.open(
+            allow_domains=domains, require_approval=False, scrub_pii=scrub_pii,
+            privacy_level=privacy_level, allow_private=local,
+        )
+        try:
+            flow = normalize_flow_steps(steps) if steps else []
+            if not any((s.get("action") or "").lower() == "navigate" for s in flow):
+                flow = [{"action": "navigate", "url": url}] + flow
+            report = await session.run_flow(
+                flow, approve=approve, stop_on_failure=stop_on_failure,
+            )
+            receipts = session.receipts()
+        finally:
+            await self.close(session.id)
+        report["session_id"] = session.id
+        report["allow_domains"] = domains
+        report["receipts"] = {
+            "count": receipts["count"], "merkle_root": receipts["merkle_root"],
+        }
+        return report
 
     def list(self) -> list[dict]:
         self._prune()
@@ -452,7 +1092,12 @@ class BrowserAgentService:
         browser_session = self._browser_sessions.pop(session_id, None)
         if browser_session is not None:
             try:
-                await browser_session.close()
+                # BrowserSession exposes stop(); tolerate a close() alias.
+                teardown = getattr(browser_session, "stop", None) or getattr(
+                    browser_session, "close", None,
+                )
+                if teardown is not None:
+                    await teardown()
             except Exception:
                 log.warning("failed to close browser session %s", session_id, exc_info=True)
         return {"session_id": session_id, "closed": True, "steps": len(session.steps)}

@@ -53,7 +53,7 @@ ENGINE_URL_ENV = "JAMBU_ENGINE_URL"
 # ---------------------------------------------------------------------------
 
 def _expected_tool_names() -> set[str]:
-    """The canonical 35-tool surface exposed by backend/mcp_server.py.
+    """The canonical 37-tool surface exposed by backend/mcp_server.py.
 
     Listed here (not imported) because the server uses @mcp.tool() decorators
     at module-import time; we want this test to fail loudly if any tool is
@@ -80,9 +80,10 @@ def _expected_tool_names() -> set[str]:
         "dcm_earnings", "dcm_settlement_log",
         # MeshPay (2)
         "meshpay_audit", "meshpay_anchor",
-        # Browser Sessions (5)
+        # Browser Sessions (7)
         "browser_session_open", "browser_session_snapshot", "browser_session_act",
         "browser_session_receipts", "browser_session_close",
+        "browser_session_run", "browser_test_flow",
         # Agent Evaluation (2)
         "agent_eval_certify", "agent_eval_verify",
     }

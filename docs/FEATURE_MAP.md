@@ -109,6 +109,13 @@ browser, captures real telemetry, and exposes a DevTools-grade view of
 the page being audited.
 
 ### What exists today
+- **Token-efficient test flows** (`backend/modules/browser_agent.py`, 2026-09) —
+  one-call declarative testing: `browser_test_flow` / `POST /browser/sessions/run`
+  open a session, run a step list (navigate/click/type/press/wait/assert_*),
+  resolve elements by intent, auto-attach console/network telemetry, and return
+  a compact pass/fail report — collapsing a 40–50-call loop into one call. Local
+  dev servers are reachable via the explicit `local=true`/`allow_private` opt-in.
+  See `docs/BROWSER_TESTING.md`.
 - **Inline browser pane** (`browser-app/src/components/browser/BrowserPane.tsx`,
   262 LOC) — iframe with tabs, URL bar, navigation, plus a devtools toggle
   wired to `devtoolsStore`.

@@ -336,6 +336,49 @@ async def browser_fill(
         return {"selector": selector, "error": str(e)}
 
 
+def _compact_flow(report: dict) -> dict:
+    """Strip bulky screenshot payloads from a flow report (agent token budget)."""
+    steps = []
+    for step in report.get("steps") or []:
+        step = dict(step)
+        if "screenshot_base64" in step:
+            step["screenshot"] = "captured"
+            step.pop("screenshot_base64", None)
+        steps.append(step)
+    out = dict(report)
+    out["steps"] = steps
+    return out
+
+
+async def browser_test_flow(
+    url: Annotated[str, "Starting URL, e.g. http://localhost:3000"],
+    steps: Annotated[str, "JSON array of step objects (navigate/click/type/press/wait/assert_*)"],
+    local: Annotated[bool, "Allow localhost/private hosts for local dev testing"] = True,
+    approve: Annotated[bool, "Approve risky/input actions (delete/pay/send) for every step"] = False,
+    stop_on_failure: Annotated[bool, "Stop at the first failed step"] = False,
+) -> dict:
+    """Test a web app end-to-end in ONE call.
+
+    Runs a declarative flow (navigate / click / type / press / wait / assert_*)
+    against a URL and returns a compact pass/fail report with console errors and
+    failed requests already attached. Prefer this over repeated
+    navigate/click/extract calls to conserve steps and tokens.
+    """
+    try:
+        parsed = json.loads(steps) if isinstance(steps, str) else steps
+    except json.JSONDecodeError as e:
+        return {"error": f"steps is not valid JSON: {e}"}
+    try:
+        from backend.modules.browser_agent import get_browser_agent_service
+        report = await get_browser_agent_service().run_test(
+            url=url, steps=parsed, local=local, approve=approve,
+            stop_on_failure=stop_on_failure,
+        )
+    except Exception as e:
+        return {"url": url, "error": str(e)}
+    return _compact_flow(report)
+
+
 # ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
@@ -416,6 +459,53 @@ def register_builtin_tools(registry: Optional[ToolRegistry] = None) -> ToolRegis
     r.register(
         "browser_fill", browser_fill,
         description="Type text into a form field (CSS selector) on the current page.",
+        requires_network=True,
+        risk_level=RiskLevel.MEDIUM,
+    )
+    r.register(
+        "browser_test_flow", browser_test_flow,
+        description=(
+            "Test a web app end-to-end in ONE call: run a declarative flow "
+            "(navigate/click/type/press/wait/assert_*) against a URL and get a "
+            "compact pass/fail report with console errors attached. Use "
+            "local=true for localhost dev servers."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "Starting URL, e.g. http://localhost:3000",
+                },
+                "steps": {
+                    "type": "string",
+                    "description": (
+                        "JSON array of step objects. Actions: navigate{url}, "
+                        "click{target|ref}, type{target|ref,value}, press{key}, "
+                        "hover, select{value}, check/uncheck, reload, back, "
+                        "forward, wait{selector|text|url_contains}, screenshot, "
+                        "assert_visible/assert_not_visible/assert_text{value}/"
+                        "assert_text_equals/assert_value/assert_url/assert_title/"
+                        "assert_count/assert_checked/assert_console_clean/"
+                        "assert_no_failed_requests. 'target' matches element text "
+                        "by exact name, unique substring, or \"role name\"."
+                    ),
+                },
+                "local": {
+                    "type": "boolean", "default": True,
+                    "description": "Allow localhost/private hosts (local dev testing)",
+                },
+                "approve": {
+                    "type": "boolean", "default": False,
+                    "description": "Approve risky/input actions for every step",
+                },
+                "stop_on_failure": {
+                    "type": "boolean", "default": False,
+                    "description": "Stop at the first failed step",
+                },
+            },
+            "required": ["url", "steps"],
+        },
         requires_network=True,
         risk_level=RiskLevel.MEDIUM,
     )

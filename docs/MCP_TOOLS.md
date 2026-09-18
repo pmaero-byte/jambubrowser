@@ -2,7 +2,7 @@
 
 Auto-generated from `backend/mcp_server.py` by `tools/mcp/generate_docs.py`. Do not edit by hand — re-run the generator after adding or renaming a tool.
 
-**Total tools:** 35
+**Total tools:** 37
 
 ## Table of contents
 
@@ -13,7 +13,9 @@ Auto-generated from `backend/mcp_server.py` by `tools/mcp/generate_docs.py`. Do 
 - [`browser_session_close`](#browser_session_close)
 - [`browser_session_open`](#browser_session_open)
 - [`browser_session_receipts`](#browser_session_receipts)
+- [`browser_session_run`](#browser_session_run)
 - [`browser_session_snapshot`](#browser_session_snapshot)
+- [`browser_test_flow`](#browser_test_flow)
 - [`check_engine_health`](#check_engine_health)
 - [`click_element`](#click_element)
 - [`dcm_earnings`](#dcm_earnings)
@@ -167,6 +169,25 @@ with the Merkle root that can be signed into an evidence bundle.
 Args:
     session_id: Session id
 
+### `browser_session_run`
+
+**Signature**
+
+```python
+browser_session_run(session_id: str, steps: str, approve: bool = False, stop_on_failure: bool = False)
+```
+
+**Description**
+
+Run a declarative step flow against an existing browser session and return
+a compact pass/fail report (one call instead of many snapshot/act calls).
+
+Args:
+    session_id: Session from browser_session_open
+    steps: JSON array of step objects (see browser_test_flow for actions)
+    approve: Approve risky/input actions for every step
+    stop_on_failure: Stop at the first failed step
+
 ### `browser_session_snapshot`
 
 **Signature**
@@ -182,6 +203,39 @@ catalog (refs @e1…). Act on refs, never on selector guesses.
 
 Args:
     session_id: Session from browser_session_open
+
+### `browser_test_flow`
+
+**Signature**
+
+```python
+browser_test_flow(url: str, steps: str = '[]', allow_domains: str = '', local: bool = False, approve: bool = False, stop_on_failure: bool = False)
+```
+
+**Description**
+
+Test a web app end-to-end in ONE call: opens a browser session, runs a
+declarative step list (navigate / click / type / press / wait / assert_*),
+and returns a compact pass/fail report with console errors and failed
+requests already attached. Prefer this over open→snapshot→act loops to
+save tool calls.
+
+Set local=true for localhost / private dev servers (e.g. http://localhost:3000).
+
+Args:
+    url: Starting URL (also the default allowlist host), e.g. http://localhost:3000
+    steps: JSON array of step objects. Actions: navigate{url}, click{target|ref},
+        type{target|ref,value}, press{key,target?}, hover, select{value},
+        check/uncheck, reload, back, forward, wait{selector|text|url_contains},
+        screenshot, assert_visible/assert_not_visible/assert_text{value}/
+        assert_text_equals/assert_value/assert_url/assert_title/assert_count/
+        assert_checked/assert_unchecked/assert_enabled/assert_disabled/
+        assert_console_clean/assert_no_failed_requests. 'target' matches
+        element text by exact name, unique substring, or "role name".
+    allow_domains: Optional comma-separated allowlist (defaults to url host)
+    local: Allow loopback/private hosts (local dev testing)
+    approve: Approve risky/input actions for every step (delete/pay/send…)
+    stop_on_failure: Stop at the first failed step
 
 ### `check_engine_health`
 

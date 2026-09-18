@@ -34,6 +34,7 @@ class OpenRequest(BaseModel):
     require_approval: bool = True
     scrub_pii: bool = True
     privacy_level: Optional[str] = None
+    allow_private: bool = False
 
     @validator("allow_domains")
     def validate_domains(cls, v):
@@ -54,6 +55,24 @@ class ActRequest(BaseModel):
     approve: bool = False
 
 
+class RunFlowRequest(BaseModel):
+    steps: list[dict]
+    approve: bool = False
+    stop_on_failure: bool = False
+    observe: bool = True
+
+
+class TestFlowRequest(BaseModel):
+    url: str
+    steps: list[dict] = []
+    allow_domains: list[str] = []
+    local: bool = False
+    approve: bool = False
+    stop_on_failure: bool = False
+    privacy_level: Optional[str] = None
+    scrub_pii: bool = True
+
+
 @router.post("")
 async def open_session(req: OpenRequest):
     """Open an isolated browser session for an agent."""
@@ -63,6 +82,7 @@ async def open_session(req: OpenRequest):
             require_approval=req.require_approval,
             scrub_pii=req.scrub_pii,
             privacy_level=req.privacy_level,
+            allow_private=req.allow_private,
         )
     except SessionRefused as refusal:
         raise _refusal_to_http(refusal)
@@ -107,6 +127,41 @@ async def act(session_id: str, req: ActRequest):
     try:
         return await session.act(
             req.action, req.ref, text=req.text, approve=req.approve,
+        )
+    except SessionRefused as refusal:
+        raise _refusal_to_http(refusal)
+
+
+@router.post("/run")
+async def test_flow(req: TestFlowRequest):
+    """One-shot local test: open → run a declarative flow → close.
+
+    The single-call path an agent uses to test a product: one request covers
+    navigation, intent-based interactions, assertions and telemetry.
+    """
+    try:
+        return await get_browser_agent_service().run_test(
+            url=req.url,
+            steps=req.steps or None,
+            allow_domains=req.allow_domains,
+            local=req.local,
+            approve=req.approve,
+            stop_on_failure=req.stop_on_failure,
+            privacy_level=req.privacy_level,
+            scrub_pii=req.scrub_pii,
+        )
+    except SessionRefused as refusal:
+        raise _refusal_to_http(refusal)
+
+
+@router.post("/{session_id}/run")
+async def run_flow(session_id: str, req: RunFlowRequest):
+    """Run a declarative flow against an existing session."""
+    session = _get(session_id)
+    try:
+        return await session.run_flow(
+            req.steps, approve=req.approve,
+            stop_on_failure=req.stop_on_failure, observe=req.observe,
         )
     except SessionRefused as refusal:
         raise _refusal_to_http(refusal)
