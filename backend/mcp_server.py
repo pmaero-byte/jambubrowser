@@ -1197,6 +1197,13 @@ async def browser_import_playwright(code: str) -> str:
     if "error" in result:
         return f"Import failed: {result['error']}"
     lines = [f"# Imported {result.get('count', 0)} step(s)"]
+    network = result.get("network") or {}
+    if network.get("mocks") or network.get("fail"):
+        lines.append(
+            f"network policy: {len(network.get('mocks', []))} mock(s), "
+            f"{len(network.get('fail', []))} abort(s) "
+            "(pass as `network` to browser_test_flow)"
+        )
     unparsed = result.get("unparsed") or []
     if unparsed:
         lines.append(f"unparsed lines ({len(unparsed)}):")

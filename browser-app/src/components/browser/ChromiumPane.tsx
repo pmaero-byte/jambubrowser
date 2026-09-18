@@ -5,13 +5,14 @@ import {
   ArrowLeft, ArrowRight, RotateCcw, Home, Plus, X,
   Globe, Bug, BugOff, Cpu, Star, Clock, Bookmark,
   Shield, FileText, Download, BookOpen, KeyRound,
-  EllipsisVertical, FileDown, FileUp, Hand,
+  EllipsisVertical, FileDown, FileUp, Hand, Copy, Check,
 } from "lucide-react";
 import { useAppStore, BrowserTab } from "../../store/appStore";
 import { useBrowsingHistoryStore } from "../../store/browsingHistoryStore";
 import { useDevtoolsStore } from "../../store/devtoolsStore";
 import { useScreencast } from "../../hooks/useScreencast";
 import { savedTakeoverSessionId, saveTakeoverSessionId, setAgentTakeover } from "./takeover";
+import { copyPageText } from "./copyPageText";
 import { DevToolsPanel } from "./DevToolsPanel";
 import { DownloadBar } from "./DownloadBar";
 import { ReaderMode } from "./ReaderMode";
@@ -189,6 +190,23 @@ export function ChromiumPane() {
     setTakeover(active);
     setTakeoverBusy(false);
   }, []);
+
+  // Copy visible page text (live DOM innerText) to the clipboard.
+  const [copied, setCopied] = useState(false);
+  const handleCopyPageText = useCallback(async () => {
+    if (!activeBrowserTabId) return;
+    try {
+      await copyPageText(
+        activeBrowserTabId,
+        (id, expression) => invoke("browser_evaluate", { tabId: id, expression }) as Promise<unknown>,
+        (text) => navigator.clipboard.writeText(text),
+      );
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setErrorMsg("Copy failed");
+    }
+  }, [activeBrowserTabId]);
 
   // Live view: CDP screencast frames when available; the polled screenshot
   // below stays as a fallback (non-Tauri, or if the stream errors).
@@ -1115,6 +1133,12 @@ return { filled: true, hasUser: !!bestUser, hasPass: true };
             disabled={takeoverBusy}
             title={takeover ? "Resume agent (end human control)" : "Human takeover (pause agent)"}>
             <Hand size={14} />
+          </Button>
+          <Button variant="ghost" size="icon"
+            className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all duration-150"
+            onClick={handleCopyPageText}
+            title="Copy page text">
+            {copied ? <Check size={14} /> : <Copy size={14} />}
           </Button>
         </div>
 

@@ -50,9 +50,10 @@ class NavigateRequest(BaseModel):
 
 class ActRequest(BaseModel):
     action: str
-    ref: str
+    ref: str = ""
     text: str = ""
     approve: bool = False
+    selector: str = ""
 
 
 class TakeoverRequest(BaseModel):
@@ -193,6 +194,7 @@ async def act(session_id: str, req: ActRequest):
     try:
         return await session.act(
             req.action, req.ref, text=req.text, approve=req.approve,
+            selector=req.selector,
         )
     except SessionRefused as refusal:
         raise _refusal_to_http(refusal)

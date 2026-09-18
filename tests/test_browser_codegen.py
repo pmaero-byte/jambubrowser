@@ -90,12 +90,13 @@ class TestImport:
         steps = doc["steps"]
         assert steps[0] == {"action": "navigate", "url": "http://localhost:3000/login"}
         assert steps[1] == {"action": "type", "target": "Email", "value": "dev@example.com"}
-        assert steps[3] == {"action": "click", "target": "Sign in"}
+        # Named roles import as "role name" — the flow's documented addressing.
+        assert steps[3] == {"action": "click", "target": "button Sign in"}
         assert steps[4] == {"action": "press", "key": "Enter"}
         assert steps[5] == {"action": "wait", "url_contains": "**/dashboard"}
         assert steps[6] == {"action": "assert_visible", "target": "Dashboard"}
         assert steps[7] == {"action": "assert_url", "value": "/dashboard"}
-        assert steps[9] == {"action": "assert_enabled", "target": "Save"}
+        assert steps[9] == {"action": "assert_enabled", "target": "button Save"}
 
     def test_negations_and_checks(self):
         doc = playwright_to_flow("""
@@ -116,8 +117,10 @@ class TestImport:
           await page.getByTestId('avatar').setInputFiles('a.png');
         """)
         assert doc["steps"][0]["action"] == "navigate"
-        assert len(doc["unparsed"]) == 2
-        assert {u["line"] for u in doc["unparsed"]} == {3, 4}
+        # CSS locators now import as selector steps; only setInputFiles is lost.
+        assert doc["steps"][1] == {"action": "click", "selector": ".fancy > div"}
+        assert len(doc["unparsed"]) == 1
+        assert doc["unparsed"][0]["reason"] == "unsupported-action"
 
     def test_round_trip(self):
         exported = flow_to_playwright(FLOW, name="login flow")
@@ -141,3 +144,79 @@ class TestImportRoute:
         body = resp.json()
         assert body["count"] == 2
         assert body["steps"][1] == {"action": "click", "target": "Go"}
+
+
+class TestImportV2:
+    def test_multiline_chain_joins(self):
+        doc = playwright_to_flow("""
+          await page.getByRole('button', {
+            name: 'Sign in'
+          }).click();
+        """)
+        assert doc["steps"] == [{"action": "click", "target": "button Sign in"}]
+        assert doc["unparsed"] == []
+
+    def test_locator_and_testid_become_selectors(self):
+        doc = playwright_to_flow("""
+          await page.locator('#login-form input[name="q"]').fill('hi');
+          await page.getByTestId('avatar').click();
+          await page.getByPlaceholder('Search').fill('x');
+        """)
+        assert doc["steps"][0] == {"action": "type",
+                                   "selector": '#login-form input[name="q"]',
+                                   "value": "hi"}
+        assert doc["steps"][1] == {"action": "click", "selector": '[data-testid="avatar"]'}
+        assert doc["steps"][2] == {"action": "type", "selector": '[placeholder="Search"]',
+                                   "value": "x"}
+
+    def test_evaluate_steps(self):
+        doc = playwright_to_flow("""
+          await page.evaluate("document.title");
+          await page.evaluate(() => window.__state);
+        """)
+        assert doc["steps"][0] == {"action": "evaluate", "script": "document.title"}
+        assert doc["steps"][1]["action"] == "evaluate"
+        assert doc["steps"][1]["script"].endswith("()")
+
+    def test_wait_for_response_becomes_assertion(self):
+        doc = playwright_to_flow("await page.waitForResponse('**/api/order');")
+        assert doc["steps"] == [{"action": "assert_made_request", "value": "**/api/order"}]
+
+    def test_route_becomes_network_policy(self):
+        doc = playwright_to_flow("""
+          await page.route('**/api/user', async (route) => {
+            await route.fulfill({ status: 200, json: {"name": "Dev"} });
+          });
+          await page.route('**/analytics/**', async (route) => {
+            await route.abort();
+          });
+          await page.goto('http://x');
+        """)
+        assert doc["steps"] == [{"action": "navigate", "url": "http://x"}]
+        assert doc["network"]["mocks"] == [
+            {"url": "**/api/user", "status": 200, "json": {"name": "Dev"}},
+        ]
+        assert doc["network"]["fail"] == [{"url": "**/analytics/**"}]
+        assert doc["unparsed"] == []
+
+    def test_control_flow_and_fixtures_are_reported(self):
+        doc = playwright_to_flow("""
+          import { test } from './fixtures';
+          test('x', async ({ page, orderPage }) => {
+            for (const item of items) {
+              await item.add();
+            }
+            await orderPage.checkout();
+            await page.goto('http://x');
+          });
+        """)
+        assert doc["steps"] == [{"action": "navigate", "url": "http://x"}]
+        reasons = {u.get("reason") for u in doc["unparsed"]}
+        assert "control-flow" in reasons
+        assert "page-object/fixture" in reasons or "custom-helper" in reasons
+
+    def test_single_line_test_step_unwrap(self):
+        doc = playwright_to_flow(
+            "await test.step('go', async () => { await page.goto('http://x'); });"
+        )
+        assert doc["steps"] == [{"action": "navigate", "url": "http://x"}]

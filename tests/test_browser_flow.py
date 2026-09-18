@@ -54,6 +54,14 @@ class FlowPage:
             "dom_nodes": 300, "resource_count": 20, "transfer_bytes": 200 * 1024,
         }
         self.source_maps: dict[str, str] = {}
+        self.selector_actions: list[tuple] = []
+        self.eval_scripts: list[str] = []
+        self.dom: dict[str, dict] = {
+            "#submit": {"visible": True, "text": "Submit", "value": "",
+                        "checked": False, "enabled": True, "count": 1},
+            "#hidden-note": {"visible": False, "text": "secret", "count": 1},
+            ".item": {"visible": True, "text": "item", "count": 3},
+        }
 
     async def goto(self, url: str) -> None:
         self.gotos.append(url)
@@ -177,6 +185,46 @@ class FlowPage:
 
     async def resource_count(self) -> int:
         return len(self.network_requests)
+
+    async def click_selector(self, selector: str) -> None:
+        self.selector_actions.append(("click", selector, ""))
+
+    async def fill_selector(self, selector: str, text: str) -> None:
+        self.selector_actions.append(("fill", selector, text))
+
+    async def press_selector(self, selector: str, key: str) -> None:
+        self.selector_actions.append(("press", selector, key))
+
+    async def hover_selector(self, selector: str) -> None:
+        self.selector_actions.append(("hover", selector, ""))
+
+    async def select_selector(self, selector: str, value: str) -> None:
+        self.selector_actions.append(("select", selector, value))
+
+    async def check_selector(self, selector: str, checked: bool = True) -> None:
+        self.selector_actions.append(("check", selector, checked))
+
+    async def is_visible_selector(self, selector: str) -> bool:
+        return self.dom.get(selector, {}).get("visible", False)
+
+    async def text_of_selector(self, selector: str) -> str:
+        return self.dom.get(selector, {}).get("text", "")
+
+    async def value_of_selector(self, selector: str) -> str:
+        return self.dom.get(selector, {}).get("value", "")
+
+    async def count_selector(self, selector: str) -> int:
+        return self.dom.get(selector, {}).get("count", 0)
+
+    async def is_enabled_selector(self, selector: str) -> bool:
+        return self.dom.get(selector, {}).get("enabled", False)
+
+    async def is_checked_selector(self, selector: str) -> bool:
+        return self.dom.get(selector, {}).get("checked", False)
+
+    async def eval_js(self, script: str):
+        self.eval_scripts.append(script)
+        return f"result-of:{script[:16]}"
 
 
 def seed(page: FlowPage) -> None:
@@ -943,6 +991,92 @@ class TestRecording:
                                   json={"active": False}).json()
             assert stopped["recording"] is False
         browser_agent.reset_browser_agent_service()
+
+
+class TestSelectors:
+    def test_click_and_type_by_selector(self):
+        page = FlowPage()
+        seed(page)
+        session = make_session(page)
+        report = run(session.run_flow([
+            {"action": "click", "selector": "#submit", "approve": True},
+            {"action": "type", "selector": "#email", "value": "a@b.com", "approve": True},
+        ]))
+        assert report["ok"] is True
+        assert ("click", "#submit", "") in page.selector_actions
+        assert ("fill", "#email", "a@b.com") in page.selector_actions
+
+    def test_selector_requires_approval(self):
+        page = FlowPage()
+        seed(page)
+        session = make_session(page)
+        report = run(session.run_flow([{"action": "click", "selector": "#submit"}]))
+        assert report["ok"] is False
+        assert report["steps"][0]["reason"] == "approval_required"
+        assert page.selector_actions == []
+
+    def test_selector_needs_address(self):
+        page = FlowPage()
+        session = make_session(page)
+        report = run(session.run_flow([{"action": "click"}]))
+        assert report["ok"] is False
+        assert report["steps"][0]["reason"] == "target_required"
+
+    def test_selector_asserts(self):
+        page = FlowPage()
+        seed(page)
+        session = make_session(page)
+        report = run(session.run_flow([
+            {"action": "assert_visible", "selector": "#submit"},
+            {"action": "assert_not_visible", "selector": "#hidden-note"},
+            {"action": "assert_text", "selector": "#submit", "value": "Sub"},
+            {"action": "assert_count", "selector": ".item", "value": 3},
+            {"action": "assert_enabled", "selector": "#submit"},
+        ]))
+        assert report["ok"] is True
+
+    def test_selector_assert_failure(self):
+        page = FlowPage()
+        seed(page)
+        session = make_session(page)
+        report = run(session.run_flow([
+            {"action": "assert_visible", "selector": "#missing"},
+        ]))
+        assert report["ok"] is False
+
+    def test_evaluate_requires_approval(self):
+        page = FlowPage()
+        session = make_session(page)
+        report = run(session.run_flow([
+            {"action": "evaluate", "script": "document.title"},
+        ]))
+        assert report["ok"] is False
+        assert report["steps"][0]["reason"] == "approval_required"
+
+    def test_evaluate_runs_with_approval(self):
+        page = FlowPage()
+        session = make_session(page)
+        report = run(session.run_flow([
+            {"action": "evaluate", "script": "document.title", "approve": True},
+        ]))
+        assert report["ok"] is True
+        assert page.eval_scripts == ["document.title"]
+        assert "result-of" in report["steps"][0]["evaluated"]
+
+    def test_takeover_blocks_selector_actions(self):
+        page = FlowPage()
+        session = make_session(page)
+        session.human_takeover = True
+        with pytest.raises(SessionRefused) as exc:
+            run(session.act_selector("click", "#submit", approve=True))
+        assert exc.value.reason == "human_takeover"
+
+    def test_act_route_accepts_selector(self):
+        page = FlowPage()
+        session = make_session(page)
+        result = run(session.act("click", "", approve=True, selector="#submit"))
+        assert result["outcome"] == "ok"
+        assert ("click", "#submit", "") in page.selector_actions
 
 
 class TestTakeoverEnforced:

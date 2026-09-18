@@ -73,7 +73,7 @@ MAX_ASSERT_TEXT = 2000
 # Actions that change page state and therefore trigger an internal re-observe.
 _MUTATING_ACTIONS = {
     "click", "type", "press", "select", "hover", "navigate", "reload",
-    "back", "forward", "check", "uncheck",
+    "back", "forward", "check", "uncheck", "evaluate",
 }
 
 # Loopback / private hosts that a *local* test session is allowed to reach.
@@ -330,6 +330,83 @@ class PlaywrightPage:
 
     async def current_url(self) -> str:
         return self._page.url
+
+    # -- selector dispatch (CSS/XPath direct addressing) ---------------------
+
+    @staticmethod
+    def _engine_selector(selector: str) -> str:
+        selector = (selector or "").strip()
+        if selector.startswith("xpath="):
+            return selector
+        if selector.startswith(("//", "(//")):
+            return f"xpath={selector}"
+        return selector
+
+    async def click_selector(self, selector: str) -> None:
+        await self._page.click(self._engine_selector(selector), timeout=10000)
+
+    async def fill_selector(self, selector: str, text: str) -> None:
+        await self._page.fill(self._engine_selector(selector), text, timeout=10000)
+
+    async def press_selector(self, selector: str, key: str) -> None:
+        await self._page.press(self._engine_selector(selector), key, timeout=10000)
+
+    async def hover_selector(self, selector: str) -> None:
+        await self._page.hover(self._engine_selector(selector), timeout=10000)
+
+    async def select_selector(self, selector: str, value: str) -> None:
+        await self._page.select_option(self._engine_selector(selector), value, timeout=10000)
+
+    async def check_selector(self, selector: str, checked: bool = True) -> None:
+        await self._page.set_checked(self._engine_selector(selector), checked, timeout=10000)
+
+    async def is_visible_selector(self, selector: str) -> bool:
+        return bool(await self._page.evaluate(
+            """(sel) => {
+                const el = document.querySelector(sel);
+                if (!el) return false;
+                const r = el.getBoundingClientRect();
+                const s = getComputedStyle(el);
+                return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none';
+            }""",
+            self._engine_selector(selector),
+        ))
+
+    async def text_of_selector(self, selector: str) -> str:
+        return await self._page.evaluate(
+            """(sel) => {
+                const el = document.querySelector(sel);
+                return el ? (el.innerText || el.textContent || '') : '';
+            }""",
+            self._engine_selector(selector),
+        ) or ""
+
+    async def value_of_selector(self, selector: str) -> str:
+        return await self._page.evaluate(
+            "(sel) => { const el = document.querySelector(sel); return el && typeof el.value === 'string' ? el.value : ''; }",
+            self._engine_selector(selector),
+        ) or ""
+
+    async def count_selector(self, selector: str) -> int:
+        return int(await self._page.evaluate(
+            "(sel) => document.querySelectorAll(sel).length",
+            self._engine_selector(selector),
+        ) or 0)
+
+    async def is_enabled_selector(self, selector: str) -> bool:
+        return bool(await self._page.evaluate(
+            "(sel) => { const el = document.querySelector(sel); return !!el && !el.disabled; }",
+            self._engine_selector(selector),
+        ))
+
+    async def is_checked_selector(self, selector: str) -> bool:
+        return bool(await self._page.evaluate(
+            "(sel) => { const el = document.querySelector(sel); return !!el && !!el.checked; }",
+            self._engine_selector(selector),
+        ))
+
+    async def eval_js(self, script: str):
+        return await self._page.evaluate(script)
 
     # -- optional capabilities (used by the flow runner when present) ---------
 
@@ -712,10 +789,12 @@ class BrowserAgentSession:
         return state
 
     async def act(self, action: str, ref: str, *, text: str = "",
-                  approve: bool = False) -> dict:
+                  approve: bool = False, selector: str = "") -> dict:
         if action not in ("click", "type"):
             raise SessionRefused("unknown_action", f"unsupported action: {action}")
         self._require_agent_control(action)
+        if selector and not ref:
+            return await self.act_selector(action, selector, text=text, approve=approve)
 
         element = self.catalog.get(ref)
         if element is None:
@@ -744,19 +823,7 @@ class BrowserAgentSession:
             await self.page.click(ref)
         else:
             await self.page.type_text(ref, text)
-
-        after_url = await self.page.current_url()
-        if after_url != before_url:
-            if not host_allowed(_host(after_url), self.allow_domains):
-                await self.page.goto("about:blank")
-                self.last_url = "about:blank"
-                self._record(action, "reverted", ref=ref, url=after_url,
-                             detail=f"navigation to {_host(after_url)} blocked; reverted")
-                raise SessionRefused(
-                    "blocked_domain",
-                    f"action navigated to {_host(after_url)} (outside allowlist); reverted",
-                )
-            self.last_url = after_url
+        await self._settle_navigation(action, ref, before_url)
 
         step = self._record(action, "ok", ref=ref,
                             detail=(text[:40] if action == "type" and text else ""))
@@ -778,7 +845,58 @@ class BrowserAgentSession:
             })
         return {"outcome": "ok", "url": self.last_url, "step": step.to_dict()}
 
-    # -- target resolution (act by intent, not just by ref) ------------------
+    async def _settle_navigation(self, action: str, ref: str, before_url: str) -> None:
+        """Post-action URL check: revert disallowed landings, else adopt."""
+        after_url = await self.page.current_url()
+        if after_url == before_url:
+            return
+        if not host_allowed(_host(after_url), self.allow_domains):
+            await self.page.goto("about:blank")
+            self.last_url = "about:blank"
+            self._record(action, "reverted", ref=ref, url=after_url,
+                         detail=f"navigation to {_host(after_url)} blocked; reverted")
+            raise SessionRefused(
+                "blocked_domain",
+                f"action navigated to {_host(after_url)} (outside allowlist); reverted",
+            )
+        self.last_url = after_url
+
+    async def act_selector(self, action: str, selector: str, *, text: str = "",
+                           approve: bool = False) -> dict:
+        """Dispatch click/type by CSS/XPath selector (bypasses the catalog).
+
+        Selectors address elements the snapshot never catalogs, so the risk
+        classifier cannot see them — they always require explicit approval.
+        """
+        if action not in ("click", "type"):
+            raise SessionRefused("unknown_action", f"unsupported action: {action}")
+        self._require_agent_control(action)
+        if not (selector or "").strip():
+            raise SessionRefused("invalid_step", "selector is empty")
+        if not approve:
+            self._record(action, "blocked", detail="selector actions require approve=true")
+            raise SessionRefused(
+                "approval_required",
+                "selector actions address unclassified elements; re-send with approve=true",
+            )
+        if not self.last_url:
+            try:
+                self.last_url = await self.page.current_url()
+            except Exception:
+                pass
+        before_url = self.last_url
+        if action == "click":
+            await self._call_optional("click_selector", selector)
+        else:
+            await self._call_optional("fill_selector", selector, text)
+        await self._settle_navigation(action, None, before_url)
+        step = self._record(action, "ok",
+                            detail=(f"{selector[:60]} ← {text[:40]}"
+                                    if action == "type" and text else selector[:60]))
+        self._capture_step(
+            {"action": action, "selector": selector, **({"value": self._scrub(text)} if action == "type" else {})}
+        )
+        return {"outcome": "ok", "url": self.last_url, "step": step.to_dict()}
 
     def resolve_target(self, target: str) -> str:
         """Resolve a ref or a human-readable target to a catalog ref.
@@ -1090,50 +1208,117 @@ class BrowserAgentSession:
             return action, {}
 
         if action in ("click", "type"):
-            ref = await self._target(step)
-            if action == "click":
-                res = await self.act("click", ref, approve=approve)
+            selector = (step.get("selector") or "").strip()
+            if step.get("ref") or step.get("target") or step.get("name"):
+                ref = await self._target(step)
+                if action == "click":
+                    res = await self.act("click", ref, approve=approve)
+                    if observe:
+                        await self._read_state()
+                    return f"clicked {ref}", {"url": res["url"]}
+                value = step.get("value", step.get("text", ""))
+                await self.act("type", ref, text=value, approve=approve)
                 if observe:
                     await self._read_state()
-                return f"clicked {ref}", {"url": res["url"]}
+                return f"typed {value[:40]!r} into {ref}", {}
+            if not selector:
+                raise SessionRefused(
+                    "target_required", "step needs a 'ref', 'target' or 'selector'",
+                )
             value = step.get("value", step.get("text", ""))
-            await self.act("type", ref, text=value, approve=approve)
+            res = await self.act_selector(action, selector, text=value, approve=approve)
             if observe:
                 await self._read_state()
-            return f"typed {value[:40]!r} into {ref}", {}
+            return (
+                f"clicked {selector[:60]}" if action == "click"
+                else f"typed {value[:40]!r} into {selector[:60]}"
+            ), {"url": res["url"]}
 
         if action == "press":
             key = step.get("key") or step.get("value") or "Enter"
+            selector = (step.get("selector") or "").strip()
             ref = ""
             if step.get("target") or step.get("ref"):
                 ref = await self._target(step)
-            await self._call_optional("press", ref, key)
+                await self._call_optional("press", ref, key)
+            elif selector:
+                await self._call_optional("press_selector", selector, key)
+            else:
+                await self._call_optional("press", "", key)
             await self._read_state()
             self._capture_step(
-                {"action": "press", "key": key, **({"ref": ref} if ref else {})}
+                {"action": "press", "key": key,
+                 **({"ref": ref} if ref else {}),
+                 **({"selector": selector} if selector else {})}
             )
             return f"pressed {key}", {}
 
         if action == "hover":
-            ref = await self._target(step)
-            await self._call_optional("hover", ref)
+            selector = (step.get("selector") or "").strip()
+            if step.get("ref") or step.get("target") or step.get("name"):
+                ref = await self._target(step)
+                await self._call_optional("hover", ref)
+                if observe:
+                    await self._read_state()
+                return f"hovered {ref}", {}
+            if not selector:
+                raise SessionRefused(
+                    "target_required", "step needs a 'ref', 'target' or 'selector'",
+                )
+            await self._call_optional("hover_selector", selector)
             if observe:
                 await self._read_state()
-            return f"hovered {ref}", {}
+            return f"hovered {selector[:60]}", {}
 
         if action == "select":
-            ref = await self._target(step)
-            await self._call_optional("select_option", ref, step.get("value", ""))
+            selector = (step.get("selector") or "").strip()
+            if step.get("ref") or step.get("target") or step.get("name"):
+                ref = await self._target(step)
+                await self._call_optional("select_option", ref, step.get("value", ""))
+                if observe:
+                    await self._read_state()
+                return f"selected in {ref}", {}
+            if not selector:
+                raise SessionRefused(
+                    "target_required", "step needs a 'ref', 'target' or 'selector'",
+                )
+            await self._call_optional("select_selector", selector, step.get("value", ""))
             if observe:
                 await self._read_state()
-            return f"selected in {ref}", {}
+            return f"selected in {selector[:60]}", {}
 
         if action in ("check", "uncheck"):
-            ref = await self._target(step)
-            await self._call_optional("check", ref, action == "check")
+            selector = (step.get("selector") or "").strip()
+            if step.get("ref") or step.get("target") or step.get("name"):
+                ref = await self._target(step)
+                await self._call_optional("check", ref, action == "check")
+                if observe:
+                    await self._read_state()
+                return f"{action} {ref}", {}
+            if not selector:
+                raise SessionRefused(
+                    "target_required", "step needs a 'ref', 'target' or 'selector'",
+                )
+            await self._call_optional("check_selector", selector, action == "check")
             if observe:
                 await self._read_state()
-            return f"{action} {ref}", {}
+            return f"{action} {selector[:60]}", {}
+
+        if action == "evaluate":
+            script = step.get("script") or step.get("value") or ""
+            if not script.strip():
+                raise SessionRefused("invalid_step", "evaluate requires 'script'")
+            if not approve:
+                raise SessionRefused(
+                    "approval_required",
+                    "evaluate runs arbitrary JS; re-send with approve=true",
+                )
+            result = await self._call_optional("eval_js", script)
+            if observe:
+                await self._read_state()
+            text = self._scrub(str(result if result is not None else ""))[:MAX_ASSERT_TEXT]
+            self._capture_step({"action": "evaluate", "script": script[:200]})
+            return "evaluated", {"evaluated": text}
 
         if action in ("wait", "wait_for"):
             await self._run_wait(step, timeout)
@@ -1188,6 +1373,14 @@ class BrowserAgentSession:
                 element = self.catalog.get(self.resolve_target(target))
             except SessionRefused:
                 element = None
+
+        selector = (step.get("selector") or "").strip()
+        if selector and kind in (
+            "visible", "not_visible", "hidden", "text", "text_contains",
+            "text_equals", "value", "count", "checked", "unchecked",
+            "not_checked", "enabled", "disabled",
+        ):
+            return await self._assert_selector(kind, selector, value)
 
         if kind in ("no_a11y_violations", "a11y_clean", "accessible"):
             audit = await self._call_optional("a11y_audit")
@@ -1288,6 +1481,45 @@ class BrowserAgentSession:
             failed_reqs = self._peek_telemetry().get("failed_requests", [])
             return (not failed_reqs), ("no failed requests" if not failed_reqs
                                        else f"{len(failed_reqs)} failed request(s)")
+        raise SessionRefused("unknown_assertion", f"unsupported assertion kind: {kind}")
+
+    async def _assert_selector(self, kind: str, selector: str, value: str) -> tuple[bool, str]:
+        """Assertion kinds answered by direct CSS/XPath probes."""
+        label = selector[:60]
+        if kind == "visible":
+            ok = await self._call_optional("is_visible_selector", selector)
+            return bool(ok), (f"visible: {label}" if ok else f"not visible: {label}")
+        if kind in ("not_visible", "hidden"):
+            ok = await self._call_optional("is_visible_selector", selector)
+            return (not ok), (f"not visible: {label}" if not ok else f"still visible: {label}")
+        if kind in ("text", "text_contains"):
+            blob = await self._call_optional("text_of_selector", selector) or ""
+            ok = value.lower() in blob.lower()
+            return ok, (f"text contains {value!r}" if ok else f"text missing {value!r}")
+        if kind == "text_equals":
+            blob = (await self._call_optional("text_of_selector", selector) or "").strip()
+            ok = blob == value.strip()
+            return ok, (f"text == {value!r}" if ok else f"text != {value!r}")
+        if kind == "value":
+            current = await self._call_optional("value_of_selector", selector) or ""
+            ok = value.lower() in current.lower()
+            return ok, (f"value contains {value!r}" if ok else f"value missing {value!r}")
+        if kind == "count":
+            n = await self._call_optional("count_selector", selector)
+            ok = int(n) == int(value or 0)
+            return ok, (f"count == {n}" if ok else f"count {n} != {value}")
+        if kind == "checked":
+            ok = await self._call_optional("is_checked_selector", selector)
+            return bool(ok), ("checked" if ok else f"not checked: {label}")
+        if kind in ("unchecked", "not_checked"):
+            ok = await self._call_optional("is_checked_selector", selector)
+            return (not ok), ("unchecked" if not ok else f"checked: {label}")
+        if kind == "enabled":
+            ok = await self._call_optional("is_enabled_selector", selector)
+            return bool(ok), ("enabled" if ok else f"disabled/missing: {label}")
+        if kind == "disabled":
+            ok = await self._call_optional("is_enabled_selector", selector)
+            return (not ok), ("disabled" if not ok else f"enabled/missing: {label}")
         raise SessionRefused("unknown_assertion", f"unsupported assertion kind: {kind}")
 
     async def capture_screenshot(self, full_page: bool = False) -> Optional[str]:

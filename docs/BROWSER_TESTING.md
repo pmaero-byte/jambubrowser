@@ -65,6 +65,15 @@ current element catalog by: exact `@eN` ref → exact name → `"role name"`
 (e.g. `button Sign in`) → unique substring. Ambiguity returns bounded
 candidates so the agent can retry without another snapshot call.
 
+**Selectors:** any action/assertion also accepts `selector` (CSS or
+`xpath=…`/`//…`), dispatched directly against the page for elements the
+catalog never sees — this is what imported Playwright specs use. Selector
+dispatch always requires `approve=true` (unclassified elements are treated
+as risky); the post-action allowlist check still applies.
+
+**Evaluate:** `{"action": "evaluate", "script": "…"}` runs JS in the page and
+returns the (PII-scrubbed, truncated) result. Requires `approve=true`.
+
 | Action | Fields | Notes |
 |---|---|---|
 | `navigate` | `url` | allowlist- and SSRF-checked |
@@ -75,6 +84,7 @@ candidates so the agent can retry without another snapshot call.
 | `reload` / `back` / `forward` | — | |
 | `wait` | `selector` \| `text` \| `url_contains` | otherwise waits network idle |
 | `screenshot` | `full_page?` | base64 returned (stripped from agent reports) |
+| `evaluate` | `script`, `approve: true` | run JS in the page; returns scrubbed result |
 | `assert_visible` | `target` | interactive element **or** rendered text |
 | `assert_not_visible` | `target` | |
 | `assert_text` / `assert_text_equals` | `target?`, `value` | page text if no target |
@@ -214,6 +224,14 @@ builtin tool, CLI: `jambu import app.spec.ts --out flow.json`) converts the
 common `getBy`/keyboard/`expect` subset back into a flow. Every line it
 cannot translate is reported with its line number — nothing is silently
 dropped.
+
+Coverage: `getBy*` (text/label/role/testid/placeholder/alt/title),
+`locator()` (CSS/XPath), keyboard, waits (`waitForSelector/URL/Response`),
+`expect` (+`not.`, counts, URL/title incl. regex literals), locator
+declarations, multi-line chains, single-line `test.step`, `page.evaluate`
+(becomes an `evaluate` step), and `page.route()` fulfill/abort (becomes the
+flow's `network` policy). Reported, not guessed: control flow, fixtures,
+page objects, and actions like `dblclick`/`setInputFiles`/`dragTo`.
 
 ### CLI
 ```bash
