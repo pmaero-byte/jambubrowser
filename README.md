@@ -524,8 +524,9 @@ per-feature status.
   runtime handler isn't wired yet.
 - **Auto-update UI:** the updater plugin is configured, but the JS
   package/capability/UX check is not shipped.
-- **Rendering:** the browser pane paints polled CDP screenshots (~1 FPS).
-  Real multi-webview rendering is the next milestone.
+- **Rendering:** the browser pane streams live frames over a CDP
+  `Page.startScreencast` channel (~30–60 FPS) with the polled screenshot as a
+  fallback. Real multi-webview tabs are the next milestone.
 
 ```bash
 cd browser-app

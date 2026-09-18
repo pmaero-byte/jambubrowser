@@ -4,6 +4,7 @@ mod orchestrator;
 
 use chromium::manager::ChromiumManager;
 use commands::stream::StreamRegistry;
+use commands::chromium::ScreencastRegistry;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 use tauri::menu::{MenuBuilder, SubmenuBuilder, MenuItemBuilder};
@@ -47,6 +48,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(app_state)
         .manage(StreamRegistry::default())
+        .manage(ScreencastRegistry::default())
         .setup(move |app| {
             let handle = app.handle().clone();
 
@@ -185,6 +187,8 @@ pub fn run() {
             commands::chromium::browser_go_forward,
             commands::chromium::browser_close_tab,
             commands::chromium::browser_capture_screenshot,
+            commands::chromium::browser_start_screencast,
+            commands::chromium::browser_stop_screencast,
             commands::chromium::browser_evaluate,
             commands::chromium::browser_mouse_event,
             commands::chromium::browser_key_event,

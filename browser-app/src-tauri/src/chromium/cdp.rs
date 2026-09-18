@@ -461,3 +461,76 @@ fn urlencoding(s: &str) -> String {
         .replace('#', "%23");
     format!("url={encoded}")
 }
+
+/// Stream live frames from a tab via CDP `Page.startScreencast`.
+///
+/// Holds a single WebSocket open (unlike the request/response `send_cdp`)
+/// and invokes `on_frame` with a base64 JPEG for each `Page.screencastFrame`
+/// event, acknowledging every frame so Chromium keeps sending. Returns when
+/// the screencast stops or the socket closes; the caller aborts the task to
+/// stop early. This is the ~30–60 FPS path that replaces screenshot polling.
+pub async fn run_screencast<F>(
+    ws_url: &str,
+    quality: i32,
+    max_width: i32,
+    max_height: i32,
+    every_nth_frame: i32,
+    mut on_frame: F,
+) -> Result<(), String>
+where
+    F: FnMut(String) + Send,
+{
+    let (mut ws, _) = connect_async(ws_url)
+        .await
+        .map_err(|e| format!("WebSocket connect failed: {e}"))?;
+
+    let start = json!({
+        "id": 1,
+        "method": "Page.startScreencast",
+        "params": {
+            "format": "jpeg",
+            "quality": quality.clamp(1, 100),
+            "maxWidth": max_width.max(0),
+            "maxHeight": max_height.max(0),
+            "everyNthFrame": every_nth_frame.max(1),
+        }
+    });
+    ws.send(Message::Text(start.to_string()))
+        .await
+        .map_err(|e| format!("WS send failed: {e}"))?;
+
+    let mut ack_id: u64 = 2;
+    while let Some(message) = ws.next().await {
+        let message = message.map_err(|e| format!("WS read error: {e}"))?;
+        let text = match message {
+            Message::Text(t) => t,
+            Message::Close(_) => break,
+            _ => continue,
+        };
+        let value: Value = match serde_json::from_str(&text) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        match value.get("method").and_then(|m| m.as_str()) {
+            Some("Page.screencastFrame") => {
+                let params = &value["params"];
+                if let Some(data) = params.get("data").and_then(|d| d.as_str()) {
+                    on_frame(data.to_string());
+                }
+                if let Some(session_id) = params.get("sessionId").and_then(|s| s.as_i64()) {
+                    let ack = json!({
+                        "id": ack_id,
+                        "method": "Page.screencastFrameAck",
+                        "params": {"sessionId": session_id}
+                    });
+                    let _ = ws.send(Message::Text(ack.to_string())).await;
+                    ack_id += 1;
+                }
+            }
+            // Chromium stopped the screencast (tab closed/navigation away).
+            Some("Page.screencastFrameStop") => break,
+            _ => {}
+        }
+    }
+    Ok(())
+}

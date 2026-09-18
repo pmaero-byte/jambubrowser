@@ -9,7 +9,84 @@ use crate::chromium::downloads::{self, Download};
 use crate::chromium::extensions::Extension;
 use crate::chromium::tab::TabInfo;
 use serde_json::Value;
+use std::collections::HashMap;
+use std::sync::Mutex;
+use tauri::ipc::Channel;
 use tauri::State;
+
+/// Registry of in-flight screencast streams, so a tab's stream can be
+/// aborted when it ends, errors, or the user leaves the tab.
+#[derive(Default)]
+pub struct ScreencastRegistry(pub Mutex<HashMap<String, tauri::async_runtime::JoinHandle<()>>>);
+
+/// One message on a live-view screencast.
+#[derive(Clone, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ScreencastEvent {
+    /// Base64 JPEG frame.
+    Frame { data: String },
+    /// Stream failed; `message` is user-presentable.
+    Error { message: String },
+    /// Stream ended (tab closed, navigation, or abort).
+    End,
+}
+
+/// Start a live-view screencast for a tab. Frames flow through `on_frame`
+/// at up to ~30–60 FPS until `browser_stop_screencast` or the tab closes.
+#[tauri::command]
+pub async fn browser_start_screencast(
+    tab_id: String,
+    quality: Option<i32>,
+    max_width: Option<i32>,
+    on_frame: Channel<ScreencastEvent>,
+    state: State<'_, AppState>,
+    registry: State<'_, ScreencastRegistry>,
+) -> Result<(), String> {
+    let ws_url = {
+        let mgr = state.chromium.lock().await;
+        let mgr = mgr.as_ref().ok_or("Browser engine not initialized")?;
+        mgr.tab_ws_url(&tab_id)
+            .ok_or_else(|| format!("Tab not found: {tab_id}"))?
+    };
+
+    // Replace any existing stream for this tab.
+    if let Some(existing) = registry.0.lock().unwrap().remove(&tab_id) {
+        existing.abort();
+    }
+
+    let frames = on_frame.clone();
+    let handle = tauri::async_runtime::spawn(async move {
+        let result = crate::chromium::cdp::run_screencast(
+            &ws_url,
+            quality.unwrap_or(70),
+            max_width.unwrap_or(1280),
+            0,
+            1,
+            |data| {
+                let _ = frames.send(ScreencastEvent::Frame { data });
+            },
+        )
+        .await;
+        if let Err(message) = result {
+            let _ = on_frame.send(ScreencastEvent::Error { message });
+        }
+        let _ = on_frame.send(ScreencastEvent::End);
+    });
+    registry.0.lock().unwrap().insert(tab_id, handle);
+    Ok(())
+}
+
+/// Stop a tab's live-view screencast.
+#[tauri::command]
+pub async fn browser_stop_screencast(
+    tab_id: String,
+    registry: State<'_, ScreencastRegistry>,
+) -> Result<(), String> {
+    if let Some(handle) = registry.0.lock().unwrap().remove(&tab_id) {
+        handle.abort();
+    }
+    Ok(())
+}
 
 // ── Commands ─────────────────────────────────────────────────────
 

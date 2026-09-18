@@ -10,6 +10,7 @@ import {
 import { useAppStore, BrowserTab } from "../../store/appStore";
 import { useBrowsingHistoryStore } from "../../store/browsingHistoryStore";
 import { useDevtoolsStore } from "../../store/devtoolsStore";
+import { useScreencast } from "../../hooks/useScreencast";
 import { DevToolsPanel } from "./DevToolsPanel";
 import { DownloadBar } from "./DownloadBar";
 import { ReaderMode } from "./ReaderMode";
@@ -172,6 +173,10 @@ export function ChromiumPane() {
   } = useAppStore();
 
   const activeTab = browserTabs.find((t) => t.id === activeBrowserTabId) || browserTabs[0];
+
+  // Live view: CDP screencast frames when available; the polled screenshot
+  // below stays as a fallback (non-Tauri, or if the stream errors).
+  const { frame: liveFrame } = useScreencast(activeBrowserTabId, { enabled: !!activeBrowserTabId });
 
   // ── State ──
   const [inputUrl, setInputUrl] = useState(activeTab?.url || "");
@@ -1334,8 +1339,8 @@ return { filled: true, hasUser: !!bestUser, hasPass: true };
               </div>
             </motion.div>
           )}
-          {screenshot && activeTab?.url && activeTab.url !== "about:blank" ? (
-            <motion.img key={`ss-${activeBrowserTabId}`} src={screenshot} alt={activeTab.title || "Page"}
+          {(liveFrame ?? screenshot) && activeTab?.url && activeTab.url !== "about:blank" ? (
+            <motion.img key={`ss-${activeBrowserTabId}`} src={liveFrame ?? screenshot ?? undefined} alt={activeTab.title || "Page"}
               ref={imgRef} draggable={false}
               className="h-full w-full object-contain bg-white select-none"
               initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.98 }} transition={{ duration: 0.25, ease: "easeOut" }} />

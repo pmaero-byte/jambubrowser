@@ -174,13 +174,12 @@ the page being audited.
   Playwright.
 
 ### What still hurts (improvement targets)
-1. **Desktop browser rendering is screenshot-backed (~1 FPS)** — the Tauri
-   pane forwards input over CDP but displays polled screenshots, so there's
-   no video, text selection, or smooth scroll. The identity/streaming bugs
-   that made the pane *non-functional* are resolved (2026-09: engine tab-ID
-   reconciliation in `ChromiumPane.tsx`/`appStore.ts`, live SSE through the
-   new `proxy_stream` Rust command + `localFetchStream`), but real rendering
-   (multi-webview tabs) remains the next milestone.
+1. **Desktop browser rendering** — the Tauri pane now has a **live CDP
+   screencast** (`Page.startScreencast` → `useScreencast` → `ChromiumPane`,
+   Rust commands `browser_start_screencast`/`browser_stop_screencast`) giving
+   smooth frames in place of the old ~1 FPS poll. Remaining milestone: **real
+   multi-webview tabs** (true independent rendering/text selection) and a
+   full input hand-off UX for human takeover.
 2. **DevTools performance-trace comparison** — the network waterfall now
    exports to HAR/CSV (`networkExport.ts` toolbar buttons, resolved
    2026-08), but there's no side-by-side comparison of two audits'

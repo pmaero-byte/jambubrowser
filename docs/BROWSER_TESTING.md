@@ -238,11 +238,16 @@ verbs (`browser_task`, `browser_test_flow`, `browser_test_plan`,
 `browser_test_matrix`, `browser_session_run`, `browser_export_playwright`,
 `check_engine_health`), minimising tool-selection cost.
 
-### Live view / human takeover (backend)
+### Live view / human takeover
 `GET /browser/sessions/{id}/screenshot` returns the current frame as base64;
 `POST /browser/sessions/{id}/takeover {active}` pauses/resumes agent control
-for CAPTCHA/2FA or visual checks. The desktop UI that consumes these is the
-remaining (Rust/webview) milestone.
+for CAPTCHA/2FA or visual checks.
+
+The desktop pane now has a **live view**: a Rust CDP `Page.startScreencast`
+stream (`browser_start_screencast` / `browser_stop_screencast`) pushes JPEG
+frames at ~30–60 FPS to the `useScreencast` hook, which the `ChromiumPane`
+renders in place of the polled screenshot (polling remains the fallback).
+Remaining: full input hand-off UX and multi-webview tabs.
 
 ### Dev-server discovery & settle
 `GET /browser/dev-servers` (CLI: `jambu dev-servers`) scans common ports and

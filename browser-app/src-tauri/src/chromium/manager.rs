@@ -252,6 +252,12 @@ impl ChromiumManager {
         self.cdp.capture_screenshot(tab).await
     }
 
+    /// The tab's CDP WebSocket URL (used to open a persistent screencast
+    /// socket without holding the manager lock for the stream's lifetime).
+    pub fn tab_ws_url(&self, tab_id: &str) -> Option<String> {
+        self.tabs.get(tab_id).map(|tab| tab.ws_url.clone())
+    }
+
     /// Execute JavaScript in the tab.
     pub async fn evaluate(&self, tab_id: &str, expression: &str) -> Result<String, String> {
         let tab = self
