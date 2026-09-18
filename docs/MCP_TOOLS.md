@@ -174,7 +174,7 @@ Args:
 **Signature**
 
 ```python
-browser_session_run(session_id: str, steps: str, approve: bool = False, stop_on_failure: bool = False)
+browser_session_run(session_id: str, steps: str, approve: bool = False, stop_on_failure: bool = False, network: str = '', resolve_sources: bool = False)
 ```
 
 **Description**
@@ -187,6 +187,8 @@ Args:
     steps: JSON array of step objects (see browser_test_flow for actions)
     approve: Approve risky/input actions for every step
     stop_on_failure: Stop at the first failed step
+    network: Optional JSON request-interception policy (see browser_test_flow)
+    resolve_sources: Map console errors through source maps
 
 ### `browser_session_snapshot`
 
@@ -209,7 +211,7 @@ Args:
 **Signature**
 
 ```python
-browser_test_flow(url: str, steps: str = '[]', allow_domains: str = '', local: bool = False, approve: bool = False, stop_on_failure: bool = False)
+browser_test_flow(url: str, steps: str = '[]', allow_domains: str = '', local: bool = False, approve: bool = False, stop_on_failure: bool = False, network: str = '', trace: bool = False, har: bool = False, video: bool = False, resolve_sources: bool = False, storage_state: str = '')
 ```
 
 **Description**
@@ -230,12 +232,23 @@ Args:
         screenshot, assert_visible/assert_not_visible/assert_text{value}/
         assert_text_equals/assert_value/assert_url/assert_title/assert_count/
         assert_checked/assert_unchecked/assert_enabled/assert_disabled/
-        assert_console_clean/assert_no_failed_requests. 'target' matches
-        element text by exact name, unique substring, or "role name".
+        assert_console_clean/assert_no_failed_requests/assert_no_a11y_violations/
+        assert_lcp/assert_fcp/assert_load/assert_dom_nodes/assert_transfer_kb/
+        assert_made_request{value}/assert_no_request{value}.
+        'target' matches element text by exact name, unique substring, or "role name".
     allow_domains: Optional comma-separated allowlist (defaults to url host)
     local: Allow loopback/private hosts (local dev testing)
     approve: Approve risky/input actions for every step (delete/pay/send…)
     stop_on_failure: Stop at the first failed step
+    network: Optional JSON request-interception policy:
+        {"mocks":[{"url":"**/api/user","json":{...},"status":200}],
+         "fail":["**/analytics/**"],
+         "delay":[{"url":"**/slow","ms":3000}],"offline":false}
+    trace: Capture a Playwright trace artifact (screenshots+snapshots)
+    har: Capture a HAR network archive
+    video: Capture a video recording
+    resolve_sources: Map console errors through source maps to original files
+    storage_state: Optional JSON storage state ({cookies,origins}) to seed auth
 
 ### `check_engine_health`
 

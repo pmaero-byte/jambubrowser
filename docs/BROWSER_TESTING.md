@@ -129,6 +129,65 @@ Risky elements (`delete`, `pay`, `send`, `confirm`, …) always require
 to the hash-chained receipt log; the session's Merkle root is returned in the
 report.
 
+## Debugging capabilities (M1)
+
+### Request interception / API mocking
+Pass a `network` policy to run the app in any state (error, empty, slow, offline):
+
+```json
+{"network": {
+  "mocks": [{"url": "**/api/user", "json": {"name": "Dev"}, "status": 200}],
+  "fail":  ["**/analytics/**"],
+  "delay": [{"url": "**/api/slow", "ms": 3000}],
+  "offline": false
+}}
+```
+
+Rules are first-match-wins. Requests are tracked, so
+`assert_made_request{value}` / `assert_no_request{value}` verify the app called
+(or didn't call) an endpoint.
+
+### Cause attribution
+Every step carries what it changed — no extra calls needed:
+
+```json
+{"i": 3, "action": "click", "status": "passed",
+ "cause": {"console_errors": ["simulated app error"],
+           "failed_requests": [{"method": "POST", "url": ".../api/order", "failure": "net::ERR"}],
+           "dom": {"added": 1, "removed": 0, "changed": 2, "added_names": ["Error banner"]}}}
+```
+
+### Debug artifacts
+`trace: true`, `har: true`, `video: true` capture Playwright trace / HAR / video;
+paths are returned under `artifacts` and files persist after the run.
+
+### Accessibility & performance budgets
+```json
+[{"action": "assert_no_a11y_violations"},
+ {"action": "assert_lcp", "value": 2500},
+ {"action": "assert_fcp", "value": 1800},
+ {"action": "assert_load", "value": 3000},
+ {"action": "assert_dom_nodes", "value": 1500},
+ {"action": "assert_transfer_kb", "value": 500}]
+```
+The a11y probe is dependency-free (image alt, labels, button/link names,
+`html lang`, document title, duplicate ids, positive tabindex, heading order).
+Performance metrics come from Navigation Timing, Paint Timing and an injected
+LCP/Layout-Shift observer. A `0` LCP means the observer saw no candidate.
+
+### Source-map-aware errors
+`resolve_sources: true` maps console errors through the page's source maps
+(Base64-VLQ decoder built in) and returns `console_errors_source` with
+`source` / `source_line`.
+
+### Determinism
+Animations and transitions are neutralised before each flow
+(`freeze_animations: true`, default) to remove flake.
+
+### Auth seeding
+Pass `storage_state` (`{cookies, origins}`) to start already logged in; combine
+with the credential vault to keep secrets out of the model context.
+
 ## Token accounting
 
 | Scenario | Calls (before) | Calls (now) |

@@ -94,12 +94,16 @@ class BrowserSession:
         proxy: str = None,
         mode: SessionMode = SessionMode.EPHEMERAL,
         privacy_level: PrivacyLevel = PrivacyLevel.ENHANCED,
+        context_options: Optional[dict] = None,
     ):
         self.session_id = session_id
         self.name = name
         self.proxy = proxy
         self.mode = mode
         self.privacy_level = privacy_level
+        # Caller-supplied Playwright context options (storage_state, HAR/video
+        # recording, viewport, locale). Merged last so they win deliberately.
+        self._extra_context_options = dict(context_options or {})
         self._context = None
         self._page = None
         self._pw = None
@@ -168,6 +172,10 @@ class BrowserSession:
                 "Accept-Language": "en-US,en;q=0.9",
                 "DNT": "1",
             }
+
+        # Caller-supplied overrides (storage_state, HAR/video, viewport, locale).
+        if self._extra_context_options:
+            context_options.update(self._extra_context_options)
 
         self._context = await self._browser.new_context(**context_options)
 
@@ -279,6 +287,20 @@ class BrowserSession:
     async def get_page(self):
         """Public accessor for the active page (agent sessions, scrapers)."""
         return await self._ensure_page()
+
+    async def start_trace(self):
+        """Begin a Playwright trace (screenshots + snapshots + sources)."""
+        if self._context is not None:
+            await self._context.tracing.start(
+                screenshots=True, snapshots=True, sources=True,
+            )
+
+    async def stop_trace(self, path: str) -> Optional[str]:
+        """Stop tracing and write the trace zip to ``path``."""
+        if self._context is None:
+            return None
+        await self._context.tracing.stop(path=path)
+        return path
 
     async def save_state(self):
         """Persist cookies and state to database (persistent mode only)."""
@@ -399,6 +421,7 @@ class BrowserManager:
         session_id: str,
         mode: SessionMode = SessionMode.EPHEMERAL,
         privacy_level: PrivacyLevel = PrivacyLevel.ENHANCED,
+        context_options: Optional[dict] = None,
     ) -> BrowserSession:
         """Get or create a browser session with specified privacy mode."""
         # Enforce session limits
@@ -412,6 +435,7 @@ class BrowserManager:
                 name=session_id,
                 mode=mode,
                 privacy_level=privacy_level,
+                context_options=context_options,
             )
             await session.start()
             self._sessions[session_id] = session

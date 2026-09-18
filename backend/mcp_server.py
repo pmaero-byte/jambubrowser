@@ -933,6 +933,22 @@ def _render_flow(result: dict) -> str:
         lines.append(bit)
         for cand in step.get("candidates") or []:
             lines.append(f"      candidate {cand.get('ref')}: {cand.get('name')}")
+        cause = step.get("cause") or {}
+        if cause:
+            parts = []
+            if cause.get("dom"):
+                d = cause["dom"]
+                parts.append(f"dom +{d.get('added', 0)}/-{d.get('removed', 0)}/~{d.get('changed', 0)}")
+            if cause.get("failed_requests"):
+                parts.append(f"{len(cause['failed_requests'])} failed req")
+            if cause.get("console_errors"):
+                parts.append(f"{len(cause['console_errors'])} console error")
+            if parts:
+                lines.append(f"      cause: {'; '.join(parts)}")
+    mapped = result.get("console_errors_source") or []
+    for item in mapped[:5]:
+        if item.get("source"):
+            lines.append(f"console {item['source']}:{item.get('source_line')} — {item.get('text', '')[:120]}")
     errors = result.get("console_errors") or []
     if errors:
         lines.append(f"console errors ({len(errors)}):")
@@ -947,13 +963,20 @@ def _render_flow(result: dict) -> str:
         lines.append(f"HTTP >=400 ({len(bad)}):")
         lines.extend(f"  - {r.get('status')} {r.get('method')} {r.get('url', '')[:110]}"
                      for r in bad[:5])
+    artifacts = result.get("artifacts") or {}
+    if artifacts:
+        lines.append("artifacts: " + ", ".join(f"{k}={v}" for k, v in artifacts.items()))
     return "\n".join(lines)
 
 
 @mcp.tool()
 async def browser_test_flow(url: str, steps: str = "[]", allow_domains: str = "",
                             local: bool = False, approve: bool = False,
-                            stop_on_failure: bool = False) -> str:
+                            stop_on_failure: bool = False,
+                            network: str = "", trace: bool = False,
+                            har: bool = False, video: bool = False,
+                            resolve_sources: bool = False,
+                            storage_state: str = "") -> str:
     """
     Test a web app end-to-end in ONE call: opens a browser session, runs a
     declarative step list (navigate / click / type / press / wait / assert_*),
@@ -971,14 +994,33 @@ async def browser_test_flow(url: str, steps: str = "[]", allow_domains: str = ""
             screenshot, assert_visible/assert_not_visible/assert_text{value}/
             assert_text_equals/assert_value/assert_url/assert_title/assert_count/
             assert_checked/assert_unchecked/assert_enabled/assert_disabled/
-            assert_console_clean/assert_no_failed_requests. 'target' matches
-            element text by exact name, unique substring, or "role name".
+            assert_console_clean/assert_no_failed_requests/assert_no_a11y_violations/
+            assert_lcp/assert_fcp/assert_load/assert_dom_nodes/assert_transfer_kb/
+            assert_made_request{value}/assert_no_request{value}.
+            'target' matches element text by exact name, unique substring, or "role name".
         allow_domains: Optional comma-separated allowlist (defaults to url host)
         local: Allow loopback/private hosts (local dev testing)
         approve: Approve risky/input actions for every step (delete/pay/send…)
         stop_on_failure: Stop at the first failed step
+        network: Optional JSON request-interception policy:
+            {"mocks":[{"url":"**/api/user","json":{...},"status":200}],
+             "fail":["**/analytics/**"],
+             "delay":[{"url":"**/slow","ms":3000}],"offline":false}
+        trace: Capture a Playwright trace artifact (screenshots+snapshots)
+        har: Capture a HAR network archive
+        video: Capture a video recording
+        resolve_sources: Map console errors through source maps to original files
+        storage_state: Optional JSON storage state ({cookies,origins}) to seed auth
     """
     import json as _json
+
+    def _load(raw, default):
+        if not raw:
+            return default
+        try:
+            return _json.loads(raw) if isinstance(raw, str) else raw
+        except _json.JSONDecodeError:
+            return default
 
     try:
         parsed = _json.loads(steps) if isinstance(steps, str) else steps
@@ -988,6 +1030,8 @@ async def browser_test_flow(url: str, steps: str = "[]", allow_domains: str = ""
     result = await _call_engine("POST", "/browser/sessions/run", {
         "url": url, "steps": parsed or [], "allow_domains": domains,
         "local": local, "approve": approve, "stop_on_failure": stop_on_failure,
+        "network": _load(network, None), "trace": trace, "har": har, "video": video,
+        "resolve_sources": resolve_sources, "storage_state": _load(storage_state, None),
     }, timeout=300.0)
     if "error" in result:
         return f"Test flow failed: {result['error']}"
@@ -997,7 +1041,9 @@ async def browser_test_flow(url: str, steps: str = "[]", allow_domains: str = ""
 @mcp.tool()
 async def browser_session_run(session_id: str, steps: str,
                               approve: bool = False,
-                              stop_on_failure: bool = False) -> str:
+                              stop_on_failure: bool = False,
+                              network: str = "",
+                              resolve_sources: bool = False) -> str:
     """
     Run a declarative step flow against an existing browser session and return
     a compact pass/fail report (one call instead of many snapshot/act calls).
@@ -1007,16 +1053,20 @@ async def browser_session_run(session_id: str, steps: str,
         steps: JSON array of step objects (see browser_test_flow for actions)
         approve: Approve risky/input actions for every step
         stop_on_failure: Stop at the first failed step
+        network: Optional JSON request-interception policy (see browser_test_flow)
+        resolve_sources: Map console errors through source maps
     """
     import json as _json
 
     try:
         parsed = _json.loads(steps) if isinstance(steps, str) else steps
+        net = _json.loads(network) if network else None
     except _json.JSONDecodeError as exc:
-        return f"steps is not valid JSON: {exc}"
+        return f"steps/network is not valid JSON: {exc}"
     result = await _call_engine("POST", f"/browser/sessions/{session_id}/run", {
         "steps": parsed or [], "approve": approve,
-        "stop_on_failure": stop_on_failure,
+        "stop_on_failure": stop_on_failure, "network": net,
+        "resolve_sources": resolve_sources,
     }, timeout=300.0)
     if "error" in result:
         return f"Flow failed: {result['error']}"

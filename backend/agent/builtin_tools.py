@@ -356,23 +356,31 @@ async def browser_test_flow(
     local: Annotated[bool, "Allow localhost/private hosts for local dev testing"] = True,
     approve: Annotated[bool, "Approve risky/input actions (delete/pay/send) for every step"] = False,
     stop_on_failure: Annotated[bool, "Stop at the first failed step"] = False,
+    network: Annotated[str, "JSON network policy: mocks/fail/delay/offline"] = "",
+    trace: Annotated[bool, "Capture a Playwright trace artifact"] = False,
+    har: Annotated[bool, "Capture a HAR network archive"] = False,
+    video: Annotated[bool, "Capture a video recording"] = False,
+    resolve_sources: Annotated[bool, "Map console errors through source maps"] = False,
 ) -> dict:
     """Test a web app end-to-end in ONE call.
 
     Runs a declarative flow (navigate / click / type / press / wait / assert_*)
     against a URL and returns a compact pass/fail report with console errors and
-    failed requests already attached. Prefer this over repeated
+    failed requests already attached. Supports request mocking (``network``) and
+    debugging artifacts (``trace``/``har``/``video``). Prefer this over repeated
     navigate/click/extract calls to conserve steps and tokens.
     """
     try:
         parsed = json.loads(steps) if isinstance(steps, str) else steps
+        net = json.loads(network) if network else None
     except json.JSONDecodeError as e:
-        return {"error": f"steps is not valid JSON: {e}"}
+        return {"error": f"steps/network is not valid JSON: {e}"}
     try:
         from backend.modules.browser_agent import get_browser_agent_service
         report = await get_browser_agent_service().run_test(
             url=url, steps=parsed, local=local, approve=approve,
-            stop_on_failure=stop_on_failure,
+            stop_on_failure=stop_on_failure, network=net,
+            trace=trace, har=har, video=video, resolve_sources=resolve_sources,
         )
     except Exception as e:
         return {"url": url, "error": str(e)}
@@ -502,6 +510,25 @@ def register_builtin_tools(registry: Optional[ToolRegistry] = None) -> ToolRegis
                 "stop_on_failure": {
                     "type": "boolean", "default": False,
                     "description": "Stop at the first failed step",
+                },
+                "network": {
+                    "type": "string",
+                    "description": (
+                        "Optional JSON network policy: "
+                        '{"mocks":[{"url":"**/api/user","json":{...}}],'
+                        '"fail":["**/analytics/**"],'
+                        '"delay":[{"url":"**/slow","ms":3000}],"offline":false}'
+                    ),
+                },
+                "trace": {"type": "boolean", "default": False,
+                          "description": "Capture a Playwright trace artifact"},
+                "har": {"type": "boolean", "default": False,
+                        "description": "Capture a HAR network archive"},
+                "video": {"type": "boolean", "default": False,
+                          "description": "Capture a video recording"},
+                "resolve_sources": {
+                    "type": "boolean", "default": False,
+                    "description": "Map console errors through source maps to original files",
                 },
             },
             "required": ["url", "steps"],

@@ -27,9 +27,13 @@ tested without a browser.
 from __future__ import annotations
 
 import asyncio
+import glob
 import hashlib
+import inspect
 import json
 import logging
+import os
+import tempfile
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -37,6 +41,18 @@ from typing import Any, Optional, Protocol
 from urllib.parse import urlparse
 
 from backend.core.security import is_safe_url
+from backend.modules.browser_debug import (
+    A11Y_JS,
+    PERF_JS,
+    PERF_OBSERVER_JS,
+    compile_network,
+    diff_elements,
+    map_url_for,
+    match_network,
+    parse_stack_frames,
+    serialize_body,
+    SourceMapData,
+)
 from backend.modules.meshpay import js_dumps, merkle_root
 
 log = logging.getLogger("jambu.browser_agent")
@@ -62,6 +78,12 @@ _MUTATING_ACTIONS = {
 
 # Loopback / private hosts that a *local* test session is allowed to reach.
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0", "host.docker.internal"}
+
+# Injected before flows so transitions/animations don't cause flaky reads.
+DISABLE_ANIM_CSS = (
+    "*,*::before,*::after{transition:none!important;animation:none!important;"
+    "animation-duration:0s!important;caret-color:transparent!important}"
+)
 
 # Words that mark an action as irreversible/high-stakes regardless of session
 # settings. Matched case-insensitively against element name/role/href.
@@ -133,8 +155,11 @@ class Telemetry:
         if len(seq) > cap:
             del seq[: len(seq) - cap]
 
-    def add_console(self, level: str, text: str) -> None:
-        self.console.append({"level": level, "text": (text or "")[:300]})
+    def add_console(self, level: str, text: str, location: Optional[dict] = None) -> None:
+        self.console.append({
+            "level": level, "text": (text or "")[:300],
+            "location": location or {},
+        })
         self._trim(self.console, self.cap)
 
     def add_page_error(self, text: str) -> None:
@@ -161,6 +186,11 @@ class Telemetry:
     def snapshot(self) -> dict:
         return {
             "console_errors": self.errors(),
+            "console_errors_detail": (
+                [{"text": c["text"], "location": c.get("location") or {}}
+                 for c in self.console if c.get("level") == "error"]
+                + [{"text": e, "location": {}} for e in self.page_errors]
+            ),
             "console_warnings": [c["text"] for c in self.console if c.get("level") == "warning"],
             "failed_requests": list(self.failed_requests),
             "bad_responses": list(self.bad_responses),
@@ -183,11 +213,18 @@ class PlaywrightPage:
     and can be drained per flow rather than fetched with extra calls.
     """
 
-    def __init__(self, page):
+    def __init__(self, page, network: Optional[dict] = None):
         self._page = page
         self.telemetry = Telemetry()
+        self._network = network or {}
+        self._network_rules = compile_network(network)
+        self.requests: list[dict] = []
         try:
-            page.on("console", lambda msg: self.telemetry.add_console(msg.type, msg.text))
+            page.on("console", lambda msg: self.telemetry.add_console(
+                msg.type, msg.text,
+                getattr(msg, "location", None) if isinstance(
+                    getattr(msg, "location", None), dict) else None,
+            ))
             page.on("pageerror", lambda exc: self.telemetry.add_page_error(str(exc)))
             page.on("requestfailed", lambda req: self.telemetry.add_failed_request(
                 req.method, req.url,
@@ -196,8 +233,83 @@ class PlaywrightPage:
             page.on("response", lambda resp: self.telemetry.add_response(
                 resp.request.method, resp.url, resp.status,
             ) if resp.status >= 400 else None)
+            page.on("request", lambda req: self._track_request(req.method, req.url))
         except Exception:  # adapters/fakes without event support
             pass
+
+    def _track_request(self, method: str, url: str) -> None:
+        self.requests.append({"method": method, "url": (url or "")[:300]})
+        if len(self.requests) > MAX_TELEMETRY:
+            del self.requests[: len(self.requests) - MAX_TELEMETRY]
+
+    def made_request(self, pattern: str) -> bool:
+        return any(pattern in r["url"] for r in self.requests)
+
+    def drain_requests(self) -> list[dict]:
+        out = list(self.requests)
+        self.requests.clear()
+        return out
+
+    async def setup_network(self, network: Optional[dict]) -> dict:
+        """Install request interception: mocks, failures, delays, offline."""
+        self._network = network or {}
+        self._network_rules = compile_network(network)
+        offline = bool(self._network.get("offline"))
+        if not self._network_rules and not offline:
+            return {"rules": 0, "offline": False}
+
+        async def handler(route):
+            request = route.request
+            rule = match_network(self._network_rules, request.url, request.method)
+            if rule is not None:
+                if rule.action == "abort":
+                    return await route.abort()
+                if rule.action == "delay":
+                    await asyncio.sleep(max(0, rule.ms) / 1000)
+                    return await route.continue_()
+                if rule.action == "fulfill":
+                    return await route.fulfill(
+                        status=rule.status,
+                        body=serialize_body(rule.body, rule.content_type),
+                        content_type=rule.content_type,
+                    )
+            if offline:
+                return await route.abort()
+            return await route.continue_()
+
+        try:
+            await self._page.route("**/*", handler)
+        except Exception:  # adapter without routing support
+            return {"rules": len(self._network_rules), "offline": offline,
+                    "supported": False}
+        return {"rules": len(self._network_rules), "offline": offline}
+
+    async def evaluate(self, script: str, arg: Any = None):
+        if arg is None:
+            return await self._page.evaluate(script)
+        return await self._page.evaluate(script, arg)
+
+    async def fetch_text(self, url: str) -> Optional[str]:
+        """Fetch a URL from within the page origin (used for source maps)."""
+        return await self._page.evaluate(
+            """async (u) => {
+                try { const r = await fetch(u); return r.ok ? await r.text() : null; }
+                catch (e) { return null; }
+            }""",
+            url,
+        )
+
+    async def a11y_audit(self) -> dict:
+        return await self._page.evaluate(A11Y_JS)
+
+    async def perf_metrics(self) -> dict:
+        return await self._page.evaluate(PERF_JS)
+
+    async def inject_css(self, css: str) -> None:
+        await self._page.add_style_tag(content=css)
+
+    async def init_perf_observers(self) -> None:
+        await self._page.add_init_script(PERF_OBSERVER_JS)
 
     async def goto(self, url: str) -> None:
         await self._page.goto(url, wait_until="domcontentloaded", timeout=20000)
@@ -374,6 +486,21 @@ def render_flow_report(report: dict, *, max_errors: int = 5) -> str:
         lines.append(bit)
         for cand in step.get("candidates") or []:
             lines.append(f"      candidate {cand.get('ref')}: {cand.get('name')}")
+        cause = step.get("cause") or {}
+        cause_bits = []
+        if cause.get("dom"):
+            d = cause["dom"]
+            cause_bits.append(f"dom +{d.get('added', 0)}/-{d.get('removed', 0)}/~{d.get('changed', 0)}")
+        if cause.get("failed_requests"):
+            cause_bits.append(f"{len(cause['failed_requests'])} failed req")
+        if cause.get("console_errors"):
+            cause_bits.append(f"{len(cause['console_errors'])} console error")
+        if cause_bits:
+            lines.append(f"      cause: {'; '.join(cause_bits)}")
+
+    for item in (report.get("console_errors_source") or [])[:max_errors]:
+        if item.get("source"):
+            lines.append(f"console {item['source']}:{item.get('source_line')} — {item.get('text', '')[:120]}")
 
     errors = report.get("console_errors") or []
     if errors:
@@ -390,6 +517,9 @@ def render_flow_report(report: dict, *, max_errors: int = 5) -> str:
     if bad:
         lines.append(f"\nHTTP >=400 ({len(bad)}):")
         lines.extend(f"  - {r.get('status')} {r.get('method')} {r.get('url')[:120]}" for r in bad[:max_errors])
+    artifacts = report.get("artifacts") or {}
+    if artifacts:
+        lines.append("\nartifacts: " + ", ".join(f"{k}={v}" for k, v in artifacts.items()))
     return "\n".join(lines)
 
 
@@ -422,6 +552,7 @@ class BrowserAgentSession:
         self.catalog: dict[str, dict] = {}
         self.last_url = ""
         self.closed = False
+        self._source_maps: dict[str, Optional[SourceMapData]] = {}
 
     # -- helpers -------------------------------------------------------------
 
@@ -689,7 +820,10 @@ class BrowserAgentSession:
             raise SessionRefused(
                 "unsupported_action", f"page adapter does not support {name!r}",
             )
-        return await fn(*args, **kwargs)
+        result = fn(*args, **kwargs)
+        if inspect.isawaitable(result):
+            result = await result
+        return result
 
     def _drain_telemetry(self) -> dict:
         drain = getattr(self.page, "drain_telemetry", None)
@@ -719,7 +853,8 @@ class BrowserAgentSession:
 
     async def run_flow(
         self, steps, *, approve: bool = False, stop_on_failure: bool = False,
-        observe: bool = True,
+        observe: bool = True, network: Optional[dict] = None,
+        freeze_animations: bool = True, resolve_sources: bool = False,
     ) -> dict:
         """Execute a declarative list of steps and return one compact report.
 
@@ -728,16 +863,35 @@ class BrowserAgentSession:
         waits, assertions and re-observation internally, and hands back a
         pass/fail digest plus auto-collected console/network telemetry — no
         snapshot/act round trips per step.
+
+        ``network`` installs request interception (mocks/fail/delay/offline),
+        ``resolve_sources`` maps console errors through source maps, and each
+        step carries the telemetry + DOM delta it caused.
         """
         normalized = normalize_flow_steps(steps)
         results: list[dict] = []
         passed = failed = 0
         started = time.time()
 
+        network_info: dict = {"rules": 0, "offline": False}
+        if network:
+            network_info = await self._call_optional("setup_network", network) or network_info
+        if freeze_animations:
+            try:
+                await self._call_optional("inject_css", DISABLE_ANIM_CSS)
+            except SessionRefused:
+                pass
+        try:
+            await self._call_optional("init_perf_observers")
+        except SessionRefused:
+            pass
+
         for i, step in enumerate(normalized, 1):
             t0 = time.time()
             action = (step.get("action") or "?").strip().lower()
             result: dict = {"i": i, "action": action, "status": "passed"}
+            before_elements = list(self.catalog.values())
+            before_tel = self._telemetry_counts()
             try:
                 step_approve = bool(step.get("approve", approve))
                 detail, evidence = await self._run_step(
@@ -760,6 +914,11 @@ class BrowserAgentSession:
                 result["reason"] = "error"
                 result["error"] = str(exc)[:300]
                 failed += 1
+
+            # Cause attribution: what did this step change / emit?
+            cause = self._attribute(before_elements, before_tel)
+            if cause:
+                result["cause"] = cause
             result["ms"] = int((time.time() - t0) * 1000)
             results.append(result)
             if result["status"] == "failed" and stop_on_failure:
@@ -781,11 +940,86 @@ class BrowserAgentSession:
             "title": state.get("title", ""),
             "duration_ms": int((time.time() - started) * 1000),
         }
+        if network:
+            report["network"] = network_info
+        if resolve_sources:
+            report["console_errors_source"] = await self._resolve_sources(
+                telemetry.get("console_errors_detail") or [],
+            )
         self._record(
             "run_flow", "ok" if report["ok"] else "failed",
             detail=f"{passed}/{len(results)} steps passed",
         )
         return report
+
+    def _telemetry_counts(self) -> dict:
+        t = self._peek_telemetry()
+        return {
+            "console_errors": len(t.get("console_errors") or []),
+            "failed_requests": len(t.get("failed_requests") or []),
+            "bad_responses": len(t.get("bad_responses") or []),
+        }
+
+    def _attribute(self, before_elements: list[dict], before_tel: dict) -> dict:
+        """Summarise the telemetry + DOM changes a step caused."""
+        cause: dict = {}
+        tel = self._peek_telemetry()
+        new_errors = (tel.get("console_errors") or [])[before_tel["console_errors"]:]
+        new_failed = (tel.get("failed_requests") or [])[before_tel["failed_requests"]:]
+        new_bad = (tel.get("bad_responses") or [])[before_tel["bad_responses"]:]
+        if new_errors:
+            cause["console_errors"] = [e[:160] for e in new_errors[:3]]
+        if new_failed:
+            cause["failed_requests"] = new_failed[:3]
+        if new_bad:
+            cause["bad_responses"] = new_bad[:3]
+        dom = diff_elements(before_elements, list(self.catalog.values()))
+        dom_small = {k: dom[k] for k in ("added", "removed", "changed") if dom.get(k)}
+        if dom_small:
+            dom_small["added_names"] = dom["added_names"]
+            dom_small["removed_names"] = dom["removed_names"]
+            cause["dom"] = dom_small
+        return cause
+
+    async def _resolve_sources(self, detail: list[dict]) -> list[dict]:
+        """Map console-error locations through the page's source maps."""
+        out: list[dict] = []
+        for item in detail:
+            location = item.get("location") or {}
+            resolved = None
+            url = location.get("url") or ""
+            if url.startswith(("http://", "https://")):
+                data = await self._get_source_map(url)
+                if data is not None:
+                    try:
+                        resolved = data.lookup(
+                            int(location.get("lineNumber", 0)) + 1,
+                            int(location.get("columnNumber", 0)),
+                        )
+                    except Exception:
+                        resolved = None
+            entry = {"text": item.get("text", "")[:200], "location": location}
+            if resolved:
+                entry["source"] = resolved.get("source")
+                entry["source_line"] = resolved.get("line")
+            out.append(entry)
+        return out
+
+    async def _get_source_map(self, script_url: str) -> Optional[SourceMapData]:
+        map_url = map_url_for(script_url)
+        if map_url in self._source_maps:
+            return self._source_maps[map_url]
+        data: Optional[SourceMapData] = None
+        try:
+            raw = await self._call_optional("fetch_text", map_url)
+            if raw:
+                import json
+
+                data = SourceMapData(json.loads(raw))
+        except Exception:
+            data = None
+        self._source_maps[map_url] = data
+        return data
 
     async def _run_step(self, step: dict, *, approve: bool, observe: bool):
         action = (step.get("action") or "").strip().lower()
@@ -865,7 +1099,7 @@ class BrowserAgentSession:
 
         if action == "assert" or action.startswith("assert_"):
             state = await self._read_state()
-            passed, message = self._evaluate_assert(step, state)
+            passed, message = await self._evaluate_assert(step, state)
             if not passed:
                 raise SessionRefused("assertion_failed", message)
             return message, {}
@@ -890,7 +1124,7 @@ class BrowserAgentSession:
             )
         await self._call_optional("wait_for", timeout_ms=timeout)
 
-    def _evaluate_assert(self, step: dict, state: dict) -> tuple[bool, str]:
+    async def _evaluate_assert(self, step: dict, state: dict) -> tuple[bool, str]:
         action = (step.get("action") or "").strip().lower()
         kind = (step.get("kind") or
                 (action[len("assert_"):] if action.startswith("assert_") else "")).strip().lower()
@@ -904,6 +1138,43 @@ class BrowserAgentSession:
                 element = self.catalog.get(self.resolve_target(target))
             except SessionRefused:
                 element = None
+
+        if kind in ("no_a11y_violations", "a11y_clean", "accessible"):
+            audit = await self._call_optional("a11y_audit")
+            issues = (audit or {}).get("issues") or []
+            if not issues:
+                return True, "no accessibility violations"
+            summary = ", ".join(
+                f"{i.get('id')}({i.get('count')})" for i in issues[:5]
+            )
+            return False, f"{len(issues)} a11y issue(s): {summary}"
+
+        if kind in ("perf", "lcp", "fcp", "load", "dom_nodes", "transfer_kb",
+                    "resource_count", "navigation_ms"):
+            metric = kind if kind != "perf" else (step.get("metric") or "lcp").lower()
+            metrics = await self._call_optional("perf_metrics")
+            metrics = metrics or {}
+            source = {
+                "lcp": "lcp_ms", "fcp": "fcp_ms", "load": "load_ms",
+                "dom_nodes": "dom_nodes", "resource_count": "resource_count",
+                "navigation_ms": "response_ms",
+            }.get(metric, metric)
+            actual = float(metrics.get(source, 0) or 0)
+            if metric == "transfer_kb":
+                actual = float(metrics.get("transfer_bytes", 0) or 0) / 1024.0
+            budget = float(value or 0)
+            ok = actual <= budget if budget > 0 else actual > 0
+            return ok, (f"{metric}={actual:.1f} (budget {budget:g})" if budget > 0
+                        else f"{metric}={actual:.1f}")
+
+        if kind == "made_request":
+            made = await self._call_optional("made_request", value)
+            return bool(made), (f"request made: {value}" if made
+                                else f"no matching request: {value}")
+        if kind in ("no_request", "request_absent"):
+            made = await self._call_optional("made_request", value)
+            return (not made), (f"request absent: {value}" if not made
+                                else f"unexpected request: {value}")
 
         if kind == "visible":
             if element is not None:
@@ -994,6 +1265,7 @@ class BrowserAgentService:
         self.ttl_seconds = ttl_seconds
         self._sessions: dict[str, BrowserAgentSession] = {}
         self._browser_sessions: dict[str, Any] = {}
+        self._artifacts: dict[str, dict] = {}
 
     def _prune(self) -> None:
         now = time.time()
@@ -1002,11 +1274,15 @@ class BrowserAgentService:
             if session.closed or now - session.created_at > self.ttl_seconds:
                 self._sessions.pop(sid, None)
                 self._browser_sessions.pop(sid, None)
+                self._artifacts.pop(sid, None)
 
     async def open(
         self, *, allow_domains: list[str], require_approval: bool = True,
         scrub_pii: bool = True, privacy_level: Optional[str] = None,
-        allow_private: bool = False,
+        allow_private: bool = False, storage_state: Any = None,
+        context_options: Optional[dict] = None, trace: bool = False,
+        har: bool = False, video: bool = False,
+        artifacts_dir: Optional[str] = None,
     ) -> BrowserAgentSession:
         self._prune()
         if len(self._sessions) >= self.max_sessions:
@@ -1020,11 +1296,31 @@ class BrowserAgentService:
             BrowserManager, PrivacyLevel, SessionMode,
         )
 
+        opts = dict(context_options or {})
+        if storage_state:
+            opts["storage_state"] = storage_state
+        if (trace or har or video) and not artifacts_dir:
+            artifacts_dir = tempfile.mkdtemp(prefix="jambu-artifacts-")
+        if artifacts_dir:
+            os.makedirs(artifacts_dir, exist_ok=True)
+            if har:
+                opts["record_har_path"] = os.path.join(artifacts_dir, "network.har")
+            if video:
+                opts["record_video_dir"] = artifacts_dir
+
         privacy = PrivacyLevel[privacy_level.upper()] if privacy_level else PrivacyLevel.ENHANCED
         browser_session = await BrowserManager.get_instance().get_session(
             session_id, mode=SessionMode.EPHEMERAL, privacy_level=privacy,
+            context_options=opts or None,
         )
         page = await browser_session.get_page()
+        if trace:
+            starter = getattr(browser_session, "start_trace", None)
+            if starter is not None:
+                try:
+                    await starter()
+                except Exception:
+                    log.warning("failed to start trace for %s", session_id, exc_info=True)
         agent = BrowserAgentSession(
             session_id, PlaywrightPage(page), allow_domains=allow_domains,
             require_approval=require_approval, scrub_pii=scrub_pii,
@@ -1032,6 +1328,9 @@ class BrowserAgentService:
         )
         self._sessions[session_id] = agent
         self._browser_sessions[session_id] = browser_session
+        self._artifacts[session_id] = {
+            "dir": artifacts_dir, "trace": trace, "har": har, "video": video,
+        }
         return agent
 
     def get(self, session_id: str) -> BrowserAgentSession:
@@ -1045,12 +1344,18 @@ class BrowserAgentService:
         self, *, url: str, steps=None, allow_domains: Optional[list[str]] = None,
         local: bool = False, approve: bool = False, stop_on_failure: bool = False,
         privacy_level: Optional[str] = None, scrub_pii: bool = True,
+        network: Optional[dict] = None, resolve_sources: bool = False,
+        freeze_animations: bool = True, storage_state: Any = None,
+        context_options: Optional[dict] = None, trace: bool = False,
+        har: bool = False, video: bool = False,
+        artifacts_dir: Optional[str] = None,
     ) -> dict:
         """One-shot: open an ephemeral session, run a flow, close, return report.
 
         The single-call entry point for agents testing a local app. The
         allowlist defaults to the target URL's host; ``local=True`` additionally
-        permits loopback/private hosts (the dev server case).
+        permits loopback/private hosts (the dev server case). ``trace``/``har``/
+        ``video`` capture debugging artifacts whose paths are returned.
         """
         host = _host(url).lower()
         if not host:
@@ -1062,22 +1367,29 @@ class BrowserAgentService:
         session = await self.open(
             allow_domains=domains, require_approval=False, scrub_pii=scrub_pii,
             privacy_level=privacy_level, allow_private=local,
+            storage_state=storage_state, context_options=context_options,
+            trace=trace, har=har, video=video, artifacts_dir=artifacts_dir,
         )
+        closed: dict = {}
         try:
             flow = normalize_flow_steps(steps) if steps else []
             if not any((s.get("action") or "").lower() == "navigate" for s in flow):
                 flow = [{"action": "navigate", "url": url}] + flow
             report = await session.run_flow(
                 flow, approve=approve, stop_on_failure=stop_on_failure,
+                network=network, resolve_sources=resolve_sources,
+                freeze_animations=freeze_animations,
             )
             receipts = session.receipts()
         finally:
-            await self.close(session.id)
+            closed = await self.close(session.id)
         report["session_id"] = session.id
         report["allow_domains"] = domains
         report["receipts"] = {
             "count": receipts["count"], "merkle_root": receipts["merkle_root"],
         }
+        if closed.get("artifacts"):
+            report["artifacts"] = closed["artifacts"]
         return report
 
     def list(self) -> list[dict]:
@@ -1089,8 +1401,19 @@ class BrowserAgentService:
         if session is None:
             raise SessionRefused("not_found", f"no such session: {session_id}")
         session.closed = True
+        artifacts: dict = {}
+        art = self._artifacts.pop(session_id, None)
         browser_session = self._browser_sessions.pop(session_id, None)
         if browser_session is not None:
+            if art and art.get("trace"):
+                stop_trace = getattr(browser_session, "stop_trace", None)
+                path = os.path.join(art["dir"], "trace.zip")
+                if stop_trace is not None:
+                    try:
+                        if await stop_trace(path):
+                            artifacts["trace"] = path
+                    except Exception:
+                        log.warning("failed to write trace for %s", session_id, exc_info=True)
             try:
                 # BrowserSession exposes stop(); tolerate a close() alias.
                 teardown = getattr(browser_session, "stop", None) or getattr(
@@ -1100,7 +1423,26 @@ class BrowserAgentService:
                     await teardown()
             except Exception:
                 log.warning("failed to close browser session %s", session_id, exc_info=True)
-        return {"session_id": session_id, "closed": True, "steps": len(session.steps)}
+            if art:
+                if art.get("har"):
+                    har_path = os.path.join(art["dir"], "network.har")
+                    if os.path.exists(har_path):
+                        artifacts["har"] = har_path
+                if art.get("video"):
+                    videos = sorted(glob.glob(os.path.join(art["dir"], "*.webm")))
+                    if videos:
+                        artifacts["video"] = videos[-1]
+        else:
+            # Artifacts requested but the browser session was faked/absent.
+            if art:
+                for name, fname in (("har", "network.har"),):
+                    candidate = os.path.join(art["dir"], fname)
+                    if os.path.exists(candidate):
+                        artifacts[name] = candidate
+        return {
+            "session_id": session_id, "closed": True,
+            "steps": len(session.steps), "artifacts": artifacts,
+        }
 
 
 _service: Optional[BrowserAgentService] = None

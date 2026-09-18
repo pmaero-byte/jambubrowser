@@ -42,8 +42,18 @@ class FlowPage:
         self.reloaded = 0
         self.gotos: list[str] = []
         self.console = []
+        self.console_locations: list[dict] = []
         self.page_errors = []
         self.failed_requests = []
+        self.network_setups: list[dict] = []
+        self.injected_css: list[str] = []
+        self.network_requests: list[str] = []
+        self.a11y = {"issues": [], "total": 0}
+        self.perf = {
+            "lcp_ms": 1200, "fcp_ms": 400, "load_ms": 1500, "response_ms": 100,
+            "dom_nodes": 300, "resource_count": 20, "transfer_bytes": 200 * 1024,
+        }
+        self.source_maps: dict[str, str] = {}
 
     async def goto(self, url: str) -> None:
         self.gotos.append(url)
@@ -68,6 +78,11 @@ class FlowPage:
             self.elements = target.get("new_elements", [])
         if target.get("reveals"):
             self.elements.extend(target["reveals"])
+        if target.get("console_error"):
+            self.console.append(target["console_error"])
+            self.console_locations.append(target.get("console_location") or {})
+        if target.get("request"):
+            self.network_requests.append(target["request"])
 
     async def type_text(self, ref: str, text: str) -> None:
         self.typed.append((ref, text))
@@ -116,8 +131,14 @@ class FlowPage:
         return "QUJD"
 
     def peek_telemetry(self) -> dict:
+        detail = []
+        for i, text in enumerate(self.console):
+            loc = self.console_locations[i] if i < len(self.console_locations) else {}
+            detail.append({"text": text, "location": loc})
+        detail += [{"text": e, "location": {}} for e in self.page_errors]
         return {
-            "console_errors": list(self.console),
+            "console_errors": list(self.console) + list(self.page_errors),
+            "console_errors_detail": detail,
             "console_warnings": [],
             "failed_requests": list(self.failed_requests),
             "bad_responses": [],
@@ -126,8 +147,33 @@ class FlowPage:
     def drain_telemetry(self) -> dict:
         data = self.peek_telemetry()
         self.console.clear()
+        self.console_locations.clear()
         self.failed_requests.clear()
         return data
+
+    async def setup_network(self, network: dict) -> dict:
+        self.network_setups.append(network)
+        rules = len(network.get("mocks") or []) + len(network.get("fail") or []) \
+            + len(network.get("delay") or [])
+        return {"rules": rules, "offline": bool(network.get("offline"))}
+
+    async def inject_css(self, css: str) -> None:
+        self.injected_css.append(css)
+
+    async def a11y_audit(self) -> dict:
+        return self.a11y
+
+    async def perf_metrics(self) -> dict:
+        return self.perf
+
+    def made_request(self, pattern: str) -> bool:
+        return any(pattern in url for url in self.network_requests)
+
+    async def evaluate(self, script: str, arg=None):
+        return None
+
+    async def fetch_text(self, url: str):
+        return self.source_maps.get(url)
 
 
 def seed(page: FlowPage) -> None:
@@ -364,6 +410,125 @@ class TestFlowRunner:
 
 
 # ---------------------------------------------------------------------------
+# Debugging: network, cause attribution, a11y/perf, source maps
+# ---------------------------------------------------------------------------
+
+class TestNetworkAndDebug:
+    def test_network_policy_is_installed_and_reported(self):
+        page = FlowPage()
+        seed(page)
+        session = make_session(page)
+        report = run(session.run_flow(
+            [{"action": "navigate", "url": "https://example.com/"}],
+            network={
+                "mocks": [{"url": "**/api/user", "json": {"name": "T"}}],
+                "fail": ["**/analytics/**"],
+                "delay": [{"url": "**/slow", "ms": 50}],
+                "offline": False,
+            },
+        ))
+        assert page.network_setups, "network policy should be installed"
+        assert report["network"]["rules"] == 3
+
+    def test_freeze_animations_injects_css(self):
+        page = FlowPage()
+        seed(page)
+        session = make_session(page)
+        run(session.run_flow([{"action": "navigate", "url": "https://example.com/"}]))
+        assert page.injected_css and "animation:none" in page.injected_css[0]
+
+    def test_animations_can_be_left_alone(self):
+        page = FlowPage()
+        seed(page)
+        session = make_session(page)
+        run(session.run_flow(
+            [{"action": "navigate", "url": "https://example.com/"}],
+            freeze_animations=False,
+        ))
+        assert page.injected_css == []
+
+    def test_cause_attribution_records_dom_and_errors(self):
+        page = FlowPage()
+        seed(page)
+        session = make_session(page)
+        report = run(session.run_flow([
+            {"action": "navigate", "url": "https://example.com/"},
+            {"action": "click", "target": "Home"},  # navigates + reveals Dashboard
+        ]))
+        # The click step should carry what it changed (Dashboard appeared).
+        click_step = report["steps"][1]
+        assert "cause" in click_step
+        assert click_step["cause"]["dom"]["added"] >= 1
+
+    def test_a11y_assertion_reports_violations(self):
+        page = FlowPage()
+        seed(page)
+        page.a11y = {"issues": [{"id": "image-alt", "count": 2}], "total": 2}
+        session = make_session(page)
+        report = run(session.run_flow([{"action": "assert_no_a11y_violations"}]))
+        assert report["ok"] is False
+        assert "a11y" in report["steps"][0]["error"]
+
+    def test_a11y_assertion_passes_clean(self):
+        page = FlowPage()
+        seed(page)
+        session = make_session(page)
+        report = run(session.run_flow([{"action": "assert_no_a11y_violations"}]))
+        assert report["ok"] is True
+
+    def test_perf_budget_assertions(self):
+        page = FlowPage()
+        seed(page)
+        session = make_session(page)
+        report = run(session.run_flow([
+            {"action": "assert_lcp", "value": 2500},
+            {"action": "assert_fcp", "value": 500},
+            {"action": "assert_dom_nodes", "value": 1000},
+            {"action": "assert_transfer_kb", "value": 500},
+        ]))
+        assert report["ok"] is True
+
+    def test_perf_budget_failure(self):
+        page = FlowPage()
+        seed(page)
+        page.perf["lcp_ms"] = 9000
+        session = make_session(page)
+        report = run(session.run_flow([{"action": "assert_lcp", "value": 2500}]))
+        assert report["ok"] is False
+
+    def test_request_assertions(self):
+        page = FlowPage()
+        seed(page)
+        page.network_requests = ["https://example.com/api/order"]
+        session = make_session(page)
+        report = run(session.run_flow([
+            {"action": "assert_made_request", "value": "/api/order"},
+            {"action": "assert_no_request", "value": "/api/analytics"},
+        ]))
+        assert report["ok"] is True
+
+    def test_resolve_sources_maps_console_errors(self):
+        page = FlowPage()
+        # Register a source map for the bundle the error points into.
+        page.source_maps["https://example.com/app.js.map"] = json.dumps({
+            "version": 3, "sources": ["src/App.tsx"], "mappings": "AAAA",
+        })
+        page.console = ["TypeError: boom"]
+        page.console_locations = [{
+            "url": "https://example.com/app.js", "lineNumber": 0, "columnNumber": 0,
+        }]
+        session = make_session(page)
+        page.network_requests = []
+        report = run(session.run_flow(
+            [{"action": "navigate", "url": "https://example.com/"}],
+            resolve_sources=True,
+        ))
+        mapped = report["console_errors_source"]
+        assert mapped[0]["source"] == "src/App.tsx"
+        assert mapped[0]["source_line"] == 1
+
+
+# ---------------------------------------------------------------------------
 # Local-dev opt-in
 # ---------------------------------------------------------------------------
 
@@ -466,6 +631,55 @@ class TestRunTest:
         result = run(service.close(session.id))
         assert result["closed"] is True
         assert stopped["stop"] is True
+
+
+class TestArtifactsAndContext:
+    def test_open_builds_context_options_and_artifacts(self, monkeypatch, tmp_path):
+        import backend.modules.browser as browser_mod
+
+        captured = {}
+
+        class FakeBrowserSession:
+            async def get_page(self):
+                return object()
+
+            async def start_trace(self):
+                captured["trace_started"] = True
+
+            async def stop_trace(self, path):
+                with open(path, "w") as fh:
+                    fh.write("zip")
+                return path
+
+            async def stop(self):
+                captured["stopped"] = True
+
+        class FakeManager:
+            @classmethod
+            def get_instance(cls):
+                return cls()
+
+            async def get_session(self, sid, mode=None, privacy_level=None,
+                                  context_options=None):
+                captured["context_options"] = context_options
+                return FakeBrowserSession()
+
+        monkeypatch.setattr(browser_mod.BrowserManager, "get_instance",
+                            FakeManager.get_instance)
+
+        service = BrowserAgentService()
+        session = run(service.open(
+            allow_domains=["localhost"], allow_private=True,
+            storage_state={"cookies": [], "origins": []},
+            trace=True, har=True, artifacts_dir=str(tmp_path),
+        ))
+        assert captured["context_options"]["storage_state"] == {"cookies": [], "origins": []}
+        assert captured["context_options"]["record_har_path"].endswith("network.har")
+        assert captured["trace_started"] is True
+
+        result = run(service.close(session.id))
+        assert captured["stopped"] is True
+        assert result["artifacts"]["trace"].endswith("trace.zip")
 
 
 # ---------------------------------------------------------------------------

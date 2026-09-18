@@ -60,6 +60,9 @@ class RunFlowRequest(BaseModel):
     approve: bool = False
     stop_on_failure: bool = False
     observe: bool = True
+    network: Optional[dict] = None
+    resolve_sources: bool = False
+    freeze_animations: bool = True
 
 
 class TestFlowRequest(BaseModel):
@@ -71,6 +74,15 @@ class TestFlowRequest(BaseModel):
     stop_on_failure: bool = False
     privacy_level: Optional[str] = None
     scrub_pii: bool = True
+    network: Optional[dict] = None
+    resolve_sources: bool = False
+    freeze_animations: bool = True
+    storage_state: Optional[dict] = None
+    context_options: Optional[dict] = None
+    trace: bool = False
+    har: bool = False
+    video: bool = False
+    artifacts_dir: Optional[str] = None
 
 
 @router.post("")
@@ -149,6 +161,15 @@ async def test_flow(req: TestFlowRequest):
             stop_on_failure=req.stop_on_failure,
             privacy_level=req.privacy_level,
             scrub_pii=req.scrub_pii,
+            network=req.network,
+            resolve_sources=req.resolve_sources,
+            freeze_animations=req.freeze_animations,
+            storage_state=req.storage_state,
+            context_options=req.context_options,
+            trace=req.trace,
+            har=req.har,
+            video=req.video,
+            artifacts_dir=req.artifacts_dir,
         )
     except SessionRefused as refusal:
         raise _refusal_to_http(refusal)
@@ -162,6 +183,8 @@ async def run_flow(session_id: str, req: RunFlowRequest):
         return await session.run_flow(
             req.steps, approve=req.approve,
             stop_on_failure=req.stop_on_failure, observe=req.observe,
+            network=req.network, resolve_sources=req.resolve_sources,
+            freeze_animations=req.freeze_animations,
         )
     except SessionRefused as refusal:
         raise _refusal_to_http(refusal)
