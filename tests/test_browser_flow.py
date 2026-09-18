@@ -175,6 +175,9 @@ class FlowPage:
     async def fetch_text(self, url: str):
         return self.source_maps.get(url)
 
+    async def resource_count(self) -> int:
+        return len(self.network_requests)
+
 
 def seed(page: FlowPage) -> None:
     page.elements = [
@@ -505,6 +508,16 @@ class TestNetworkAndDebug:
             {"action": "assert_made_request", "value": "/api/order"},
             {"action": "assert_no_request", "value": "/api/analytics"},
         ]))
+        assert report["ok"] is True
+
+    def test_settle_waits_for_network_quiet(self):
+        page = FlowPage()
+        seed(page)
+        session = make_session(page)
+        report = run(session.run_flow(
+            [{"action": "navigate", "url": "https://example.com/"}],
+            settle_ms=100,
+        ))
         assert report["ok"] is True
 
     def test_resolve_sources_maps_console_errors(self):
@@ -881,3 +894,53 @@ class TestLiveView:
         browser_agent.get_browser_agent_service()._sessions[session.id] = session
         resp = client.get(f"/browser/sessions/{session.id}/screenshot")
         assert resp.status_code == 501
+
+
+class TestRecording:
+    def test_session_captures_actions(self):
+        page = FlowPage()
+        seed(page)
+        page.elements.append(
+            {"ref": "@e7", "tag": "input", "role": "", "type": "password",
+             "name": "Password", "href": "", "visible": True, "value": ""}
+        )
+        session = make_session(page)
+        session.start_recording()
+        run(session.run_flow([
+            {"action": "navigate", "url": "https://example.com/"},
+            {"action": "type", "target": "Email", "value": "dev@example.com"},
+            {"action": "type", "target": "Password", "value": "hunter2"},
+            {"action": "click", "target": "Home"},
+        ]))
+        result = session.stop_recording()
+        actions = [s["action"] for s in result["steps"]]
+        assert actions == ["navigate", "type", "type", "click"]
+        # Credentials become replayable placeholders, never recorded verbatim.
+        assert result["steps"][2]["value"] == "{{password}}"
+        assert result["steps"][1]["value"] == "{{email}}"
+
+    def test_recording_route(self):
+        from fastapi.testclient import TestClient
+        from backend.engine import app
+        from backend.modules import browser_agent
+
+        browser_agent.reset_browser_agent_service()
+        page = FlowPage()
+        seed(page)
+        session = make_session(page)
+        browser_agent.get_browser_agent_service()._sessions[session.id] = session
+
+        with TestClient(app) as client:
+            started = client.post(f"/browser/sessions/{session.id}/record",
+                                  json={"active": True})
+            assert started.status_code == 200
+            run(session.run_flow([
+                {"action": "navigate", "url": "https://example.com/"},
+            ]))
+            flow = client.get(f"/browser/sessions/{session.id}/flow").json()
+            assert flow["count"] == 1
+            assert flow["steps"][0]["action"] == "navigate"
+            stopped = client.post(f"/browser/sessions/{session.id}/record",
+                                  json={"active": False}).json()
+            assert stopped["recording"] is False
+        browser_agent.reset_browser_agent_service()

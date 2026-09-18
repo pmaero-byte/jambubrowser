@@ -1037,6 +1037,52 @@ def cmd_plan(args) -> int:
     return EXIT_OK
 
 
+def cmd_record(args) -> int:
+    """Start/stop recording a session's actions into a reusable flow."""
+    session_id = args.session
+    if args.stop:
+        result = api_request("POST", f"/browser/sessions/{session_id}/record",
+                             {"active": False})
+        if result is None or "error" in result:
+            print(f"Stop recording failed: {(result or {}).get('error', 'engine unreachable')}")
+            return EXIT_ENGINE_ERROR
+        steps = result.get("steps") or []
+        doc = {"url": args.url or "", "steps": steps}
+        if args.out:
+            Path(args.out).write_text(json.dumps(doc, indent=2))
+            print(f"Wrote {args.out} ({len(steps)} steps)")
+        else:
+            print(json.dumps(doc, indent=2))
+        return EXIT_OK
+
+    result = api_request("POST", f"/browser/sessions/{session_id}/record",
+                         {"active": True})
+    if result is None or "error" in result:
+        print(f"Start recording failed: {(result or {}).get('error', 'engine unreachable')}")
+        return EXIT_ENGINE_ERROR
+    print(f"Recording session {session_id}. Drive the browser, then save with:")
+    print(f"  jambu record --session {session_id} --stop --out flow.json")
+    return EXIT_OK
+
+
+def cmd_dev_servers(args) -> int:
+    """Scan common ports for a running local dev server."""
+    from urllib.parse import quote
+
+    result = api_request("GET", f"/browser/dev-servers?host={quote(args.host)}")
+    if result is None or "error" in result:
+        print(f"Scan failed: {(result or {}).get('error', 'engine unreachable')}")
+        return EXIT_ENGINE_ERROR
+    servers = result.get("servers") or []
+    if not servers:
+        print(f"No dev servers found on {args.host} (scanned common ports).")
+        return EXIT_GATE_FAILED
+    for server in servers:
+        print(f"  :{server.get('port')}  {server.get('framework') or 'unknown'}  "
+              f"{server.get('title') or server.get('url')}")
+    return EXIT_OK
+
+
 def _add_audit_options(p: argparse.ArgumentParser) -> None:
     """Options shared by `audit` and `quick` (exports + CI gate)."""
     p.add_argument("url", help="URL to audit")
@@ -1150,6 +1196,20 @@ def main():
                         help="smoke|login|signup|checkout|search|accessibility|performance|responsive")
     p_plan.add_argument("--use-llm", dest="use_llm", action="store_true")
 
+    p_record = subparsers.add_parser(
+        "record", help="Record a session's actions into a reusable flow",
+    )
+    p_record.add_argument("--session", required=True, help="Browser session id")
+    p_record.add_argument("--stop", action="store_true",
+                          help="Stop recording and save the flow")
+    p_record.add_argument("--out", help="Output flow JSON path")
+    p_record.add_argument("--url", help="Entry URL to store with the flow")
+
+    p_devs = subparsers.add_parser(
+        "dev-servers", help="Scan for a running local dev server",
+    )
+    p_devs.add_argument("--host", default="127.0.0.1")
+
     p_monitor = subparsers.add_parser(
         "monitor",
         help="Recurring audit monitors with regression alerts",
@@ -1245,6 +1305,10 @@ def main():
         code = cmd_export(args)
     elif args.command == "plan":
         code = cmd_plan(args)
+    elif args.command == "record":
+        code = cmd_record(args)
+    elif args.command == "dev-servers":
+        code = cmd_dev_servers(args)
     elif args.command == "monitor":
         code = cmd_monitor(args)
     elif args.command == "dcm":

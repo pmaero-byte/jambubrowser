@@ -244,6 +244,22 @@ verbs (`browser_task`, `browser_test_flow`, `browser_test_plan`,
 for CAPTCHA/2FA or visual checks. The desktop UI that consumes these is the
 remaining (Rust/webview) milestone.
 
+### Dev-server discovery & settle
+`GET /browser/dev-servers` (CLI: `jambu dev-servers`) scans common ports and
+identifies the framework (Vite/Next/CRA/Nuxt/Remix/SvelteKit/Astro/Angular/
+webpack/Django). `GET /browser/dev-servers/probe?url=…` probes one URL.
+`run_test(..., detect_dev_server=true)` attaches a `dev_server` block
+(reachable, framework, title, server) for loopback targets, and `settle_ms=N`
+waits until the resource count has been stable for N ms after each navigation
+— the hot-reload settle that stops flows racing a rebuild.
+
+### Recording a flow
+Any client driving a session can record it into a reusable flow:
+`POST /browser/sessions/{id}/record {active}` and
+`GET /browser/sessions/{id}/flow`. Recorded credentials become replayable
+placeholders (`{{email}}`, `{{password}}`) rather than being stored verbatim.
+CLI: `jambu record --session <id> [--stop --out flow.json]`.
+
 ## Token accounting
 
 | Scenario | Calls (before) | Calls (now) |

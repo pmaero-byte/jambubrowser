@@ -305,6 +305,11 @@ class PlaywrightPage:
     async def perf_metrics(self) -> dict:
         return await self._page.evaluate(PERF_JS)
 
+    async def resource_count(self) -> int:
+        return await self._page.evaluate(
+            "() => performance.getEntriesByType('resource').length"
+        )
+
     async def inject_css(self, css: str) -> None:
         await self._page.add_style_tag(content=css)
 
@@ -557,6 +562,10 @@ class BrowserAgentSession:
         # (CAPTCHA/2FA) and resume. The desktop UI drives this; the backend
         # exposes the state and frame.
         self.human_takeover = False
+        # Action recording: when on, performed actions are captured as a flow.
+        self.recording = False
+        self.recorded_steps: list[dict] = []
+        self._settle_ms = 0
 
     # -- helpers -------------------------------------------------------------
 
@@ -650,6 +659,7 @@ class BrowserAgentSession:
                 f"redirect landed on {_host(self.last_url)} (outside allowlist); reverted",
             )
         step = self._record("navigate", "ok", url=self.last_url)
+        self._capture_step({"action": "navigate", "url": url})
         return {"url": self.last_url, "step": step.to_dict()}
 
     async def _read_state(self) -> dict:
@@ -741,6 +751,22 @@ class BrowserAgentSession:
 
         step = self._record(action, "ok", ref=ref,
                             detail=(text[:40] if action == "type" and text else ""))
+        if action == "click":
+            self._capture_step({"action": "click",
+                                "target": element.get("name") or ref, "ref": ref})
+        else:
+            eltype = (element.get("type") or "").lower()
+            name = (element.get("name") or "").lower()
+            if eltype == "password" or "password" in name:
+                recorded_value = "{{password}}"
+            elif eltype == "email" or "email" in name:
+                recorded_value = "{{email}}"
+            else:
+                recorded_value = self._scrub(text)
+            self._capture_step({
+                "action": "type", "target": element.get("name") or ref,
+                "value": recorded_value,
+            })
         return {"outcome": "ok", "url": self.last_url, "step": step.to_dict()}
 
     # -- target resolution (act by intent, not just by ref) ------------------
@@ -859,6 +885,7 @@ class BrowserAgentSession:
         self, steps, *, approve: bool = False, stop_on_failure: bool = False,
         observe: bool = True, network: Optional[dict] = None,
         freeze_animations: bool = True, resolve_sources: bool = False,
+        settle_ms: int = 0,
     ) -> dict:
         """Execute a declarative list of steps and return one compact report.
 
@@ -876,6 +903,7 @@ class BrowserAgentSession:
         results: list[dict] = []
         passed = failed = 0
         started = time.time()
+        self._settle_ms = max(0, int(settle_ms or 0))
 
         network_info: dict = {"rules": 0, "offline": False}
         if network:
@@ -1038,12 +1066,16 @@ class BrowserAgentSession:
             res = await self.navigate(url)
             if observe:
                 await self._read_state()
+            if self._settle_ms:
+                await self._wait_network_quiet(self._settle_ms)
             return f"→ {res['url']}", {}
 
         if action in ("reload", "back", "forward"):
             await self._call_optional({"reload": "reload", "back": "go_back",
                                        "forward": "go_forward"}[action])
             await self._read_state()
+            if self._settle_ms:
+                await self._wait_network_quiet(self._settle_ms)
             return action, {}
 
         if action in ("click", "type"):
@@ -1066,6 +1098,9 @@ class BrowserAgentSession:
                 ref = await self._target(step)
             await self._call_optional("press", ref, key)
             await self._read_state()
+            self._capture_step(
+                {"action": "press", "key": key, **({"ref": ref} if ref else {})}
+            )
             return f"pressed {key}", {}
 
         if action == "hover":
@@ -1251,6 +1286,45 @@ class BrowserAgentSession:
         except SessionRefused:
             return None
 
+    # -- action recording ----------------------------------------------------
+
+    def start_recording(self) -> dict:
+        self.recording = True
+        self.recorded_steps = []
+        return {"recording": True, "steps": 0}
+
+    def stop_recording(self) -> dict:
+        self.recording = False
+        return {"recording": False, "steps": self.recorded_steps,
+                "count": len(self.recorded_steps)}
+
+    def _capture_step(self, step: dict) -> None:
+        if self.recording:
+            self.recorded_steps.append(step)
+
+    async def _wait_network_quiet(self, quiet_ms: int = 600,
+                                  timeout_ms: int = 15000) -> None:
+        """Wait until the resource count stops changing for ``quiet_ms``.
+
+        This is the hot-reload settle: a dev server injecting HMR modules
+        keeps adding resources; waiting for quiet avoids reading a
+        half-rebuilt page.
+        """
+        deadline = time.time() + timeout_ms / 1000
+        last = -1
+        stable_since = time.time()
+        while time.time() < deadline:
+            try:
+                count = await self._call_optional("resource_count")
+            except SessionRefused:
+                return
+            if count != last:
+                last = count
+                stable_since = time.time()
+            elif (time.time() - stable_since) * 1000 >= quiet_ms:
+                return
+            await asyncio.sleep(0.1)
+
     def receipts(self) -> dict:
         hashes = [s.step_hash for s in self.steps if s.step_hash]
         return {
@@ -1360,7 +1434,8 @@ class BrowserAgentService:
         freeze_animations: bool = True, storage_state: Any = None,
         context_options: Optional[dict] = None, trace: bool = False,
         har: bool = False, video: bool = False,
-        artifacts_dir: Optional[str] = None,
+        artifacts_dir: Optional[str] = None, settle_ms: int = 0,
+        detect_dev_server: bool = False,
     ) -> dict:
         """One-shot: open an ephemeral session, run a flow, close, return report.
 
@@ -1390,7 +1465,7 @@ class BrowserAgentService:
             report = await session.run_flow(
                 flow, approve=approve, stop_on_failure=stop_on_failure,
                 network=network, resolve_sources=resolve_sources,
-                freeze_animations=freeze_animations,
+                freeze_animations=freeze_animations, settle_ms=settle_ms,
             )
             receipts = session.receipts()
         finally:
@@ -1402,6 +1477,14 @@ class BrowserAgentService:
         }
         if closed.get("artifacts"):
             report["artifacts"] = closed["artifacts"]
+        if detect_dev_server:
+            from backend.modules.dev_server import is_loopback, probe_url
+
+            if is_loopback(url):
+                try:
+                    report["dev_server"] = await probe_url(url)
+                except Exception:
+                    report["dev_server"] = {"url": url, "reachable": False}
         return report
 
     def list(self) -> list[dict]:

@@ -67,6 +67,11 @@ class RunFlowRequest(BaseModel):
     network: Optional[dict] = None
     resolve_sources: bool = False
     freeze_animations: bool = True
+    settle_ms: int = 0
+
+
+class RecordRequest(BaseModel):
+    active: bool = True
 
 
 class TestFlowRequest(BaseModel):
@@ -87,6 +92,8 @@ class TestFlowRequest(BaseModel):
     har: bool = False
     video: bool = False
     artifacts_dir: Optional[str] = None
+    settle_ms: int = 0
+    detect_dev_server: bool = False
 
 
 class PlanRequest(BaseModel):
@@ -279,6 +286,8 @@ async def test_flow(req: TestFlowRequest):
             har=req.har,
             video=req.video,
             artifacts_dir=req.artifacts_dir,
+            settle_ms=req.settle_ms,
+            detect_dev_server=req.detect_dev_server,
         )
     except SessionRefused as refusal:
         raise _refusal_to_http(refusal)
@@ -293,7 +302,7 @@ async def run_flow(session_id: str, req: RunFlowRequest):
             req.steps, approve=req.approve,
             stop_on_failure=req.stop_on_failure, observe=req.observe,
             network=req.network, resolve_sources=req.resolve_sources,
-            freeze_animations=req.freeze_animations,
+            freeze_animations=req.freeze_animations, settle_ms=req.settle_ms,
         )
     except SessionRefused as refusal:
         raise _refusal_to_http(refusal)
@@ -302,6 +311,27 @@ async def run_flow(session_id: str, req: RunFlowRequest):
 @router.get("/{session_id}/receipts")
 async def receipts(session_id: str):
     return _get(session_id).receipts()
+
+
+@router.post("/{session_id}/record")
+async def record_session(session_id: str, req: RecordRequest):
+    """Start/stop recording session actions into a reusable flow."""
+    session = _get(session_id)
+    if req.active:
+        return session.start_recording()
+    return session.stop_recording()
+
+
+@router.get("/{session_id}/flow")
+async def recorded_flow(session_id: str):
+    """Return the flow captured while recording this session."""
+    session = _get(session_id)
+    return {
+        "session_id": session_id,
+        "recording": session.recording,
+        "steps": session.recorded_steps,
+        "count": len(session.recorded_steps),
+    }
 
 
 @router.get("/{session_id}/screenshot")

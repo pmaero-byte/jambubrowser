@@ -773,3 +773,31 @@ class TestJambuBrowserCommands:
         assert code == 0
         assert "login" in text
 
+    def test_dev_servers_command(self):
+        response = {"servers": [{"port": 3000, "framework": "vite", "title": "App"}],
+                    "count": 1}
+        text, code = self._run(["dev-servers"], response)
+        assert code == 0
+        assert ":3000" in text and "vite" in text
+
+    def test_dev_servers_none_found(self):
+        text, code = self._run(["dev-servers"], {"servers": [], "count": 0})
+        assert code == 1
+
+    def test_record_start(self):
+        text, code = self._run(["record", "--session", "bs-1"],
+                               {"recording": True, "steps": 0})
+        assert code == 0
+        assert "Recording" in text
+
+    def test_record_stop_writes_flow(self, tmp_path):
+        out = tmp_path / "flow.json"
+        response = {"recording": False,
+                    "steps": [{"action": "navigate", "url": "http://x"}],
+                    "count": 1}
+        text, code = self._run(
+            ["record", "--session", "bs-1", "--stop", "--out", str(out)], response)
+        assert code == 0
+        assert "Wrote" in text
+        assert json.loads(out.read_text())["steps"][0]["action"] == "navigate"
+
