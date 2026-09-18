@@ -2,13 +2,14 @@
 
 Auto-generated from `backend/mcp_server.py` by `tools/mcp/generate_docs.py`. Do not edit by hand — re-run the generator after adding or renaming a tool.
 
-**Total tools:** 37
+**Total tools:** 40
 
 ## Table of contents
 
 - [`agent_eval_certify`](#agent_eval_certify)
 - [`agent_eval_verify`](#agent_eval_verify)
 - [`analyze_screenshot`](#analyze_screenshot)
+- [`browser_export_playwright`](#browser_export_playwright)
 - [`browser_session_act`](#browser_session_act)
 - [`browser_session_close`](#browser_session_close)
 - [`browser_session_open`](#browser_session_open)
@@ -16,6 +17,8 @@ Auto-generated from `backend/mcp_server.py` by `tools/mcp/generate_docs.py`. Do 
 - [`browser_session_run`](#browser_session_run)
 - [`browser_session_snapshot`](#browser_session_snapshot)
 - [`browser_test_flow`](#browser_test_flow)
+- [`browser_test_matrix`](#browser_test_matrix)
+- [`browser_test_plan`](#browser_test_plan)
 - [`check_engine_health`](#check_engine_health)
 - [`click_element`](#click_element)
 - [`dcm_earnings`](#dcm_earnings)
@@ -98,6 +101,24 @@ Describe what the agent sees in the image.
 
 Args:
     image_data: Base64-encoded image data
+
+### `browser_export_playwright`
+
+**Signature**
+
+```python
+browser_export_playwright(steps: str, name: str = 'jambubrowser flow', base_url: str = '')
+```
+
+**Description**
+
+Export a declarative flow as a Playwright Test (.spec.ts) file, so it can
+run in the developer's own CI without lock-in.
+
+Args:
+    steps: JSON array of step objects (as used by browser_test_flow)
+    name: Test name
+    base_url: Optional Playwright baseURL
 
 ### `browser_session_act`
 
@@ -249,6 +270,50 @@ Args:
     video: Capture a video recording
     resolve_sources: Map console errors through source maps to original files
     storage_state: Optional JSON storage state ({cookies,origins}) to seed auth
+
+### `browser_test_matrix`
+
+**Signature**
+
+```python
+browser_test_matrix(url: str, steps: str, matrix: str = '', local: bool = False, approve: bool = False, network: str = '')
+```
+
+**Description**
+
+Run the same test flow across viewports/locales concurrently (responsive
+and cross-locale checks) in ONE call, returning a per-variant digest.
+
+Args:
+    url: App URL
+    steps: JSON array of step objects (see browser_test_flow)
+    matrix: Optional JSON array of variants, e.g.
+        [{"name":"desktop","viewport":{"width":1280,"height":800}},
+         {"name":"mobile","viewport":{"width":390,"height":844},"locale":"en-GB"}]
+        Defaults to desktop + mobile.
+    local: Allow loopback/private hosts
+    approve: Approve risky/input actions
+    network: Optional JSON request-interception policy
+
+### `browser_test_plan`
+
+**Signature**
+
+```python
+browser_test_plan(url: str, goal: str, kind: str = '', use_llm: bool = False)
+```
+
+**Description**
+
+Author a browser test flow from a natural-language goal (does NOT run it).
+Returns ready-to-run steps for browser_test_flow. Use this to turn
+"test login and the dashboard" into a concrete flow, then run it.
+
+Args:
+    url: App URL, e.g. http://localhost:3000
+    goal: What to test, e.g. "test login with a valid user"
+    kind: Force a template: smoke|login|signup|checkout|search|accessibility|performance|responsive
+    use_llm: Refine the plan with the configured LLM (default: template only)
 
 ### `check_engine_health`
 

@@ -387,6 +387,24 @@ async def browser_test_flow(
     return _compact_flow(report)
 
 
+async def browser_test_plan(
+    url: Annotated[str, "App URL, e.g. http://localhost:3000"],
+    goal: Annotated[str, "What to test, e.g. 'test login and the dashboard'"],
+    kind: Annotated[str, "Force a template: smoke|login|signup|checkout|search|accessibility|performance|responsive"] = "",
+    use_llm: Annotated[bool, "Refine the plan with the configured LLM"] = False,
+) -> dict:
+    """Author a browser test flow from a natural-language goal (does not run it).
+
+    Returns ready-to-run steps for browser_test_flow; fill any placeholder
+    values before running.
+    """
+    try:
+        from backend.modules.browser_plan import plan
+        return plan(goal, url, kind=kind or None, use_llm=use_llm)
+    except Exception as e:
+        return {"url": url, "error": str(e)}
+
+
 # ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
@@ -535,5 +553,26 @@ def register_builtin_tools(registry: Optional[ToolRegistry] = None) -> ToolRegis
         },
         requires_network=True,
         risk_level=RiskLevel.MEDIUM,
+    )
+    r.register(
+        "browser_test_plan", browser_test_plan,
+        description=(
+            "Author a browser test flow from a natural-language goal without "
+            "running it. Returns steps for browser_test_flow; fill placeholders."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "App URL"},
+                "goal": {"type": "string", "description": "What to test"},
+                "kind": {
+                    "type": "string",
+                    "description": "smoke|login|signup|checkout|search|accessibility|performance|responsive",
+                },
+                "use_llm": {"type": "boolean", "default": False},
+            },
+            "required": ["url", "goal"],
+        },
+        risk_level=RiskLevel.LOW,
     )
     return r

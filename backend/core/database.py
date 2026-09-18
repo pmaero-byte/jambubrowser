@@ -565,6 +565,47 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
         "CREATE INDEX IF NOT EXISTS idx_monitor_runs ON audit_monitor_runs(monitor_id, run_at DESC)"
     )
 
+    # ── Flow monitors: recurring agent test flows ──────────────────────
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS flow_monitors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            url TEXT NOT NULL,
+            steps TEXT NOT NULL,
+            local INTEGER DEFAULT 1,
+            approve INTEGER DEFAULT 0,
+            network TEXT,
+            interval_minutes INTEGER DEFAULT 1440,
+            webhook_url TEXT,
+            enabled INTEGER DEFAULT 1,
+            created_at REAL DEFAULT (CAST(strftime('%s','now') AS REAL)),
+            last_run_at REAL,
+            last_status TEXT
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS flow_monitor_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            monitor_id INTEGER NOT NULL,
+            run_at REAL DEFAULT (CAST(strftime('%s','now') AS REAL)),
+            status TEXT NOT NULL,
+            ok INTEGER DEFAULT 0,
+            passed INTEGER DEFAULT 0,
+            failed INTEGER DEFAULT 0,
+            total INTEGER DEFAULT 0,
+            duration_ms INTEGER DEFAULT 0,
+            failed_steps TEXT,
+            console_errors TEXT,
+            artifacts TEXT,
+            error TEXT,
+            FOREIGN KEY (monitor_id) REFERENCES flow_monitors(id)
+        )
+    """)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_flow_monitor_runs "
+        "ON flow_monitor_runs(monitor_id, run_at DESC)"
+    )
+
     # ── MeshPay: anchored receipt-epoch roots ──────────────────────────
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS meshpay_anchors (

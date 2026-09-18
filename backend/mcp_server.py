@@ -1073,6 +1073,113 @@ async def browser_session_run(session_id: str, steps: str,
     return _render_flow(result)
 
 
+@mcp.tool()
+async def browser_test_plan(url: str, goal: str, kind: str = "",
+                            use_llm: bool = False) -> str:
+    """
+    Author a browser test flow from a natural-language goal (does NOT run it).
+    Returns ready-to-run steps for browser_test_flow. Use this to turn
+    "test login and the dashboard" into a concrete flow, then run it.
+
+    Args:
+        url: App URL, e.g. http://localhost:3000
+        goal: What to test, e.g. "test login with a valid user"
+        kind: Force a template: smoke|login|signup|checkout|search|accessibility|performance|responsive
+        use_llm: Refine the plan with the configured LLM (default: template only)
+    """
+    result = await _call_engine("POST", "/browser/sessions/plan", {
+        "url": url, "goal": goal, "kind": kind or None, "use_llm": use_llm,
+    }, timeout=120.0)
+    if "error" in result:
+        return f"Plan failed: {result['error']}"
+    lines = [
+        f"# Test plan — {result.get('kind')} ({result.get('source')})",
+        f"goal: {goal or '(none)'}",
+    ]
+    if result.get("placeholders"):
+        lines.append(f"placeholders to fill: {', '.join(result['placeholders'])}")
+    lines.append("steps:")
+    lines.append(json.dumps(result.get("steps") or [], indent=1))
+    lines.append(f"note: {result.get('notes', '')}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def browser_test_matrix(url: str, steps: str, matrix: str = "",
+                              local: bool = False, approve: bool = False,
+                              network: str = "") -> str:
+    """
+    Run the same test flow across viewports/locales concurrently (responsive
+    and cross-locale checks) in ONE call, returning a per-variant digest.
+
+    Args:
+        url: App URL
+        steps: JSON array of step objects (see browser_test_flow)
+        matrix: Optional JSON array of variants, e.g.
+            [{"name":"desktop","viewport":{"width":1280,"height":800}},
+             {"name":"mobile","viewport":{"width":390,"height":844},"locale":"en-GB"}]
+            Defaults to desktop + mobile.
+        local: Allow loopback/private hosts
+        approve: Approve risky/input actions
+        network: Optional JSON request-interception policy
+    """
+    import json as _json
+
+    try:
+        parsed = _json.loads(steps) if isinstance(steps, str) else steps
+        variants = _json.loads(matrix) if matrix else None
+        net = _json.loads(network) if network else None
+    except _json.JSONDecodeError as exc:
+        return f"steps/matrix/network is not valid JSON: {exc}"
+    result = await _call_engine("POST", "/browser/sessions/matrix", {
+        "url": url, "steps": parsed or [], "matrix": variants,
+        "local": local, "approve": approve, "network": net,
+    }, timeout=600.0)
+    if "error" in result:
+        return f"Matrix run failed: {result['error']}"
+    lines = [
+        f"# Matrix {'PASS' if result.get('ok') else 'FAIL'} — "
+        f"{result.get('summary', {}).get('passed')}/{result.get('summary', {}).get('variants')} variants",
+    ]
+    for v in result.get("variants") or []:
+        mark = "ok " if v.get("ok") else "FAIL"
+        bit = f"{mark} {v.get('variant')}: {v.get('passed')}/{v.get('total')} steps"
+        if v.get("error"):
+            bit += f" — {v['error']}"
+        lines.append(bit)
+        for fs in v.get("failed_steps") or []:
+            lines.append(f"      #{fs.get('i')} {fs.get('action')}: {fs.get('reason')} {fs.get('error', '')[:80]}")
+        if v.get("console_errors"):
+            lines.append(f"      console errors: {len(v['console_errors'])}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def browser_export_playwright(steps: str, name: str = "jambubrowser flow",
+                                    base_url: str = "") -> str:
+    """
+    Export a declarative flow as a Playwright Test (.spec.ts) file, so it can
+    run in the developer's own CI without lock-in.
+
+    Args:
+        steps: JSON array of step objects (as used by browser_test_flow)
+        name: Test name
+        base_url: Optional Playwright baseURL
+    """
+    import json as _json
+
+    try:
+        parsed = _json.loads(steps) if isinstance(steps, str) else steps
+    except _json.JSONDecodeError as exc:
+        return f"steps is not valid JSON: {exc}"
+    result = await _call_engine("POST", "/browser/sessions/export", {
+        "steps": parsed or [], "name": name, "base_url": base_url,
+    }, timeout=60.0)
+    if "error" in result:
+        return f"Export failed: {result['error']}"
+    return result.get("code", "")
+
+
 # ===================================================================
 # AGENT EVALUATION CERTIFICATES
 # ===================================================================

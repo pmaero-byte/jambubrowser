@@ -85,6 +85,36 @@ class TestFlowRequest(BaseModel):
     artifacts_dir: Optional[str] = None
 
 
+class PlanRequest(BaseModel):
+    url: str
+    goal: str = ""
+    kind: Optional[str] = None
+    use_llm: bool = False
+    provider: str = ""
+
+
+class MatrixRequest(BaseModel):
+    url: str
+    steps: list[dict] = []
+    matrix: Optional[list[dict]] = None
+    local: bool = False
+    approve: bool = False
+    stop_on_failure: bool = False
+    network: Optional[dict] = None
+    resolve_sources: bool = False
+    trace: bool = False
+    har: bool = False
+    video: bool = False
+
+
+class ExportRequest(BaseModel):
+    steps: list[dict]
+    name: str = "jambubrowser flow"
+    url: str = ""
+    base_url: str = ""
+    format: str = "playwright"
+
+
 @router.post("")
 async def open_session(req: OpenRequest):
     """Open an isolated browser session for an agent."""
@@ -139,6 +169,51 @@ async def act(session_id: str, req: ActRequest):
     try:
         return await session.act(
             req.action, req.ref, text=req.text, approve=req.approve,
+        )
+    except SessionRefused as refusal:
+        raise _refusal_to_http(refusal)
+
+
+@router.post("/plan")
+async def plan_flow(req: PlanRequest):
+    """Propose a declarative step flow from a natural-language goal.
+
+    Deterministic template matching by default; ``use_llm=true`` asks the
+    configured provider to refine it. Nothing is executed.
+    """
+    from backend.modules.browser_plan import plan
+
+    return plan(
+        req.goal, req.url, kind=req.kind,
+        use_llm=req.use_llm, provider=req.provider,
+    )
+
+
+@router.post("/export")
+async def export_flow(req: ExportRequest):
+    """Export a flow as Playwright Test source or a normalised JSON document."""
+    from backend.modules.browser_codegen import flow_to_dict, flow_to_playwright
+
+    if req.format == "json":
+        return flow_to_dict(req.steps)
+    return {
+        "format": "playwright",
+        "code": flow_to_playwright(
+            req.steps, name=req.name, url=req.url, base_url=req.base_url,
+        ),
+    }
+
+
+@router.post("/matrix")
+async def matrix_flow(req: MatrixRequest):
+    """Run the same flow across viewports/locales concurrently."""
+    try:
+        return await get_browser_agent_service().run_matrix(
+            url=req.url, steps=req.steps or None, matrix=req.matrix,
+            local=req.local, approve=req.approve, network=req.network,
+            stop_on_failure=req.stop_on_failure,
+            resolve_sources=req.resolve_sources,
+            trace=req.trace, har=req.har, video=req.video,
         )
     except SessionRefused as refusal:
         raise _refusal_to_http(refusal)

@@ -1396,6 +1396,72 @@ class BrowserAgentService:
         self._prune()
         return [s.info() for s in self._sessions.values()]
 
+    async def run_matrix(
+        self, *, url: str, steps=None, matrix: Optional[list[dict]] = None,
+        local: bool = False, approve: bool = False, network: Optional[dict] = None,
+        stop_on_failure: bool = False, resolve_sources: bool = False,
+        trace: bool = False, har: bool = False, video: bool = False,
+    ) -> dict:
+        """Run the same flow across viewports/locales concurrently.
+
+        Each matrix entry may set ``name`` plus any Playwright context option
+        (``viewport``, ``locale``, ``user_agent``, ``device_scale_factor``,
+        ``timezone_id``). Concurrency is capped at the session limit.
+        """
+        variants = matrix or [
+            {"name": "desktop", "viewport": {"width": 1280, "height": 800}},
+            {"name": "mobile", "viewport": {"width": 390, "height": 844}},
+        ]
+        semaphore = asyncio.Semaphore(max(1, self.max_sessions))
+        option_keys = ("viewport", "locale", "user_agent", "device_scale_factor",
+                       "timezone_id", "color_scheme", "is_mobile", "has_touch")
+
+        async def one(index: int, variant: dict) -> dict:
+            name = variant.get("name") or f"variant-{index}"
+            context_options = {
+                k: variant[k] for k in option_keys if variant.get(k) is not None
+            }
+            async with semaphore:
+                try:
+                    report = await self.run_test(
+                        url=url, steps=steps, local=local, approve=approve,
+                        stop_on_failure=stop_on_failure, network=network,
+                        resolve_sources=resolve_sources, context_options=context_options,
+                        trace=trace, har=har, video=video,
+                    )
+                except Exception as exc:
+                    return {"variant": name, "ok": False, "error": str(exc)[:300]}
+            failed_steps = [
+                {"i": s.get("i"), "action": s.get("action"),
+                 "reason": s.get("reason"), "error": s.get("error")}
+                for s in report.get("steps") or [] if s.get("status") == "failed"
+            ]
+            return {
+                "variant": name,
+                "ok": report.get("ok"),
+                "passed": report.get("passed"),
+                "failed": report.get("failed"),
+                "total": report.get("total"),
+                "failed_steps": failed_steps[:5],
+                "console_errors": (report.get("console_errors") or [])[:5],
+                "artifacts": report.get("artifacts") or {},
+            }
+
+        results = await asyncio.gather(
+            *(one(i, v) for i, v in enumerate(variants, 1)), return_exceptions=False,
+        )
+        ok = all(r.get("ok") for r in results)
+        return {
+            "ok": ok,
+            "url": url,
+            "variants": results,
+            "summary": {
+                "variants": len(results),
+                "passed": sum(1 for r in results if r.get("ok")),
+                "failed": sum(1 for r in results if not r.get("ok")),
+            },
+        }
+
     async def close(self, session_id: str) -> dict:
         session = self._sessions.pop(session_id, None)
         if session is None:

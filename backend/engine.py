@@ -86,6 +86,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         get_monitor_scheduler().run_loop(), "audit_monitor_scheduler",
     ))
 
+    # Flow monitor scheduler: re-runs recurring agent test flows.
+    from backend.modules.flow_monitor import get_flow_monitor_scheduler
+    get_flow_monitor_scheduler().start()
+
     # Mission scheduler: register a research handler so missions can
     # actually execute when the loop is started (POST
     # /mission/start-scheduler). Without this every due mission failed
@@ -122,6 +126,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     try:
         from backend.modules.audit_monitor import get_monitor_scheduler
         get_monitor_scheduler().stop()
+    except Exception:
+        pass
+    try:
+        from backend.modules.flow_monitor import get_flow_monitor_scheduler
+        await get_flow_monitor_scheduler().stop()
     except Exception:
         pass
     for mod_name in ["browser", "missions", "shadow_browser", "risk_shield"]:
@@ -293,6 +302,7 @@ from backend.routes.meshpay import router as meshpay_router
 from backend.routes.x402 import router as x402_router
 from backend.routes.evidence import router as evidence_router
 from backend.routes.browser_sessions import router as browser_sessions_router
+from backend.routes.flow_monitors import router as flow_monitors_router
 from backend.routes.eval_cert import router as eval_cert_router
 from backend.routes.a2a import router as a2a_router
 from backend.routes.verification import router as verification_router
@@ -334,6 +344,7 @@ app.include_router(meshpay_router)
 app.include_router(x402_router)
 app.include_router(evidence_router)
 app.include_router(browser_sessions_router)
+app.include_router(flow_monitors_router)
 app.include_router(eval_cert_router)
 app.include_router(a2a_router)
 app.include_router(verification_router)

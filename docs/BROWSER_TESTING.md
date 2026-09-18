@@ -188,6 +188,39 @@ Animations and transitions are neutralised before each flow
 Pass `storage_state` (`{cookies, origins}`) to start already logged in; combine
 with the credential vault to keep secrets out of the model context.
 
+## Authoring, matrix, export & monitors (M2)
+
+### Plan from a goal
+`POST /browser/sessions/plan` (MCP: `browser_test_plan`, CLI: `jambu plan`)
+turns plain English into steps via a template library (login, signup,
+checkout, search, accessibility, performance, responsive, smoke). Optional
+`use_llm=true` refines with the configured provider; the endpoint works with
+no model at all.
+
+### Responsive / locale matrix
+`POST /browser/sessions/matrix` (MCP: `browser_test_matrix`) runs one flow
+across viewports/locales concurrently (capped at the session limit) and
+returns a per-variant digest. Variants set `name` plus `viewport`, `locale`,
+`user_agent`, `device_scale_factor`, `timezone_id`, …
+
+### Export to Playwright
+`POST /browser/sessions/export` (MCP: `browser_export_playwright`,
+CLI: `jambu export flow.json --out app.spec.ts`) renders a flow as
+`.spec.ts` so teams can move it into their own CI.
+
+### CLI
+```bash
+jambu plan "test login" --url http://localhost:3000
+jambu test flow.json --local --trace --resolve-sources
+jambu export flow.json --out login.spec.ts
+```
+
+### Flow monitors
+`/browser/monitors` stores a flow and re-runs it on an interval, persisting
+each run and alerting (desktop + webhook) on failure. A scheduler starts with
+the engine. This turns a one-off debug session into permanent regression
+protection.
+
 ## Token accounting
 
 | Scenario | Calls (before) | Calls (now) |

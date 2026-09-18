@@ -923,6 +923,120 @@ def cmd_monitor(args) -> int:
     return EXIT_OK
 
 
+def _load_flow_file(path: str) -> dict:
+    data = json.loads(Path(path).read_text())
+    if isinstance(data, list):
+        return {"steps": data}
+    return data
+
+
+def cmd_test(args) -> int:
+    """Run a browser test flow (local dev friendly) and report pass/fail."""
+    flow: dict = {}
+    if getattr(args, "flow", None):
+        try:
+            flow = _load_flow_file(args.flow)
+        except Exception as exc:
+            print(f"Could not read flow file {args.flow}: {exc}")
+            return EXIT_ENGINE_ERROR
+    url = args.url or flow.get("url")
+    if not url:
+        print("Provide --url or include an 'url' in the flow file.")
+        return EXIT_ENGINE_ERROR
+    steps = flow.get("steps") or []
+    if args.url and steps and not any(s.get("action") == "navigate" for s in steps):
+        steps = [{"action": "navigate", "url": args.url}] + steps
+    payload = {
+        "url": url,
+        "steps": steps,
+        "local": args.local,
+        "approve": args.approve,
+        "stop_on_failure": args.stop_on_failure,
+        "trace": args.trace,
+        "har": args.har,
+        "video": args.video,
+        "resolve_sources": args.resolve_sources,
+        "network": flow.get("network"),
+    }
+    result = api_request("POST", "/browser/sessions/run", payload)
+    if result is None:
+        return EXIT_ENGINE_ERROR
+    if "error" in result:
+        print(f"Test flow failed: {result['error']}")
+        return EXIT_ENGINE_ERROR
+
+    status = "PASS" if result.get("ok") else "FAIL"
+    print(f"Browser test {status} — {result.get('passed', 0)}/{result.get('total', 0)} steps "
+          f"in {result.get('duration_ms', 0)}ms")
+    print(f"  final: {result.get('title', '') or '(untitled)'} — {result.get('final_url', '')}")
+    for step in result.get("steps") or []:
+        mark = "ok " if step.get("status") == "passed" else "FAIL"
+        line = f"  {mark} #{step.get('i')} {step.get('action')}"
+        if step.get("detail"):
+            line += f" — {step['detail']}"
+        if step.get("status") == "failed":
+            line += f" — {step.get('reason')}: {step.get('error')}"
+        print(line)
+    for err in (result.get("console_errors") or [])[:5]:
+        print(f"  console: {err[:160]}")
+    for bad in (result.get("bad_responses") or [])[:5]:
+        print(f"  http {bad.get('status')}: {bad.get('url', '')[:120]}")
+    artifacts = result.get("artifacts") or {}
+    if artifacts:
+        print("  artifacts: " + ", ".join(f"{k}={v}" for k, v in artifacts.items()))
+    if args.json:
+        print(json.dumps(result, indent=2))
+    return EXIT_OK if result.get("ok") else EXIT_GATE_FAILED
+
+
+def cmd_export(args) -> int:
+    """Export a flow to Playwright Test source (or JSON)."""
+    try:
+        flow = _load_flow_file(args.flow)
+    except Exception as exc:
+        print(f"Could not read flow file {args.flow}: {exc}")
+        return EXIT_ENGINE_ERROR
+    steps = flow.get("steps") or []
+    url = args.url or flow.get("url") or ""
+    if args.json:
+        print(json.dumps({"steps": steps}, indent=2))
+        return EXIT_OK
+    result = api_request("POST", "/browser/sessions/export", {
+        "steps": steps, "name": args.name or "jambubrowser flow",
+        "url": url, "base_url": args.base_url or "",
+    })
+    if result is None:
+        return EXIT_ENGINE_ERROR
+    if "error" in result:
+        print(f"Export failed: {result['error']}")
+        return EXIT_ENGINE_ERROR
+    code = result.get("code", "")
+    if args.out:
+        Path(args.out).write_text(code)
+        print(f"Wrote {args.out}")
+    else:
+        print(code)
+    return EXIT_OK
+
+
+def cmd_plan(args) -> int:
+    """Propose a test flow from a natural-language goal."""
+    result = api_request("POST", "/browser/sessions/plan", {
+        "url": args.url, "goal": " ".join(args.goal),
+        "kind": args.kind or None, "use_llm": args.use_llm,
+    })
+    if result is None:
+        return EXIT_ENGINE_ERROR
+    if "error" in result:
+        print(f"Plan failed: {result['error']}")
+        return EXIT_ENGINE_ERROR
+    print(f"# {result.get('kind')} plan ({result.get('source')})")
+    if result.get("placeholders"):
+        print(f"fill: {', '.join(result['placeholders'])}")
+    print(json.dumps(result.get("steps") or [], indent=2))
+    return EXIT_OK
+
+
 def _add_audit_options(p: argparse.ArgumentParser) -> None:
     """Options shared by `audit` and `quick` (exports + CI gate)."""
     p.add_argument("url", help="URL to audit")
@@ -997,6 +1111,44 @@ def main():
         help="Show the diff between the two most recent results of a mission",
     )
     p_diff.add_argument("mission_id", nargs="?", help="Mission ID to diff")
+
+    p_test = subparsers.add_parser(
+        "test", help="Run a browser test flow (local-dev friendly)",
+    )
+    p_test.add_argument("flow", nargs="?", help="Flow JSON file")
+    p_test.add_argument("--url", help="App URL (or from the flow file)")
+    p_test.add_argument("--local", action="store_true",
+                        help="Allow localhost/private hosts")
+    p_test.add_argument("--approve", action="store_true",
+                        help="Approve risky/input actions")
+    p_test.add_argument("--stop-on-failure", dest="stop_on_failure",
+                        action="store_true")
+    p_test.add_argument("--trace", action="store_true", help="Capture a trace")
+    p_test.add_argument("--har", action="store_true", help="Capture a HAR")
+    p_test.add_argument("--video", action="store_true", help="Record video")
+    p_test.add_argument("--resolve-sources", dest="resolve_sources",
+                        action="store_true", help="Map console errors via source maps")
+    p_test.add_argument("--json", action="store_true", help="Print the full report JSON")
+
+    p_export = subparsers.add_parser(
+        "export", help="Export a flow to Playwright Test (.spec.ts)",
+    )
+    p_export.add_argument("flow", help="Flow JSON file")
+    p_export.add_argument("--name", help="Test name")
+    p_export.add_argument("--url", help="Original entry URL (kept as a comment)")
+    p_export.add_argument("--base-url", dest="base_url", help="Playwright baseURL")
+    p_export.add_argument("--out", help="Output .spec.ts path")
+    p_export.add_argument("--json", action="store_true",
+                          help="Emit normalised flow JSON instead")
+
+    p_plan = subparsers.add_parser(
+        "plan", help="Propose a test flow from a natural-language goal",
+    )
+    p_plan.add_argument("goal", nargs="+", help="e.g. test login")
+    p_plan.add_argument("--url", required=True, help="App URL")
+    p_plan.add_argument("--kind",
+                        help="smoke|login|signup|checkout|search|accessibility|performance|responsive")
+    p_plan.add_argument("--use-llm", dest="use_llm", action="store_true")
 
     p_monitor = subparsers.add_parser(
         "monitor",
@@ -1087,6 +1239,12 @@ def main():
         cmd_status(args)
     elif args.command == "diff":
         cmd_diff(args)
+    elif args.command == "test":
+        code = cmd_test(args)
+    elif args.command == "export":
+        code = cmd_export(args)
+    elif args.command == "plan":
+        code = cmd_plan(args)
     elif args.command == "monitor":
         code = cmd_monitor(args)
     elif args.command == "dcm":

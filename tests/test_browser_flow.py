@@ -633,6 +633,46 @@ class TestRunTest:
         assert stopped["stop"] is True
 
 
+class TestMatrix:
+    def test_matrix_aggregates_variants(self, monkeypatch):
+        service = BrowserAgentService()
+
+        async def fake_run_test(**kwargs):
+            width = (kwargs.get("context_options") or {}).get("viewport", {}).get("width")
+            return {"ok": width == 1280, "passed": 1, "failed": 0, "total": 1,
+                    "steps": [], "console_errors": []}
+
+        monkeypatch.setattr(service, "run_test", fake_run_test)
+        result = run(service.run_matrix(
+            url="http://x", steps=[{"action": "navigate", "url": "http://x"}],
+            local=True,
+        ))
+        assert result["summary"]["variants"] == 2
+        assert result["summary"]["passed"] == 1
+        assert result["summary"]["failed"] == 1
+        assert result["ok"] is False
+        assert result["variants"][0]["variant"] == "desktop"
+
+    def test_matrix_custom_and_failure_isolation(self, monkeypatch):
+        service = BrowserAgentService()
+
+        async def fake_run_test(**kwargs):
+            opts = kwargs.get("context_options") or {}
+            if opts.get("locale") == "fr-FR":
+                raise RuntimeError("boom")
+            return {"ok": True, "passed": 2, "failed": 0, "total": 2,
+                    "steps": [], "console_errors": []}
+
+        monkeypatch.setattr(service, "run_test", fake_run_test)
+        result = run(service.run_matrix(
+            url="http://x", steps=[{"action": "navigate", "url": "http://x"}],
+            matrix=[{"name": "en", "locale": "en-US"}, {"name": "fr", "locale": "fr-FR"}],
+        ))
+        assert result["variants"][0]["ok"] is True
+        assert result["variants"][1]["ok"] is False
+        assert "boom" in result["variants"][1]["error"]
+
+
 class TestArtifactsAndContext:
     def test_open_builds_context_options_and_artifacts(self, monkeypatch, tmp_path):
         import backend.modules.browser as browser_mod

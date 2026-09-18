@@ -704,3 +704,72 @@ class TestJambuReport:
         assert "/audit/shared/tok" in output
         assert "/audit/shared/tok/report" in output
 
+
+class TestJambuBrowserCommands:
+    @staticmethod
+    def _run(argv: list, response) -> tuple[str, int]:
+        from cli import jambu
+
+        def fake_api_request(method, path, data=None, stream=False):
+            return response
+
+        captured = io.StringIO()
+        code = 0
+        with patch.object(jambu, "api_request", side_effect=fake_api_request), \
+             patch.object(sys, "argv", ["jambu"] + argv), \
+             patch.object(sys, "stdout", captured):
+            try:
+                code = jambu.main()
+            except SystemExit as e:
+                code = e.code if isinstance(e.code, int) else 0
+        return captured.getvalue(), code
+
+    def test_test_command_passes(self):
+        response = {"ok": True, "passed": 2, "total": 2, "duration_ms": 10,
+                    "steps": [{"i": 1, "action": "navigate", "status": "passed"}],
+                    "title": "App", "final_url": "http://localhost:3000/"}
+        text, code = self._run(["test", "--url", "http://localhost:3000", "--local"], response)
+        assert code == 0
+        assert "PASS" in text
+
+    def test_test_command_fails_gate(self):
+        response = {"ok": False, "passed": 1, "total": 2, "duration_ms": 10,
+                    "steps": [{"i": 2, "action": "click", "status": "failed",
+                               "reason": "assertion_failed", "error": "nope"}],
+                    "final_url": "http://localhost:3000/"}
+        text, code = self._run(["test", "--url", "http://localhost:3000"], response)
+        assert code == 1
+        assert "FAIL" in text
+
+    def test_test_reads_flow_file(self, tmp_path):
+        flow = tmp_path / "flow.json"
+        flow.write_text(json.dumps({
+            "url": "http://localhost:3000",
+            "steps": [{"action": "navigate", "url": "http://localhost:3000"}],
+        }))
+        response = {"ok": True, "passed": 1, "total": 1, "steps": [], "final_url": "x"}
+        text, code = self._run(["test", str(flow), "--local"], response)
+        assert code == 0
+
+    def test_export_command_writes_spec(self, tmp_path):
+        flow = tmp_path / "flow.json"
+        flow.write_text(json.dumps({
+            "steps": [{"action": "navigate", "url": "http://x"}],
+        }))
+        out = tmp_path / "out.spec.ts"
+        response = {"code": "import { test } from '@playwright/test';\n"}
+        text, code = self._run(["export", str(flow), "--out", str(out)], response)
+        assert code == 0
+        assert "Wrote" in text
+        assert "playwright/test" in out.read_text()
+
+    def test_plan_command(self):
+        from cli import jambu
+
+        response = {"kind": "login", "source": "template",
+                    "steps": [{"action": "navigate", "url": "http://x"}],
+                    "placeholders": ["email"]}
+        text, code = self._run(["plan", "test", "login", "--url", "http://x"], response)
+        assert code == 0
+        assert "login" in text
+
