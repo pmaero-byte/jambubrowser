@@ -868,7 +868,6 @@ class TestLiveView:
         assert receipts["human_takeover"] is True
 
     def test_screenshot_unsupported_session(self, client):
-        from backend.modules.browser_agent import BrowserAgentSession
 
         class NoShotPage:
             url = "about:blank"
@@ -944,3 +943,38 @@ class TestRecording:
                                   json={"active": False}).json()
             assert stopped["recording"] is False
         browser_agent.reset_browser_agent_service()
+
+
+class TestTakeoverEnforced:
+    def test_act_refused_under_human_control(self):
+        page = FlowPage()
+        seed(page)
+        session = make_session(page)
+        run(session._read_state())
+        session.human_takeover = True
+        with pytest.raises(SessionRefused) as exc:
+            run(session.act("click", "@e1", approve=True))
+        assert exc.value.reason == "human_takeover"
+        assert page.clicks == []
+
+    def test_flow_mutations_refused_but_observation_allowed(self):
+        page = FlowPage()
+        seed(page)
+        session = make_session(page)
+        session.human_takeover = True
+        report = run(session.run_flow([
+            {"action": "assert_visible", "target": "Sign in"},
+            {"action": "click", "target": "Sign in"},
+        ]))
+        assert report["passed"] == 1 and report["failed"] == 1
+        assert report["steps"][1]["reason"] == "human_takeover"
+
+    def test_clearing_takeover_restores_control(self):
+        page = FlowPage()
+        seed(page)
+        session = make_session(page)
+        session.human_takeover = True
+        session.human_takeover = False
+        run(session._read_state())
+        result = run(session.act("click", "@e1", approve=True))
+        assert result["outcome"] == "ok"

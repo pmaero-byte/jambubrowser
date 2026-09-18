@@ -1019,6 +1019,31 @@ def cmd_export(args) -> int:
     return EXIT_OK
 
 
+def cmd_import(args) -> int:
+    """Convert a Playwright .spec.ts into a Jambubrowser flow JSON."""
+    try:
+        code = Path(args.spec).read_text()
+    except Exception as exc:
+        print(f"Could not read {args.spec}: {exc}")
+        return EXIT_ENGINE_ERROR
+    result = api_request("POST", "/browser/sessions/import", {"code": code})
+    if result is None or "error" in result:
+        print(f"Import failed: {(result or {}).get('error', 'engine unreachable')}")
+        return EXIT_ENGINE_ERROR
+    doc = {"url": args.url or "", "steps": result.get("steps") or []}
+    unparsed = result.get("unparsed") or []
+    if args.out:
+        Path(args.out).write_text(json.dumps(doc, indent=2))
+        print(f"Wrote {args.out} ({len(doc['steps'])} steps)")
+    else:
+        print(json.dumps(doc, indent=2))
+    if unparsed:
+        print(f"unparsed lines: {len(unparsed)}")
+        for item in unparsed[:10]:
+            print(f"  line {item.get('line')}: {item.get('text')}")
+    return EXIT_OK
+
+
 def cmd_plan(args) -> int:
     """Propose a test flow from a natural-language goal."""
     result = api_request("POST", "/browser/sessions/plan", {
@@ -1187,6 +1212,13 @@ def main():
     p_export.add_argument("--json", action="store_true",
                           help="Emit normalised flow JSON instead")
 
+    p_import = subparsers.add_parser(
+        "import", help="Convert a Playwright .spec.ts into a flow JSON",
+    )
+    p_import.add_argument("spec", help="Playwright .spec.ts file")
+    p_import.add_argument("--out", help="Output flow JSON path")
+    p_import.add_argument("--url", help="Entry URL to store with the flow")
+
     p_plan = subparsers.add_parser(
         "plan", help="Propose a test flow from a natural-language goal",
     )
@@ -1303,6 +1335,8 @@ def main():
         code = cmd_test(args)
     elif args.command == "export":
         code = cmd_export(args)
+    elif args.command == "import":
+        code = cmd_import(args)
     elif args.command == "plan":
         code = cmd_plan(args)
     elif args.command == "record":

@@ -598,6 +598,14 @@ class BrowserAgentSession:
             self.steps = self.steps[-MAX_STEPS:]
         return step
 
+    def _require_agent_control(self, action: str) -> None:
+        """Refuse mutating actions while a human has taken over the session."""
+        if self.human_takeover:
+            raise SessionRefused(
+                "human_takeover",
+                f"session is under human control; '{action}' refused",
+            )
+
     def _check_navigation(self, url: str) -> None:
         if not is_safe_url(url, allow_private=self.allow_private):
             raise SessionRefused("unsafe_url", f"URL failed safety checks: {url}")
@@ -707,6 +715,7 @@ class BrowserAgentSession:
                   approve: bool = False) -> dict:
         if action not in ("click", "type"):
             raise SessionRefused("unknown_action", f"unsupported action: {action}")
+        self._require_agent_control(action)
 
         element = self.catalog.get(ref)
         if element is None:
@@ -1057,6 +1066,8 @@ class BrowserAgentSession:
         action = (step.get("action") or "").strip().lower()
         if not action:
             raise SessionRefused("invalid_step", "step is missing 'action'")
+        if action in _MUTATING_ACTIONS:
+            self._require_agent_control(action)
         timeout = int(step.get("timeout", DEFAULT_STEP_TIMEOUT_MS))
 
         if action == "navigate":

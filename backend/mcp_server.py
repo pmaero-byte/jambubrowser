@@ -5,7 +5,7 @@ FastMCP server exposing the full Jambubrowser engine as MCP tools.
 External agents (Claude, Cursor, etc.) can use these tools to perform
 autonomous research, browser automation, and knowledge management.
 
-35 MCP tools covering:
+42 MCP tools covering:
 - Research & Search (5 tools)
 - Browser Actions (5 tools)
 - Vision & Perception (2 tools)
@@ -15,6 +15,7 @@ autonomous research, browser automation, and knowledge management.
 - DecentraCode Mesh (5 tools: dcm_status, dcm_infer, dcm_models, dcm_earnings, dcm_settlement_log)
 - MeshPay (2 tools: meshpay_audit, meshpay_anchor)
 - Browser Sessions (7 tools: browser_session_open|snapshot|act|run|receipts|close + browser_test_flow)
+- Browser Testing (6 tools: browser_test_plan|matrix|export_playwright|import_playwright|task + browser_session_run)
 - Agent Evaluation (2 tools: agent_eval_certify, agent_eval_verify)
 """
 
@@ -1181,6 +1182,30 @@ async def browser_export_playwright(steps: str, name: str = "jambubrowser flow",
 
 
 @mcp.tool()
+async def browser_import_playwright(code: str) -> str:
+    """
+    Convert a Playwright Test (.spec.ts) source into a declarative flow for
+    browser_test_flow. Translates the common getBy/keyboard/expect subset;
+    every line it cannot translate is reported so you know what needs a hand.
+
+    Args:
+        code: Playwright Test source text
+    """
+    result = await _call_engine("POST", "/browser/sessions/import", {
+        "code": code,
+    }, timeout=60.0)
+    if "error" in result:
+        return f"Import failed: {result['error']}"
+    lines = [f"# Imported {result.get('count', 0)} step(s)"]
+    unparsed = result.get("unparsed") or []
+    if unparsed:
+        lines.append(f"unparsed lines ({len(unparsed)}):")
+        lines.extend(f"  - line {u.get('line')}: {u.get('text', '')[:120]}" for u in unparsed[:8])
+    lines.append(json.dumps(result.get("steps") or [], indent=1))
+    return "\n".join(lines)
+
+
+@mcp.tool()
 async def browser_task(url: str, goal: str, inputs: str = "{}",
                        local: bool = True, approve: bool = False) -> str:
     """
@@ -1318,6 +1343,7 @@ DEVELOPER_TOOLS = {
     "browser_test_matrix",
     "browser_session_run",
     "browser_export_playwright",
+    "browser_import_playwright",
     "check_engine_health",
 }
 

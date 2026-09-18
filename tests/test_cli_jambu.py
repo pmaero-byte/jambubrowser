@@ -801,3 +801,14 @@ class TestJambuBrowserCommands:
         assert "Wrote" in text
         assert json.loads(out.read_text())["steps"][0]["action"] == "navigate"
 
+    def test_import_command(self, tmp_path):
+        spec = tmp_path / "login.spec.ts"
+        spec.write_text("await page.goto('http://x');\n")
+        response = {"steps": [{"action": "navigate", "url": "http://x"}],
+                    "unparsed": [], "count": 1}
+        out = tmp_path / "flow.json"
+        text, code = self._run(["import", str(spec), "--out", str(out)], response)
+        assert code == 0
+        assert "Wrote" in text
+        assert json.loads(out.read_text())["steps"][0]["action"] == "navigate"
+

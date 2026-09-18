@@ -2,7 +2,7 @@
 
 Auto-generated from `backend/mcp_server.py` by `tools/mcp/generate_docs.py`. Do not edit by hand — re-run the generator after adding or renaming a tool.
 
-**Total tools:** 41
+**Total tools:** 42
 
 ## Table of contents
 
@@ -10,6 +10,7 @@ Auto-generated from `backend/mcp_server.py` by `tools/mcp/generate_docs.py`. Do 
 - [`agent_eval_verify`](#agent_eval_verify)
 - [`analyze_screenshot`](#analyze_screenshot)
 - [`browser_export_playwright`](#browser_export_playwright)
+- [`browser_import_playwright`](#browser_import_playwright)
 - [`browser_session_act`](#browser_session_act)
 - [`browser_session_close`](#browser_session_close)
 - [`browser_session_open`](#browser_session_open)
@@ -120,6 +121,23 @@ Args:
     steps: JSON array of step objects (as used by browser_test_flow)
     name: Test name
     base_url: Optional Playwright baseURL
+
+### `browser_import_playwright`
+
+**Signature**
+
+```python
+browser_import_playwright(code: str)
+```
+
+**Description**
+
+Convert a Playwright Test (.spec.ts) source into a declarative flow for
+browser_test_flow. Translates the common getBy/keyboard/expect subset;
+every line it cannot translate is reported so you know what needs a hand.
+
+Args:
+    code: Playwright Test source text
 
 ### `browser_session_act`
 

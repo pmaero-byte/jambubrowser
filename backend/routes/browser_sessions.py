@@ -135,6 +135,10 @@ class ExportRequest(BaseModel):
     format: str = "playwright"
 
 
+class ImportRequest(BaseModel):
+    code: str
+
+
 @router.post("")
 async def open_session(req: OpenRequest):
     """Open an isolated browser session for an agent."""
@@ -222,6 +226,14 @@ async def export_flow(req: ExportRequest):
             req.steps, name=req.name, url=req.url, base_url=req.base_url,
         ),
     }
+
+
+@router.post("/import")
+async def import_flow(req: ImportRequest):
+    """Convert a Playwright Test source into a flow (unparsed lines reported)."""
+    from backend.modules.browser_codegen import playwright_to_flow
+
+    return playwright_to_flow(req.code)
 
 
 @router.post("/semantic-diff")

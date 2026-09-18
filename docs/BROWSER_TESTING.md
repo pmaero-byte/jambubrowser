@@ -208,6 +208,13 @@ returns a per-variant digest. Variants set `name` plus `viewport`, `locale`,
 CLI: `jambu export flow.json --out app.spec.ts`) renders a flow as
 `.spec.ts` so teams can move it into their own CI.
 
+### Import from Playwright
+`POST /browser/sessions/import` (MCP: `browser_import_playwright`,
+builtin tool, CLI: `jambu import app.spec.ts --out flow.json`) converts the
+common `getBy`/keyboard/`expect` subset back into a flow. Every line it
+cannot translate is reported with its line number — nothing is silently
+dropped.
+
 ### CLI
 ```bash
 jambu plan "test login" --url http://localhost:3000
@@ -233,21 +240,27 @@ MCP `browser_task(url, goal, inputs)` plans a flow from a goal, substitutes
 `{{placeholder}}` values from `inputs`, and runs it — one tool call.
 
 ### Developer MCP profile
-`JAMBU_MCP_PROFILE=developer` exposes only the seven high-level browser-testing
+`JAMBU_MCP_PROFILE=developer` exposes only the eight high-level browser-testing
 verbs (`browser_task`, `browser_test_flow`, `browser_test_plan`,
 `browser_test_matrix`, `browser_session_run`, `browser_export_playwright`,
-`check_engine_health`), minimising tool-selection cost.
+`browser_import_playwright`, `check_engine_health`), minimising tool-selection cost.
 
 ### Live view / human takeover
 `GET /browser/sessions/{id}/screenshot` returns the current frame as base64;
 `POST /browser/sessions/{id}/takeover {active}` pauses/resumes agent control
 for CAPTCHA/2FA or visual checks.
 
+While the flag is set, the engine **refuses agent mutations** on that
+session (`human_takeover`, HTTP 403) but keeps observation allowed — a real
+pause/resume loop, not a banner. The desktop pane now has a takeover toggle
+(hand icon): it escalates the screencast quality, shows a human-control
+banner, and flips the linked agent session's flag (session id remembered
+locally). Remaining desktop milestone: real multi-webview tabs.
+
 The desktop pane now has a **live view**: a Rust CDP `Page.startScreencast`
 stream (`browser_start_screencast` / `browser_stop_screencast`) pushes JPEG
 frames at ~30–60 FPS to the `useScreencast` hook, which the `ChromiumPane`
 renders in place of the polled screenshot (polling remains the fallback).
-Remaining: full input hand-off UX and multi-webview tabs.
 
 ### Dev-server discovery & settle
 `GET /browser/dev-servers` (CLI: `jambu dev-servers`) scans common ports and

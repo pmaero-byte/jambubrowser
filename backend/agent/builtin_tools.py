@@ -405,6 +405,21 @@ async def browser_test_plan(
         return {"url": url, "error": str(e)}
 
 
+async def browser_import_playwright(
+    code: Annotated[str, "Playwright Test source text to convert into a flow"],
+) -> dict:
+    """Convert a Playwright Test source into a declarative flow.
+
+    Translates the common getBy/keyboard/expect subset; unparsed lines are
+    reported so the agent knows exactly what needs a hand.
+    """
+    try:
+        from backend.modules.browser_codegen import playwright_to_flow
+        return playwright_to_flow(code)
+    except Exception as e:
+        return {"error": str(e)}
+
+
 # ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
@@ -572,6 +587,21 @@ def register_builtin_tools(registry: Optional[ToolRegistry] = None) -> ToolRegis
                 "use_llm": {"type": "boolean", "default": False},
             },
             "required": ["url", "goal"],
+        },
+        risk_level=RiskLevel.LOW,
+    )
+    r.register(
+        "browser_import_playwright", browser_import_playwright,
+        description=(
+            "Convert a Playwright Test source into a declarative flow for "
+            "browser_test_flow. Unparsed lines are reported."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "description": "Playwright Test source text"},
+            },
+            "required": ["code"],
         },
         risk_level=RiskLevel.LOW,
     )

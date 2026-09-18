@@ -5,12 +5,13 @@ import {
   ArrowLeft, ArrowRight, RotateCcw, Home, Plus, X,
   Globe, Bug, BugOff, Cpu, Star, Clock, Bookmark,
   Shield, FileText, Download, BookOpen, KeyRound,
-  EllipsisVertical, FileDown, FileUp,
+  EllipsisVertical, FileDown, FileUp, Hand,
 } from "lucide-react";
 import { useAppStore, BrowserTab } from "../../store/appStore";
 import { useBrowsingHistoryStore } from "../../store/browsingHistoryStore";
 import { useDevtoolsStore } from "../../store/devtoolsStore";
 import { useScreencast } from "../../hooks/useScreencast";
+import { savedTakeoverSessionId, saveTakeoverSessionId, setAgentTakeover } from "./takeover";
 import { DevToolsPanel } from "./DevToolsPanel";
 import { DownloadBar } from "./DownloadBar";
 import { ReaderMode } from "./ReaderMode";
@@ -174,9 +175,27 @@ export function ChromiumPane() {
 
   const activeTab = browserTabs.find((t) => t.id === activeBrowserTabId) || browserTabs[0];
 
+  // Human takeover: banner + agent-session pause while a person drives.
+  // The screencast quality is boosted for precise interaction.
+  const [takeover, setTakeover] = useState(false);
+  const [takeoverSessionId, setTakeoverSessionId] = useState<string>(() => savedTakeoverSessionId());
+  const [takeoverBusy, setTakeoverBusy] = useState(false);
+
+  const applyTakeover = useCallback(async (active: boolean, sessionId: string) => {
+    setTakeoverBusy(true);
+    try {
+      if (sessionId) await setAgentTakeover(sessionId, active);
+    } catch { /* engine unreachable — local banner only */ }
+    setTakeover(active);
+    setTakeoverBusy(false);
+  }, []);
+
   // Live view: CDP screencast frames when available; the polled screenshot
   // below stays as a fallback (non-Tauri, or if the stream errors).
-  const { frame: liveFrame } = useScreencast(activeBrowserTabId, { enabled: !!activeBrowserTabId });
+  const { frame: liveFrame } = useScreencast(activeBrowserTabId, {
+    enabled: !!activeBrowserTabId,
+    quality: takeover ? 85 : 70,
+  });
 
   // ── State ──
   const [inputUrl, setInputUrl] = useState(activeTab?.url || "");
@@ -1090,6 +1109,13 @@ return { filled: true, hasUser: !!bestUser, hasPass: true };
             title="Run page audit (CDP)">
             <Shield size={14} />
           </Button>
+          <Button variant="ghost" size="icon"
+            className={`h-7 w-7 transition-all duration-200 ${takeover ? "text-amber-300 glow-accent" : "text-muted-foreground hover:text-foreground hover:bg-muted/50"}`}
+            onClick={() => applyTakeover(!takeover, takeoverSessionId)}
+            disabled={takeoverBusy}
+            title={takeover ? "Resume agent (end human control)" : "Human takeover (pause agent)"}>
+            <Hand size={14} />
+          </Button>
         </div>
 
         {/* URL bar with autocomplete */}
@@ -1314,6 +1340,26 @@ return { filled: true, hasUser: !!bestUser, hasPass: true };
         onKeyUp={handleViewportKeyUp}
         className="relative min-h-0 flex-1 bg-background outline-none transition-shadow duration-200 focus:shadow-[inset_0_0_0_1px_oklch(0.65_0.18_265/50%),inset_0_0_16px_oklch(0.65_0.18_265/10%)]"
       >
+        {/* ── Human-takeover banner ── */}
+        {takeover && (
+          <div className="absolute inset-x-0 top-0 z-20 flex items-center gap-2 border-b border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-200 backdrop-blur-sm">
+            <Hand size={12} className="shrink-0" />
+            <span className="font-medium whitespace-nowrap">Human control — agent paused</span>
+            <input
+              value={takeoverSessionId}
+              onChange={(e) => { setTakeoverSessionId(e.target.value); saveTakeoverSessionId(e.target.value); }}
+              onMouseDown={(e) => e.stopPropagation()}
+              placeholder="agent session id (optional)"
+              spellCheck={false}
+              className="min-w-0 flex-1 rounded bg-background/60 px-1.5 py-0.5 text-[11px] text-foreground outline-none placeholder:text-muted-foreground/50"
+            />
+            <button type="button" disabled={takeoverBusy}
+              onClick={() => applyTakeover(false, takeoverSessionId)}
+              className="shrink-0 rounded border border-amber-500/50 px-2 py-0.5 font-medium hover:bg-amber-500/20 disabled:opacity-50">
+              Resume agent
+            </button>
+          </div>
+        )}
         {/* ── Find-in-page bar (Ctrl/Cmd+F) ── */}
         <AnimatePresence>
           {findOpen && (
