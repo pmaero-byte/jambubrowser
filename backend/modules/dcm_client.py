@@ -87,6 +87,32 @@ class DcmClient:
         except ValueError as e:
             raise DcmError(r.status_code, f"non-JSON response: {e}") from e
 
+    async def _post(
+        self,
+        path: str,
+        payload: dict,
+        timeout: Optional[float] = None,
+        ok_statuses: tuple[int, ...] = (200,),
+    ) -> Any:
+        try:
+            async with self._client() as client:
+                r = await client.post(
+                    f"{self.base_url}{path}",
+                    headers={**self._headers(), "Content-Type": "application/json"},
+                    json=payload,
+                    timeout=timeout or self.timeout,
+                )
+        except httpx.ConnectError as e:
+            raise DcmError(0, f"unreachable at {self.base_url}: {e}") from e
+        except httpx.TimeoutException as e:
+            raise DcmError(0, f"timeout on {path}: {e}") from e
+        if r.status_code not in ok_statuses:
+            raise DcmError(r.status_code, r.text[:300])
+        try:
+            return r.json()
+        except ValueError as e:
+            raise DcmError(r.status_code, f"non-JSON response: {e}") from e
+
     # -- inference -----------------------------------------------------------
 
     async def inference_status(self) -> dict:
@@ -123,6 +149,35 @@ class DcmClient:
     async def peers(self) -> dict:
         """``GET /api/network/peers`` — connected libp2p peers."""
         return await self._get("/api/network/peers")
+
+    async def simulate(
+        self,
+        problem_id: str,
+        dofs: int,
+        partitions: int = 1,
+        iterations: Optional[int] = None,
+    ) -> dict:
+        """``POST /api/simulation/run`` — dispatch a distributed solve.
+
+        ``dofs`` is the TOTAL grid-cell count (the node derives the per-side
+        grid as sqrt(dofs)). The node bills the caller's DCT ledger on
+        success — convergence-verified, so a non-converged solve costs only
+        the setup fee — and answers 402 INSUFFICIENT_BALANCE when the ledger
+        is short. Solves run synchronously, so the transport timeout is much
+        longer than the request-scoped default.
+        """
+        payload: dict = {
+            "problemId": problem_id,
+            "dofs": int(dofs),
+            "partitions": int(partitions),
+        }
+        if iterations is not None:
+            payload["iterations"] = int(iterations)
+        return await self._post(
+            "/api/simulation/run",
+            payload,
+            timeout=300.0,
+        )
 
     # -- billing / token -----------------------------------------------------
 

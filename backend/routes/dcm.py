@@ -149,3 +149,71 @@ async def dcm_infer(req: DcmInferRequest):
         },
         "latency_ms": round(resp.latency_ms, 1),
     }
+
+
+class DcmSimulateRequest(BaseModel):
+    """One distributed-solve dispatch (DecentraCode ``/api/simulation/run``).
+
+    ``dofs`` is the TOTAL grid-cell count — the node derives the per-side
+    grid as sqrt(dofs). The mesh solves PARAMETRIC catalog problems only
+    (no arbitrary geometry); results and DCT billing come back in the body.
+    """
+
+    problem_id: str
+    dofs: int
+    partitions: int = 1
+    iterations: Optional[int] = None
+
+    @validator("problem_id")
+    def validate_problem_id(cls, v):
+        if not v.strip():
+            raise ValueError("problem_id must not be empty")
+        return v.strip()
+
+    @validator("dofs")
+    def validate_dofs(cls, v):
+        if v < 1:
+            raise ValueError("dofs must be a positive integer")
+        return v
+
+    @validator("partitions")
+    def validate_partitions(cls, v):
+        if v < 1:
+            raise ValueError("partitions must be a positive integer")
+        return v
+
+    @validator("iterations")
+    def validate_iterations(cls, v):
+        if v is not None and v < 1:
+            raise ValueError("iterations must be a positive integer when set")
+        return v
+
+
+@router.post("/simulate")
+async def dcm_simulate(req: DcmSimulateRequest):
+    """Dispatch one distributed solve to the mesh and return the result.
+
+    Error mapping mirrors the node's own codes so callers (CFD Lab's
+    Debug-stage "Run on mesh", agents) can react precisely: 402 when the
+    caller's DCT ledger is short (nothing was solved), 502 when the node is
+    unreachable or errors. Non-converged solves are billed only the setup
+    fee by the node — the result body says so via ``finalResidual``.
+    """
+    client = _client()
+    try:
+        return await client.simulate(
+            req.problem_id,
+            req.dofs,
+            req.partitions,
+            req.iterations,
+        )
+    except DcmError as e:
+        if e.status_code == 402:
+            raise HTTPException(status_code=402, detail=e.detail)
+        detail = (
+            f"DCM node unreachable at {get_config().dcm_base_url} — "
+            "start it with 'cd decentracode/backend && npm start'"
+            if e.status_code == 0
+            else f"DCM error: {e.detail}"
+        )
+        raise HTTPException(status_code=502, detail=detail)

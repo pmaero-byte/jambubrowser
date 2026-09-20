@@ -64,6 +64,12 @@ class FakeDcmClient:
             raise self.error
         return {"entries": [], "valid": True, "limit": limit}
 
+    async def simulate(self, problem_id, dofs, partitions=1, iterations=None):
+        self.calls.append(("simulate", problem_id, dofs, partitions, iterations))
+        if self.error:
+            raise self.error
+        return self.payloads.get("simulate", {"success": True, "simulationId": "sim-x"})
+
 
 def _install_client(monkeypatch, fake: FakeDcmClient):
     import backend.routes.dcm as dcm_routes
@@ -319,3 +325,72 @@ class TestDcmMcpFormatting:
         )
         assert "Engine HTTP 502" in result["error"]
         assert "dcm-infer-candle ENOENT" in result["error"]
+
+
+class TestDcmSimulateRoute:
+    """POST /dcm/simulate — distributed-solve dispatch for external apps
+    (e.g. CFD Lab's Debug-stage "Run on mesh")."""
+
+    def test_simulate_returns_result_and_billing(self, client, monkeypatch):
+        fake = FakeDcmClient(
+            payloads={
+                "simulate": {
+                    "success": True,
+                    "simulationId": "sim-abc",
+                    "result": {
+                        "iterations": 65,
+                        "finalResidual": 9.5e-11,
+                        "subdomains": 2,
+                        "proofLedger": [],
+                        "elapsedMs": 812,
+                    },
+                    "billing": {"chargedDct": 0.0001328, "balanceAfter": 99.9},
+                }
+            }
+        )
+        _install_client(monkeypatch, fake)
+        resp = client.post(
+            "/dcm/simulate",
+            json={"problem_id": "poisson-fvm-2d", "dofs": 4096, "partitions": 2},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert body["simulationId"] == "sim-abc"
+        assert body["billing"]["chargedDct"] == pytest.approx(0.0001328)
+        assert ("simulate", "poisson-fvm-2d", 4096, 2, None) in fake.calls
+
+    def test_simulate_iterations_passthrough(self, client, monkeypatch):
+        fake = FakeDcmClient(payloads={"simulate": {"success": True, "simulationId": "s"}})
+        _install_client(monkeypatch, fake)
+        resp = client.post(
+            "/dcm/simulate",
+            json={"problem_id": "navier-stokes-2d", "dofs": 65536, "iterations": 500},
+        )
+        assert resp.status_code == 200
+        assert ("simulate", "navier-stokes-2d", 65536, 1, 500) in fake.calls
+
+    def test_insufficient_balance_is_passed_through_as_402(self, client, monkeypatch):
+        _install_client(monkeypatch, FakeDcmClient(error=DcmError(402, "Insufficient balance: have 0.001")))
+        resp = client.post("/dcm/simulate", json={"problem_id": "poisson-fvm-2d", "dofs": 64})
+        assert resp.status_code == 402
+        assert "Insufficient balance" in resp.json()["detail"]
+
+    def test_unreachable_node_gives_actionable_502(self, client, monkeypatch):
+        _install_client(monkeypatch, FakeDcmClient(error=DcmError(0, "unreachable")))
+        resp = client.post("/dcm/simulate", json={"problem_id": "poisson-fvm-2d", "dofs": 64})
+        assert resp.status_code == 502
+        assert "decentracode/backend" in resp.json()["detail"]
+
+    def test_node_error_surfaces_detail(self, client, monkeypatch):
+        _install_client(monkeypatch, FakeDcmClient(error=DcmError(501, "runtime not wired")))
+        resp = client.post("/dcm/simulate", json={"problem_id": "navier-stokes-2d", "dofs": 64})
+        assert resp.status_code == 502
+        assert "runtime not wired" in resp.json()["detail"]
+
+    def test_request_validation(self, client, monkeypatch):
+        _install_client(monkeypatch, FakeDcmClient())
+        assert client.post("/dcm/simulate", json={"problem_id": "", "dofs": 64}).status_code == 422
+        assert client.post("/dcm/simulate", json={"problem_id": "poisson-fvm-2d", "dofs": 0}).status_code == 422
+        assert client.post("/dcm/simulate", json={"problem_id": "poisson-fvm-2d", "dofs": 64, "partitions": 0}).status_code == 422
+        assert client.post("/dcm/simulate", json={"problem_id": "p", "dofs": 64, "iterations": 0}).status_code == 422
