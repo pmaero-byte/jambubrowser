@@ -1081,10 +1081,26 @@ def cmd_qa(args) -> int:
             except Exception as exc:
                 print(f"Could not read dataset file: {exc}")
                 return EXIT_ENGINE_ERROR
+        viewport_matrix = None
+        if getattr(args, "viewports", None):
+            viewport_matrix = []
+            for spec in args.viewports:
+                try:
+                    name, size = spec.split("=", 1)
+                    w, h = size.lower().split("x", 1)
+                    viewport_matrix.append({
+                        "name": name.strip(),
+                        "viewport": {"width": int(w), "height": int(h)},
+                    })
+                except ValueError:
+                    print(f"Bad --viewport spec {spec!r} "
+                          "(want NAME=WIDTHxHEIGHT, e.g. mobile=390x844)")
+                    return EXIT_ENGINE_ERROR
         result = api_request("POST", f"/qa/cases/{args.case_id}/run", {
             "local": args.local, "approve": args.approve,
             "stop_on_failure": args.stop_on_failure,
             "dataset_rows": rows, "junit": bool(args.junit_out),
+            "viewport_matrix": viewport_matrix,
             "force": bool(getattr(args, "force", False)),
         })
         if result is None:
@@ -1614,6 +1630,11 @@ def main():
     p_q_run.add_argument("--sarif", dest="sarif_out", metavar="FILE",
                          default=None,
                          help="Write SARIF 2.1.0 for code scanning")
+    p_q_run.add_argument("--viewport", dest="viewports", metavar="NAME=WxH",
+                         action="append", default=None,
+                         help="Viewport variant, repeatable "
+                              "(e.g. --viewport desktop=1280x800 "
+                              "--viewport mobile=390x844)")
     p_q_run.add_argument("--force", action="store_true",
                          help="Run even if the case is quarantined")
 

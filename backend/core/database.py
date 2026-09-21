@@ -713,6 +713,9 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
          "ALTER TABLE qa_runs ADD COLUMN attempt INTEGER DEFAULT 1"),
         ("qa_runs", "flaky",
          "ALTER TABLE qa_runs ADD COLUMN flaky INTEGER DEFAULT 0"),
+        # ── QA × viewport matrix (Milestone 3) ─────────────────────────
+        ("qa_runs", "variant",
+         "ALTER TABLE qa_runs ADD COLUMN variant TEXT"),
     ):
         try:
             cursor.execute(f"SELECT {column} FROM {table} LIMIT 1")

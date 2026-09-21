@@ -166,9 +166,16 @@ def runs_to_junit(case_name: str, runs: list[dict],
              f'<testsuite name="{_esc(suite_name)}" tests="{total}" '
              f'failures="{failures}" errors="0" skipped="0">']
     for run in runs:
+        variant = run.get("variant")
+        row_bits = ""
         if run.get("dataset_rows"):
-            label = (f"{case_name} [row {run.get('dataset_index')}"
-                     f"/{run.get('dataset_rows')}]")
+            row_bits = f"row {run.get('dataset_index')}/{run.get('dataset_rows')}"
+        if row_bits and variant:
+            label = f"{case_name} [{row_bits} · {variant}]"
+        elif row_bits:
+            label = f"{case_name} [{row_bits}]"
+        elif variant:
+            label = f"{case_name} [{variant}]"
         else:
             label = case_name
         ms = run.get("duration_ms", 0)

@@ -12,6 +12,7 @@ are NEVER rewritten implicitly. Verdict counts a healed step as passed.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -109,6 +110,10 @@ def _row_to_run(row) -> dict:
         base["flaky"] = bool(row["flaky"])
     except (KeyError, IndexError):
         base["flaky"] = False
+    try:
+        base["variant"] = row["variant"]
+    except (KeyError, IndexError):
+        base["variant"] = None
     return base
 
 
@@ -418,13 +423,17 @@ async def run_case(case_id: int, *, local: bool = False,
                    video: bool = False,
                    actor: str = "qa-team",
                    dataset_rows: Optional[list[dict]] = None,
+                   viewport_matrix: Optional[list[dict]] = None,
                    junit: bool = False,
                    force: bool = False) -> dict:
     """Execute a case with verify → heal → retry; persist the verdict.
 
-    ``dataset_rows`` runs the matrix (one verdict per row, placeholders
-    bound per row). ``junit=True`` attaches a JUnit XML rendering of the
-    persisted verdicts for CI consumption.
+    ``dataset_rows`` runs the data matrix (one verdict per row, placeholders
+    bound per row). ``viewport_matrix`` composes with it: the grid is
+    dataset rows × viewport variants, cells run concurrently (capped at the
+    session limit) and each verdict is persisted with its variant label.
+    ``junit=True`` attaches a JUnit XML rendering of the persisted verdicts
+    for CI consumption.
     """
     from backend.modules.browser_agent import BrowserAgentService
     from backend.modules.qa_datasets import (
@@ -458,8 +467,14 @@ async def run_case(case_id: int, *, local: bool = False,
 
     attempts_allowed = 2 if case.get("auto_retry", True) else 1
 
+    _MATRIX_OPTION_KEYS = ("viewport", "locale", "user_agent",
+                           "device_scale_factor", "timezone_id",
+                           "color_scheme", "is_mobile", "has_touch")
+
     async def _one(bound_steps: list[dict], unbound: list[str],
-                   index: Optional[int], total_rows: int) -> dict:
+                   index: Optional[int], total_rows: int,
+                   *, context_options: Optional[dict] = None,
+                   variant: Optional[str] = None) -> dict:
         """Run once; if it fails and auto-retry is on, retry once.
 
         A retry that passes makes the verdict ``flaky`` — green for the
@@ -472,7 +487,8 @@ async def run_case(case_id: int, *, local: bool = False,
                 stop_on_failure=stop_on_failure, trace=trace, har=har,
                 video=video, actor=actor, dataset_rows=total_rows,
                 dataset_index=index, junit=junit and total_rows == 0,
-                attempt=attempt)
+                attempt=attempt, context_options=context_options,
+                variant=variant)
             outcomes.append(outcome)
             if outcome["ok"]:
                 break
@@ -491,7 +507,7 @@ async def run_case(case_id: int, *, local: bool = False,
             last = {**last, "flaky": False, "attempts": len(outcomes)}
         return last
 
-    if not rows:
+    if not rows and not viewport_matrix:
         result = await _one(case["steps"], [], None, 0)
         result["health"] = _update_case_health(case_id)
         if result["health"].get("quarantined"):
@@ -499,6 +515,88 @@ async def run_case(case_id: int, *, local: bool = False,
         return result
 
     from backend.modules.qa_datasets import bind_placeholders as _bind
+
+    # Viewport variants: one entry per browser context (name + Playwright
+    # context options), same vocabulary as BrowserAgentService.run_matrix.
+    variants: list[dict] = []
+    if viewport_matrix:
+        if not isinstance(viewport_matrix, list):
+            raise ValueError("viewport_matrix must be a list")
+        for v in viewport_matrix:
+            if not isinstance(v, dict):
+                raise ValueError("viewport_matrix entries must be objects")
+            name = str(v.get("name") or f"variant-{len(variants) + 1}")
+            context_options = {
+                k: v[k] for k in _MATRIX_OPTION_KEYS if v.get(k) is not None
+            }
+            variants.append({"name": name, "context_options": context_options})
+        from backend.modules.browser_agent import BrowserAgentService
+
+        max_parallel = max(1, BrowserAgentService().max_sessions)
+        if len(variants) * max(1, len(rows or [])) > max_parallel * 16:
+            raise ValueError(
+                f"matrix too large: {len(variants)} variants × "
+                f"{len(rows or [])} rows exceeds {max_parallel * 16} cells")
+
+    host = _host(case["url"])
+    if variants:
+        # Cross product: dataset rows × viewport variants, cells run
+        # concurrently under the same session cap as run_matrix. Each
+        # cell is a first-class persisted run tagged with its variant.
+        row_list = rows or [None]
+        semaphore = asyncio.Semaphore(max(1, max_parallel))
+
+        async def _cell(idx: Optional[int], row: Optional[dict],
+                        variant: dict) -> dict:
+            if row is None:
+                bound, unbound = case["steps"], []
+            else:
+                bound, unbound = _bind(case["steps"], row, host)
+            async with semaphore:
+                return await _one(
+                    bound, unbound, idx,
+                    0 if row is None else len(row_list),
+                    context_options=variant["context_options"],
+                    variant=variant["name"])
+
+        outcomes = await asyncio.gather(
+            *(_cell(None if row is None else idx, row, v)
+              for v in variants
+              for idx, row in enumerate(row_list)),
+            return_exceptions=False,
+        )
+        outcomes = list(outcomes)
+        by_variant: dict[str, dict] = {}
+        variant_names = [v["name"] for v in variants for _ in row_list]
+        for vname, cell in zip(variant_names, outcomes):
+            bucket = by_variant.setdefault(vname, {
+                "variant": vname, "cells": 0, "passed": 0,
+                "failed": 0, "flaky": 0, "ok": True})
+            bucket["cells"] += 1
+            bucket["passed"] += 1 if cell["ok"] else 0
+            bucket["failed"] += 0 if cell["ok"] else 1
+            bucket["flaky"] += 1 if cell.get("flaky") else 0
+            bucket["ok"] = bucket["ok"] and bool(cell["ok"])
+        ok_all = all(o["ok"] for o in outcomes)
+        summary = {
+            "case_id": case_id, "matrix": True,
+            "cells": len(outcomes),
+            "rows": len(row_list), "variants": len(variants),
+            "passed_cells": sum(1 for o in outcomes if o["ok"]),
+            "failed_cells": sum(1 for o in outcomes if not o["ok"]),
+            "flaky_cells": sum(1 for o in outcomes if o.get("flaky")),
+            "by_variant": list(by_variant.values()),
+            "ok": ok_all, "status": "passed" if ok_all else "failed",
+            "runs": outcomes,
+            "run_ids": [o["run_id"] for o in outcomes],
+            "actor": actor,
+            "health": _update_case_health(case_id),
+        }
+        if junit:
+            summary["junit"] = runs_to_junit(
+                case["name"],
+                [get_run(o["run_id"]) for o in outcomes])
+        return summary
 
     host = _host(case["url"])
     outcomes: list[dict] = []
@@ -534,7 +632,9 @@ async def _execute_bound(case: dict, bound_steps: list[dict],
                          actor: str, dataset_rows: int,
                          dataset_index: Optional[int],
                          junit: bool = False,
-                         attempt: int = 1) -> dict:
+                         attempt: int = 1,
+                         context_options: Optional[dict] = None,
+                         variant: Optional[str] = None) -> dict:
     """Run one bound step list through verify → heal → retry."""
     from backend.modules.browser_agent import BrowserAgentService
 
@@ -548,6 +648,7 @@ async def _execute_bound(case: dict, bound_steps: list[dict],
             url=case["url"], steps=bound_steps, local=local,
             approve=approve, stop_on_failure=stop_on_failure,
             trace=trace, har=har, video=video,
+            context_options=context_options or {},
         )
     except Exception as exc:
         error = str(exc)[:300]
@@ -611,8 +712,8 @@ async def _execute_bound(case: dict, bound_steps: list[dict],
                 (case_id, status, ok, passed, failed, total, duration_ms,
                  healed_steps, failed_steps, console_errors, healed_events,
                  artifacts, report, error, dataset_rows, dataset_index,
-                 attempt, flaky)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 attempt, flaky, variant)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (case_id, status, 1 if ok else 0,
              report.get("passed", 0), report.get("failed", 0),
@@ -623,7 +724,7 @@ async def _execute_bound(case: dict, bound_steps: list[dict],
              json.dumps(healed_events),
              json.dumps(report.get("artifacts") or {}),
              json.dumps(report), error, dataset_rows, dataset_index,
-             attempt, 0),
+             attempt, 0, variant),
         )
         run_id = cur.lastrowid
         conn.execute(
@@ -669,6 +770,7 @@ async def _execute_bound(case: dict, bound_steps: list[dict],
         "duration_ms": report.get("duration_ms", duration_ms),
         "actor": actor, "dataset_rows": dataset_rows,
         "dataset_index": dataset_index, "unbound": unbound,
+        "variant": variant,
     }
     if junit:
         result["junit"] = _to_junit(case["name"], [get_run(run_id)])

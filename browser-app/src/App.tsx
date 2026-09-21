@@ -71,6 +71,9 @@ const ExtensionsPanel = lazy(() =>
 const AgentView = lazy(() =>
   import("./components/agent/AgentView").then((m) => ({ default: m.AgentView }))
 );
+const QaPanel = lazy(() =>
+  import("./components/qa/QaPanel").then((m) => ({ default: m.QaPanel }))
+);
 
 const USER_ID = "default";
 
@@ -219,6 +222,8 @@ export default function App() {
         return <ExtensionsPanel />;
       case "agent":
         return <AgentView />;
+      case "qa":
+        return <QaPanel />;
       case "settings":
         return <SettingsPanel />;
       default:

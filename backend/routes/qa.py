@@ -92,6 +92,7 @@ class RunRequest(BaseModel):
     har: bool = False
     video: bool = False
     dataset_rows: Optional[list[dict]] = None
+    viewport_matrix: Optional[list[dict]] = None
     junit: bool = False
     force: bool = False
 
@@ -189,6 +190,7 @@ async def run_case(case_id: int, req: RunRequest):
             stop_on_failure=req.stop_on_failure, trace=req.trace,
             har=req.har, video=req.video,
             dataset_rows=req.dataset_rows, junit=req.junit,
+            viewport_matrix=req.viewport_matrix,
             force=req.force)
     except ValueError as exc:
         raise HTTPException(status_code=409 if "quarantined" in str(exc)
@@ -222,6 +224,36 @@ def stats(case_id: int, window: int = 20):
     if qa_cases.get_case(case_id) is None:
         raise HTTPException(status_code=404, detail="QA case not found")
     return qa_cases.case_stats(case_id, window=window)
+
+
+@router.get("/overview")
+def overview(window: int = 20):
+    """Dashboard feed: every case + its pass/heal/flake stats in one call."""
+    cases = qa_cases.list_cases()
+    entries = []
+    for case in cases:
+        entry = {**case, "stats": qa_cases.case_stats(case["id"],
+                                                      window=window)}
+        entries.append(entry)
+    quarantined = sum(1 for e in entries if e["stats"].get("quarantined"))
+    with_runs = [e for e in entries if e["stats"].get("runs")]
+    return {
+        "cases": entries,
+        "count": len(entries),
+        "summary": {
+            "cases": len(entries),
+            "quarantined": quarantined,
+            "pass_rate": (
+                round(sum(e["stats"]["pass_rate"] for e in with_runs)
+                      / len(with_runs), 4) if with_runs else None),
+            "flake_rate": (
+                round(sum(e["stats"]["flake_rate"] for e in with_runs)
+                      / len(with_runs), 4) if with_runs else None),
+            "heal_rate": (
+                round(sum(e["stats"]["heal_rate"] for e in with_runs)
+                      / len(with_runs), 4) if with_runs else None),
+        },
+    }
 
 
 @router.get("/heals")

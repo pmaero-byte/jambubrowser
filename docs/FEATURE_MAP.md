@@ -273,7 +273,7 @@ federation — the information-access surface a normal browser can't offer.
 data-driven matrices, API assertions, and a flake-quarantined CI gate —
 the daily loop of a manual + automation QA team, run by AI.
 
-### What exists today (2026-09, Milestones 1–2)
+### What exists today (2026-09, Milestones 1–3)
 - **Managed cases** (`backend/modules/qa_cases.py`, routes `backend/routes/qa.py`)
   — case = goal + steps + severity + owner; every run persisted with a
   verdict; heal events propose-only (accepting is the ONLY step mutator);
@@ -297,6 +297,17 @@ the daily loop of a manual + automation QA team, run by AI.
   stable rule ids (QA001…) + fingerprints so code scanning dedupes.
 - **Codegen parity** — API steps export to Playwright's `request` fixture
   (`flow_to_playwright`), so exported specs keep UI + API assertions.
+- **Viewport matrix** — `run_case(viewport_matrix=...)` composes
+  `BrowserAgentService.run_matrix` variants with cases: the grid is dataset
+  rows × viewport variants, cells run concurrently under the session-cap
+  semaphore, each cell a first-class persisted `qa_run` tagged with
+  `variant` (`qa_runs.variant`); `run_ids`, `by_variant` rollups, and
+  variant-labelled JUnit (`[row 0/2 · mobile]`, `[desktop]`).
+  `jambu qa run --viewport NAME=WxH` (repeatable) builds it from the CLI.
+- **QA dashboard** — `/qa/overview` aggregate feed + lazy `QaPanel`
+  (`browser-app/src/components/qa/QaPanel.tsx`, sidebar "QA"): suite
+  pass/heal/flake/quarantine cards, per-case rates, one-click Run /
+  Quarantine / Unquarantine. Panel tests: `QaPanel.test.tsx` (4 passed).
 - CLI: `jambu qa create|list|run|heals|accept|reject|quarantine|unquarantine|auto-retry|dataset`.
 
 ### Real problems this solves
@@ -306,13 +317,12 @@ the daily loop of a manual + automation QA team, run by AI.
   browser session's cookies.
 - "One test, fifty data rows" → datasets with vault-backed secrets.
 - "CI needs native formats" → JUnit + SARIF, exit codes 0/1/2.
+- "Desktop passed, mobile is red" → one case × datasets × viewports in a
+  single run, visible per-variant, without the CLI (dashboard panel).
 
 ### What still hurts (improvement targets)
-1. No QA dashboard UI yet (stats endpoints exist; the panel is next).
-2. No Jira/Linear defect export (findings already have teams/assignments).
-3. Browser/viewport matrix for cases reuses dataset rows only — the
-   `BrowserAgentService.run_matrix` variants are not yet composed with cases.
-4. SARIF severity is per-case (no per-step severity weighting yet).
+1. No Jira/Linear defect export (findings already have teams/assignments).
+2. SARIF severity is per-case (no per-step severity weighting yet).
 
 ---
 

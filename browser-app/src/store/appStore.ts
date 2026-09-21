@@ -17,7 +17,8 @@ export type CanvasTab =
   | "settings"
   | "team"
   | "extensions"
-  | "agent";
+  | "agent"
+  | "qa";
 
 export interface BrowserTab {
   id: string;
