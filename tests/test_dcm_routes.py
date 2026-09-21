@@ -70,6 +70,36 @@ class FakeDcmClient:
             raise self.error
         return self.payloads.get("simulate", {"success": True, "simulationId": "sim-x"})
 
+    async def fabric_peers(self):
+        self.calls.append(("fabric_peers",))
+        if self.error:
+            raise self.error
+        return self.payloads.get("fabric_peers", {"success": True, "peers": [], "count": 0})
+
+    async def submit_job(self, **kwargs):
+        self.calls.append(("submit_job", kwargs))
+        if self.error:
+            raise self.error
+        return self.payloads.get("submit_job", {"success": True, "jobId": "rtjob-1", "state": "queued"})
+
+    async def job(self, job_id):
+        self.calls.append(("job", job_id))
+        if self.error:
+            raise self.error
+        return self.payloads.get("job", {"success": True, "job": {"id": job_id, "state": "queued"}})
+
+    async def job_settlement(self, job_id):
+        self.calls.append(("job_settlement", job_id))
+        if self.error:
+            raise self.error
+        return self.payloads.get("job_settlement", {"success": True, "escrow": {"outstanding": 0}})
+
+    async def faucet(self, did, amount):
+        self.calls.append(("faucet", did, amount))
+        if self.error:
+            raise self.error
+        return self.payloads.get("faucet", {"success": True, "did": did, "minted": amount})
+
 
 def _install_client(monkeypatch, fake: FakeDcmClient):
     import backend.routes.dcm as dcm_routes
@@ -394,3 +424,132 @@ class TestDcmSimulateRoute:
         assert client.post("/dcm/simulate", json={"problem_id": "poisson-fvm-2d", "dofs": 0}).status_code == 422
         assert client.post("/dcm/simulate", json={"problem_id": "poisson-fvm-2d", "dofs": 64, "partitions": 0}).status_code == 422
         assert client.post("/dcm/simulate", json={"problem_id": "p", "dofs": 64, "iterations": 0}).status_code == 422
+
+
+class TestDcmFabricRoutes:
+    """The realtime lender mesh, as proxied for external buyers.
+
+    CFD Lab's decentraCompute.ts speaks these as its "realtime-fabric" lane:
+    POST /dcm/jobs submits, GET /dcm/jobs/{id} polls for the coordinator's
+    verdict, GET /dcm/realtime/peers says whether any lender is connected.
+    """
+
+    def test_realtime_peers_passes_the_lender_roster(self, client, monkeypatch):
+        fake = FakeDcmClient(
+            payloads={
+                "fabric_peers": {
+                    "success": True,
+                    "count": 1,
+                    "peers": [{"peerId": "ios-safari-lender", "did": "did:decentracode:ios", "earnedDct": 0.01}],
+                }
+            }
+        )
+        _install_client(monkeypatch, fake)
+        resp = client.get("/dcm/realtime/peers")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["count"] == 1
+        assert body["peers"][0]["peerId"] == "ios-safari-lender"
+
+    def test_submit_job_defaults_to_the_cg_workload(self, client, monkeypatch):
+        fake = FakeDcmClient()
+        _install_client(monkeypatch, fake)
+        resp = client.post("/dcm/jobs", json={"dofs": 1024})
+        assert resp.status_code == 200
+        assert resp.json()["jobId"] == "rtjob-1"
+        call = next(c for c in fake.calls if c[0] == "submit_job")
+        assert call[1]["workload"] == "poisson-cg"
+        assert call[1]["dofs"] == 1024
+
+    def test_submit_job_passes_through_the_escrow_controls(self, client, monkeypatch):
+        fake = FakeDcmClient()
+        _install_client(monkeypatch, fake)
+        resp = client.post("/dcm/jobs", json={
+            "workload": "poisson-cg", "dofs": 4096, "tol": 1e-8,
+            "max_iter": 500, "max_dct": 0.5, "timeout_ms": 60000,
+        })
+        assert resp.status_code == 200
+        call = next(c for c in fake.calls if c[0] == "submit_job")
+        assert call[1]["max_iter"] == 500
+        assert call[1]["max_dct"] == 0.5
+        assert call[1]["timeout_ms"] == 60000
+        assert call[1]["tol"] == 1e-8
+
+    def test_submit_job_requires_a_size(self, client, monkeypatch):
+        _install_client(monkeypatch, FakeDcmClient())
+        assert client.post("/dcm/jobs", json={}).status_code == 422
+        assert client.post("/dcm/jobs", json={"dofs": 0}).status_code == 422
+        assert client.post("/dcm/jobs", json={"n": 0}).status_code == 422
+        assert client.post("/dcm/jobs", json={"dofs": 64, "max_dct": -1}).status_code == 422
+
+    def test_submit_job_402_is_passed_through_not_masked_as_502(self, client, monkeypatch):
+        _install_client(
+            monkeypatch,
+            FakeDcmClient(error=DcmError(402, "Insufficient balance: have 0, need 0.0203")),
+        )
+        resp = client.post("/dcm/jobs", json={"dofs": 1024})
+        assert resp.status_code == 402
+        assert "Insufficient balance" in resp.json()["detail"]
+
+    def test_job_view_returns_the_verdict_and_payout(self, client, monkeypatch):
+        _install_client(
+            monkeypatch,
+            FakeDcmClient(payloads={"job": {
+                "success": True,
+                "job": {
+                    "id": "rtjob-1", "state": "done", "verifiedCheckpoints": 4, "paidDct": 0.010036864,
+                    "verdict": {"converged": True, "iterations": 72, "finalResidual": 7.79e-7,
+                                "paidTo": "did:decentracode:ios"},
+                },
+            }}),
+        )
+        resp = client.get("/dcm/jobs/rtjob-1")
+        assert resp.status_code == 200
+        job = resp.json()["job"]
+        assert job["verdict"]["converged"] is True
+        assert job["paidDct"] == pytest.approx(0.010036864)
+
+    def test_job_404_is_honest_not_a_502(self, client, monkeypatch):
+        _install_client(monkeypatch, FakeDcmClient(error=DcmError(404, "job not found")))
+        resp = client.get("/dcm/jobs/rtjob-gone")
+        assert resp.status_code == 404
+        assert "not found on the node" in resp.json()["detail"]
+
+    def test_job_settlement_surface(self, client, monkeypatch):
+        _install_client(
+            monkeypatch,
+            FakeDcmClient(payloads={"job_settlement": {
+                "success": True,
+                "escrow": {"locked": 0.010151552, "released": 0.010036864, "refunded": 0.000114688, "outstanding": 0},
+                "verdict": {"converged": True},
+                "paidDct": 0.010036864,
+            }}),
+        )
+        resp = client.get("/dcm/realtime/settlement/rtjob-1")
+        assert resp.status_code == 200
+        assert resp.json()["escrow"]["outstanding"] == 0
+
+    def test_faucet_proxies_and_validates(self, client, monkeypatch):
+        fake = FakeDcmClient()
+        _install_client(monkeypatch, fake)
+        resp = client.post("/dcm/realtime/faucet", json={"did": "did:decentracode:me", "amount": 1000})
+        assert resp.status_code == 200
+        assert ("faucet", "did:decentracode:me", 1000.0) in fake.calls
+
+        assert client.post("/dcm/realtime/faucet", json={"did": "", "amount": 10}).status_code == 422
+        assert client.post("/dcm/realtime/faucet", json={"did": "d", "amount": 0}).status_code == 422
+
+    def test_faucet_refusal_keeps_the_nodes_reason(self, client, monkeypatch):
+        _install_client(
+            monkeypatch,
+            FakeDcmClient(error=DcmError(403, "faucet is disabled when DID auth is required")),
+        )
+        resp = client.post("/dcm/realtime/faucet", json={"did": "did:x", "amount": 1})
+        assert resp.status_code == 403
+        assert "faucet is disabled" in resp.json()["detail"]
+
+    def test_unreachable_node_is_a_502_with_the_start_hint(self, client, monkeypatch):
+        _install_client(monkeypatch, FakeDcmClient(error=DcmError(0, "unreachable")))
+        assert client.get("/dcm/realtime/peers").status_code == 502
+        assert "decentracode/backend" in client.get("/dcm/realtime/peers").json()["detail"]
+        assert client.post("/dcm/jobs", json={"dofs": 64}).status_code == 502

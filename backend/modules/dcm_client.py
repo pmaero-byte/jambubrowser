@@ -179,6 +179,65 @@ class DcmClient:
             timeout=300.0,
         )
 
+    # -- realtime fabric (the lender mesh) -----------------------------------
+
+    async def fabric_peers(self) -> dict:
+        """``GET /api/realtime/peers`` — connected browser lenders.
+
+        Distinct from :meth:`peers` (libp2p mesh membership): this is the
+        roster of devices that will actually EXECUTE a submitted job.
+        """
+        return await self._get("/api/realtime/peers")
+
+    async def submit_job(
+        self,
+        workload: str = "poisson-cg",
+        dofs: Optional[int] = None,
+        n: Optional[int] = None,
+        tol: Optional[float] = None,
+        max_iter: Optional[int] = None,
+        max_dct: Optional[float] = None,
+        timeout_ms: Optional[int] = None,
+    ) -> dict:
+        """``POST /api/jobs`` — submit to the realtime fabric.
+
+        Answers 201 with the job id (and the escrow lock) or 402
+        INSUFFICIENT_BALANCE. ``dofs`` is TOTAL cells; the node clamps the
+        per-side grid to its own reference-run cap.
+        """
+        payload: dict = {"workload": workload}
+        if dofs is not None:
+            payload["dofs"] = int(dofs)
+        if n is not None:
+            payload["n"] = int(n)
+        if tol is not None:
+            payload["tol"] = float(tol)
+        if max_iter is not None:
+            payload["maxIter"] = int(max_iter)
+        if max_dct is not None:
+            payload["maxDct"] = float(max_dct)
+        if timeout_ms is not None:
+            payload["timeoutMs"] = int(timeout_ms)
+        return await self._post("/api/jobs", payload, ok_statuses=(200, 201))
+
+    async def job(self, job_id: str) -> dict:
+        """``GET /api/jobs/:id`` — state, checkpoints, verdict, settlement."""
+        return await self._get(f"/api/jobs/{job_id}")
+
+    async def job_settlement(self, job_id: str) -> dict:
+        """``GET /api/realtime/settlement/:jobId`` — escrow view + verdict."""
+        return await self._get(f"/api/realtime/settlement/{job_id}")
+
+    async def faucet(self, did: str, amount: float) -> dict:
+        """``POST /api/realtime/faucet`` — dev funding for a caller DID.
+
+        The node refuses this when DID auth is enforced.
+        """
+        return await self._post(
+            "/api/realtime/faucet",
+            {"did": did, "amount": float(amount)},
+        )
+
     # -- billing / token -----------------------------------------------------
 
     async def earnings(self, did: str) -> dict:

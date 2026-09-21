@@ -217,3 +217,161 @@ async def dcm_simulate(req: DcmSimulateRequest):
             else f"DCM error: {e.detail}"
         )
         raise HTTPException(status_code=502, detail=detail)
+
+
+# -- realtime fabric (the lender mesh) ---------------------------------------
+#
+# The parametric catalog above runs on the node itself. The fabric below
+# dispatches a job to a BROWSER LENDER: the node offers it over WebSocket,
+# the lender's machine executes the canonical kernel, the coordinator
+# re-runs the kernel and verifies the lender's checkpoints numerically, and
+# escrow pays the lender's DID. These routes are what CFD Lab's
+# ``decentraCompute.ts`` speaks for its "realtime-fabric" lane.
+
+
+def _fabric_error(e: DcmError) -> HTTPException:
+    if e.status_code == 402:
+        return HTTPException(status_code=402, detail=e.detail)
+    detail = (
+        f"DCM node unreachable at {get_config().dcm_base_url} — "
+        "start it with 'cd decentracode/backend && npm start'"
+        if e.status_code == 0
+        else f"DCM error: {e.detail}"
+    )
+    return HTTPException(status_code=502, detail=detail)
+
+
+class DcmJobRequest(BaseModel):
+    """One realtime-fabric submission (DecentraCode ``POST /api/jobs``).
+
+    Only the ``poisson-cg`` workload exists today. ``dofs`` is TOTAL cells;
+    ``n`` may be given instead and the node clamps it to its reference-run
+    cap (128). A 402 means the caller's ledger cannot cover the escrow lock
+    and NOTHING was submitted.
+    """
+
+    workload: str = "poisson-cg"
+    dofs: Optional[int] = None
+    n: Optional[int] = None
+    tol: Optional[float] = None
+    max_iter: Optional[int] = None
+    max_dct: Optional[float] = None
+    timeout_ms: Optional[int] = None
+
+    @validator("workload")
+    def validate_workload(cls, v):
+        if not v.strip():
+            raise ValueError("workload must not be empty")
+        return v.strip()
+
+    @validator("dofs", "n")
+    def validate_positive_int(cls, v):
+        if v is not None and v < 1:
+            raise ValueError("must be a positive integer when set")
+        return v
+
+    @validator("max_iter", "timeout_ms")
+    def validate_positive_optional(cls, v):
+        if v is not None and v < 1:
+            raise ValueError("must be a positive integer when set")
+        return v
+
+    @validator("tol")
+    def validate_tol(cls, v):
+        if v is not None and v <= 0:
+            raise ValueError("tol must be positive when set")
+        return v
+
+    @validator("max_dct")
+    def validate_max_dct(cls, v):
+        if v is not None and v <= 0:
+            raise ValueError("max_dct must be positive when set")
+        return v
+
+    @validator("n", always=True)
+    def validate_has_size(cls, v, values):
+        if v is None and values.get("dofs") is None:
+            raise ValueError("provide dofs (total cells) or n (per-side grid)")
+        return v
+
+
+@router.get("/realtime/peers")
+async def dcm_realtime_peers():
+    """Connected browser lenders — the machines that will run a fabric job."""
+    return await _get(_client().fabric_peers())
+
+
+@router.post("/jobs")
+async def dcm_submit_job(req: DcmJobRequest):
+    """Submit a job to the realtime lender mesh (201 with the job id)."""
+    try:
+        return await _client().submit_job(
+            workload=req.workload,
+            dofs=req.dofs,
+            n=req.n,
+            tol=req.tol,
+            max_iter=req.max_iter,
+            max_dct=req.max_dct,
+            timeout_ms=req.timeout_ms,
+        )
+    except DcmError as e:
+        raise _fabric_error(e)
+
+
+@router.get("/jobs/{job_id}")
+async def dcm_job(job_id: str):
+    """Job state, verified checkpoints, the coordinator's verdict and payout.
+
+    A 404 from the node means the coordinator no longer holds the job (its
+    journal is in-memory today) — surfaced as 404, not as a 502.
+    """
+    try:
+        return await _client().job(job_id)
+    except DcmError as e:
+        if e.status_code == 404:
+            raise HTTPException(status_code=404, detail=f"job {job_id} not found on the node")
+        raise _fabric_error(e)
+
+
+@router.get("/realtime/settlement/{job_id}")
+async def dcm_job_settlement(job_id: str):
+    """The escrow pot for one job plus the coordinator's verdict."""
+    try:
+        return await _client().job_settlement(job_id)
+    except DcmError as e:
+        if e.status_code == 404:
+            raise HTTPException(status_code=404, detail=f"job {job_id} not found on the node")
+        raise _fabric_error(e)
+
+
+class DcmFaucetRequest(BaseModel):
+    """Dev funding request. The node refuses this when DID auth is enforced."""
+
+    did: str
+    amount: float
+
+    @validator("did")
+    def validate_did(cls, v):
+        if not v.strip():
+            raise ValueError("did must not be empty")
+        return v.strip()
+
+    @validator("amount")
+    def validate_amount(cls, v):
+        if v <= 0:
+            raise ValueError("amount must be positive")
+        return v
+
+
+@router.post("/realtime/faucet")
+async def dcm_realtime_faucet(req: DcmFaucetRequest):
+    """Fund a caller DID on the dev node (disabled once auth is enforced)."""
+    try:
+        return await _client().faucet(req.did, req.amount)
+    except DcmError as e:
+        if e.status_code == 403:
+            raise HTTPException(
+                status_code=403,
+                detail=f"the node refused the faucet: {e.detail}",
+            )
+        raise _fabric_error(e)
