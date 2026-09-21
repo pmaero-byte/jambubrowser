@@ -606,6 +606,119 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
         "ON flow_monitor_runs(monitor_id, run_at DESC)"
     )
 
+    # ── QA test cases (Milestone 1: AI QA team) ───────────────────────
+    # Managed test-case model: suite → case → runs, plus heal events and
+    # per-case procedural-learning pointers. Runs reuse the flow-report
+    # vocabulary so every executor (run_test, monitors) persists verdicts.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS qa_cases (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            url TEXT NOT NULL,
+            goal TEXT DEFAULT '',
+            kind TEXT DEFAULT 'smoke',
+            steps TEXT NOT NULL,
+            severity TEXT DEFAULT 'medium',
+            owner TEXT DEFAULT '',
+            enabled INTEGER DEFAULT 1,
+            procedural_key TEXT DEFAULT '',
+            created_at REAL DEFAULT (CAST(strftime('%s','now') AS REAL)),
+            updated_at REAL DEFAULT (CAST(strftime('%s','now') AS REAL)),
+            last_run_at REAL,
+            last_status TEXT
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS qa_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            case_id INTEGER NOT NULL,
+            run_at REAL DEFAULT (CAST(strftime('%s','now') AS REAL)),
+            status TEXT NOT NULL,
+            ok INTEGER DEFAULT 0,
+            passed INTEGER DEFAULT 0,
+            failed INTEGER DEFAULT 0,
+            total INTEGER DEFAULT 0,
+            duration_ms INTEGER DEFAULT 0,
+            healed_steps INTEGER DEFAULT 0,
+            failed_steps TEXT,
+            console_errors TEXT,
+            healed_events TEXT,
+            artifacts TEXT,
+            report TEXT,
+            error TEXT,
+            FOREIGN KEY (case_id) REFERENCES qa_cases(id)
+        )
+    """)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_qa_runs "
+        "ON qa_runs(case_id, run_at DESC)"
+    )
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS qa_heal_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            case_id INTEGER,
+            run_id INTEGER,
+            step_index INTEGER DEFAULT 0,
+            old_target TEXT DEFAULT '',
+            new_target TEXT DEFAULT '',
+            new_ref TEXT DEFAULT '',
+            strategy TEXT DEFAULT 'resnapshot',
+            status TEXT DEFAULT 'proposed',
+            created_at REAL DEFAULT (CAST(strftime('%s','now') AS REAL)),
+            decided_at REAL,
+            decided_by TEXT DEFAULT ''
+        )
+    """)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_qa_heal_events "
+        "ON qa_heal_events(case_id, status)"
+    )
+
+    # ── QA datasets (Milestone 2: data-driven runs) ───────────────────
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS qa_datasets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            rows_json TEXT NOT NULL,
+            created_at REAL DEFAULT (CAST(strftime('%s','now') AS REAL))
+        )
+    """)
+    for column, ddl in (
+        ("dataset_id", "ALTER TABLE qa_cases ADD COLUMN dataset_id INTEGER"),
+        ("dataset_rows", "ALTER TABLE qa_runs ADD COLUMN dataset_rows INTEGER DEFAULT 0"),
+        ("dataset_index", "ALTER TABLE qa_runs ADD COLUMN dataset_index INTEGER"),
+    ):
+        try:
+            cursor.execute(f"SELECT {column} FROM "
+                           f"{'qa_cases' if column == 'dataset_id' else 'qa_runs'} LIMIT 1")
+        except sqlite3.OperationalError:
+            cursor.execute(ddl)
+
+    # ── QA flake quarantine (Milestone 2: trustworthy gates) ──────────
+    # A red gate nobody trusts is worse than no gate: flaky cases are
+    # retried once, flagged, and auto-quarantined past a streak — then
+    # auto-promoted back after a green streak.
+    for table, column, ddl in (
+        ("qa_cases", "quarantined",
+         "ALTER TABLE qa_cases ADD COLUMN quarantined INTEGER DEFAULT 0"),
+        ("qa_cases", "quarantine_reason",
+         "ALTER TABLE qa_cases ADD COLUMN quarantine_reason TEXT"),
+        ("qa_cases", "flaky_count",
+         "ALTER TABLE qa_cases ADD COLUMN flaky_count INTEGER DEFAULT 0"),
+        ("qa_cases", "consecutive_passes",
+         "ALTER TABLE qa_cases ADD COLUMN consecutive_passes INTEGER DEFAULT 0"),
+        ("qa_cases", "auto_retry",
+         "ALTER TABLE qa_cases ADD COLUMN auto_retry INTEGER DEFAULT 1"),
+        ("qa_runs", "attempt",
+         "ALTER TABLE qa_runs ADD COLUMN attempt INTEGER DEFAULT 1"),
+        ("qa_runs", "flaky",
+         "ALTER TABLE qa_runs ADD COLUMN flaky INTEGER DEFAULT 0"),
+    ):
+        try:
+            cursor.execute(f"SELECT {column} FROM {table} LIMIT 1")
+        except sqlite3.OperationalError:
+            cursor.execute(ddl)
+
     # ── MeshPay: anchored receipt-epoch roots ──────────────────────────
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS meshpay_anchors (

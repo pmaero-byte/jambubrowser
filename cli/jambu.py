@@ -17,6 +17,9 @@ Usage:
     jambu monitor add <url>    Recurring audit monitor with regression alerts
     jambu monitor list|rm|run|runs|screenshot
                                 Manage monitors, inspect runs, download shots
+    jambu qa create|list|run   Managed QA cases: NL authoring, self-healing
+    jambu qa heals|accept      selectors, dataset matrices, flake quarantine,
+    jambu qa dataset ...       JUnit/SARIF CI exports
     jambu dcm status           DecentraCode Mesh node overview (peers, models)
     jambu dcm infer <prompt>   Run a prompt on the local DCM mesh
 
@@ -1013,6 +1016,220 @@ def cmd_watch(args) -> int:
     return EXIT_OK
 
 
+def cmd_qa(args) -> int:
+    """Managed QA cases: the AI QA team in the terminal."""
+    sub = getattr(args, "qa_command", None)
+    if sub == "create":
+        flow: dict = {}
+        if getattr(args, "flow", None):
+            try:
+                flow = _load_flow_file(args.flow)
+            except Exception as exc:
+                print(f"Could not read flow file {args.flow}: {exc}")
+                return EXIT_ENGINE_ERROR
+        url = args.url or flow.get("url")
+        if not url:
+            print("Provide --url or include an 'url' in the flow file.")
+            return EXIT_ENGINE_ERROR
+        steps = flow.get("steps") or []
+        if args.goal and not steps:
+            # NL goal → template plan, no browser needed to author.
+            planned = api_request("POST", "/browser/sessions/plan", {
+                "url": url, "goal": args.goal,
+                "kind": args.kind or None,
+            })
+            if planned is None or "error" in (planned or {}):
+                print(f"Plan failed: {(planned or {}).get('error', 'engine unreachable')}")
+                return EXIT_ENGINE_ERROR
+            steps = planned.get("steps") or []
+        if not steps:
+            print("No steps: pass --goal to author from NL or --flow FILE.")
+            return EXIT_ENGINE_ERROR
+        result = api_request("POST", "/qa/cases", {
+            "name": args.name, "url": url, "steps": steps,
+            "goal": args.goal or "", "kind": args.kind or "smoke",
+            "severity": args.severity, "owner": args.owner or "",
+            "local": args.local, "dataset_id": args.dataset_id,
+        })
+        if result is None or "error" in (result or {}):
+            print(f"Create failed: {(result or {}).get('error', 'engine unreachable')}")
+            return EXIT_ENGINE_ERROR
+        if result.get("placeholders"):
+            print(f"  placeholders: {', '.join(result['placeholders'])}")
+        print(f"QA case #{result['id']} '{result['name']}' "
+              f"({result['kind']}, {len(result['steps'])} steps)")
+        return EXIT_OK
+    if sub == "list":
+        result = api_request("GET", "/qa/cases")
+        if result is None:
+            return EXIT_ENGINE_ERROR
+        for case in result.get("cases") or []:
+            mark = "on " if case.get("enabled") else "off"
+            print(f"  #{case['id']} [{mark}] {case['name']} "
+                  f"({case['kind']}) — {case.get('last_status') or 'never run'}")
+        print(f"{result.get('count', 0)} case(s)")
+        return EXIT_OK
+    if sub == "run":
+        rows = None
+        if getattr(args, "dataset_file", None):
+            try:
+                raw = Path(args.dataset_file).read_text()
+                doc = json.loads(raw)
+                rows = doc.get("rows", doc) if isinstance(doc, dict) else doc
+                if not isinstance(rows, list):
+                    raise ValueError("expected a list or {'rows': [...]}")
+            except Exception as exc:
+                print(f"Could not read dataset file: {exc}")
+                return EXIT_ENGINE_ERROR
+        result = api_request("POST", f"/qa/cases/{args.case_id}/run", {
+            "local": args.local, "approve": args.approve,
+            "stop_on_failure": args.stop_on_failure,
+            "dataset_rows": rows, "junit": bool(args.junit_out),
+            "force": bool(getattr(args, "force", False)),
+        })
+        if result is None:
+            return EXIT_ENGINE_ERROR
+        if "error" in result:
+            print(f"Run failed: {result['error']}")
+            return EXIT_ENGINE_ERROR
+        if result.get("matrix"):
+            print(f"QA case #{result['case_id']} "
+                  f"{'PASS' if result.get('ok') else 'FAIL'} — "
+                  f"{result.get('passed_rows', 0)}/{result.get('rows', 0)} rows")
+            for one in result.get("runs") or []:
+                mark = "PASS" if one.get("ok") else "FAIL"
+                print(f"  row {one.get('dataset_index')}: {mark} "
+                      f"{one.get('passed', 0)}/{one.get('total', 0)} steps "
+                      f"(run #{one.get('run_id')})")
+                if one.get("unbound"):
+                    print(f"    unbound: {', '.join(one['unbound'])}")
+            xml = result.get("junit")
+            if xml and args.junit_out:
+                Path(args.junit_out).write_text(xml)
+                print(f"  junit: {args.junit_out}")
+            if getattr(args, "sarif_out", None):
+                sarif = api_request(
+                    "GET", f"/qa/cases/{args.case_id}/sarif?limit=1")
+                if sarif is not None:
+                    Path(args.sarif_out).write_text(json.dumps(sarif))
+                    print(f"  sarif: {args.sarif_out}")
+            return EXIT_OK if result.get("ok") else EXIT_GATE_FAILED
+        status = "PASS" if result.get("ok") else "FAIL"
+        if result.get("status") == "flaky":
+            status = "FLAKY (green)"
+        heals = result.get("healed_steps", 0)
+        extra = f" (+{heals} healed)" if heals else ""
+        print(f"QA case #{result['case_id']} {status} — "
+              f"{result.get('passed', 0)}/{result.get('total', 0)} steps{extra} "
+              f"(run #{result.get('run_id')})")
+        if result.get("unbound"):
+            print(f"  unbound placeholders: {', '.join(result['unbound'])}")
+        health = result.get("health") or {}
+        if health.get("action"):
+            print(f"  health: {health['action']} — "
+                  f"{health.get('quarantine_reason') or 'green streak'}")
+        if result.get("quarantine_reason"):
+            print(f"  quarantined: {result['quarantine_reason']}")
+        xml = result.get("junit")
+        if xml:
+            if args.junit_out == "-":
+                print(xml)
+            elif args.junit_out:
+                Path(args.junit_out).write_text(xml)
+                print(f"  junit: {args.junit_out}")
+        for heal in result.get("heals") or []:
+            print(f"  heal proposed #{heal['id']}: "
+                  f"'{heal['old_target']}' → '{heal['new_target']}' "
+                  f"(accept: jambu qa accept {heal['id']})")
+        for step in result.get("failed_steps") or []:
+            print(f"  FAIL #{step.get('i')} {step.get('action')} — "
+                  f"{step.get('reason')}: {step.get('error')}")
+        return EXIT_OK if result.get("ok") else EXIT_GATE_FAILED
+    if sub == "heals":
+        result = api_request("GET", "/qa/heals?status=proposed")
+        if result is None:
+            return EXIT_ENGINE_ERROR
+        heals = result.get("heals") or []
+        if not heals:
+            print("No proposed heals. Selectors are healthy.")
+            return EXIT_OK
+        for heal in heals:
+            print(f"  #{heal['id']} case #{heal['case_id']} "
+                  f"step {heal['step_index']}: "
+                  f"'{heal['old_target']}' → '{heal['new_target']}'")
+        return EXIT_OK
+    if sub in ("accept", "reject"):
+        result = api_request("POST", f"/qa/heals/{args.heal_id}", {
+            "accept": sub == "accept", "actor": args.actor,
+        })
+        if result is None or "error" in (result or {}):
+            print(f"Decide failed: {(result or {}).get('error', 'engine unreachable')}")
+            return EXIT_ENGINE_ERROR
+        print(f"Heal #{result['id']} {result['status']}.")
+        return EXIT_OK
+    if sub == "quarantine":
+        result = api_request("POST", f"/qa/cases/{args.case_id}/quarantine", {
+            "reason": args.reason, "actor": args.actor})
+        if result is None or "error" in (result or {}):
+            print(f"Quarantine failed: {(result or {}).get('error', 'engine unreachable')}")
+            return EXIT_ENGINE_ERROR
+        print(f"Case #{result['id']} quarantined "
+              f"({result.get('quarantine_reason') or 'no reason'}).")
+        return EXIT_OK
+    if sub == "unquarantine":
+        result = api_request("POST", f"/qa/cases/{args.case_id}/unquarantine",
+                             {"reason": "", "actor": "qa-lead"})
+        if result is None or "error" in (result or {}):
+            print(f"Unquarantine failed: {(result or {}).get('error', 'engine unreachable')}")
+            return EXIT_ENGINE_ERROR
+        print(f"Case #{result['id']} unquarantined.")
+        return EXIT_OK
+    if sub == "auto-retry":
+        result = api_request("POST", f"/qa/cases/{args.case_id}/auto-retry",
+                             {"enabled": args.enabled})
+        if result is None or "error" in (result or {}):
+            print(f"Toggle failed: {(result or {}).get('error', 'engine unreachable')}")
+            return EXIT_ENGINE_ERROR
+        print(f"Case #{result['id']} auto-retry "
+              f"{'on' if result.get('auto_retry') else 'off'}.")
+        return EXIT_OK
+    print("jambu qa create|list|run|heals|accept|reject|quarantine|"
+          "unquarantine|auto-retry|dataset --help")
+    return EXIT_ENGINE_ERROR
+
+
+def cmd_qa_dataset(args) -> int:
+    """Datasets live under `jambu qa dataset ...`."""
+    sub = getattr(args, "qa_dataset_command", None)
+    if sub == "create":
+        try:
+            raw = Path(args.rows_file).read_text()
+            doc = json.loads(raw)
+            rows = doc.get("rows", doc) if isinstance(doc, dict) else doc
+        except Exception as exc:
+            print(f"Could not read rows file: {exc}")
+            return EXIT_ENGINE_ERROR
+        result = api_request("POST", "/qa/datasets",
+                             {"name": args.name, "rows": rows})
+        if result is None or "error" in (result or {}):
+            print(f"Create failed: {(result or {}).get('error', 'engine unreachable')}")
+            return EXIT_ENGINE_ERROR
+        print(f"Dataset #{result['id']} '{result['name']}' "
+              f"({len(result['rows'])} rows)")
+        return EXIT_OK
+    if sub == "list":
+        result = api_request("GET", "/qa/datasets")
+        if result is None:
+            return EXIT_ENGINE_ERROR
+        for dataset in result.get("datasets") or []:
+            print(f"  #{dataset['id']} {dataset['name']} "
+                  f"({dataset['row_count']} rows: "
+                  f"{', '.join(dataset['columns'][:6])})")
+        return EXIT_OK
+    print("jambu qa dataset create|list --help")
+    return EXIT_ENGINE_ERROR
+
+
 def cmd_test(args) -> int:
     """Run a browser test flow (local dev friendly) and report pass/fail."""
     flow: dict = {}
@@ -1358,6 +1575,75 @@ def main():
     )
     p_devs.add_argument("--host", default="127.0.0.1")
 
+    p_qa = subparsers.add_parser(
+        "qa", help="Managed QA cases (create, run, heal)",
+    )
+    q_sub = p_qa.add_subparsers(dest="qa_command")
+
+    p_q_create = q_sub.add_parser("create", help="Create a case")
+    p_q_create.add_argument("--name", required=True)
+    p_q_create.add_argument("--url", required=True)
+    p_q_create.add_argument("--goal", default="",
+                            help="NL goal, e.g. 'test login'")
+    p_q_create.add_argument("--flow", help="Flow JSON file")
+    p_q_create.add_argument("--kind", default="smoke")
+    p_q_create.add_argument("--severity", default="medium",
+                            choices=["critical", "high", "medium",
+                                     "low", "info"])
+    p_q_create.add_argument("--owner", default="")
+    p_q_create.add_argument("--local", action="store_true",
+                            help="Allow localhost/private hosts")
+    p_q_create.add_argument("--dataset-id", dest="dataset_id", type=int,
+                            default=None,
+                            help="Attach a stored dataset (jambu qa dataset)")
+
+    q_sub.add_parser("list", help="List cases")
+
+    p_q_run = q_sub.add_parser("run", help="Run a case")
+    p_q_run.add_argument("case_id", type=int)
+    p_q_run.add_argument("--local", action="store_true")
+    p_q_run.add_argument("--approve", action="store_true")
+    p_q_run.add_argument("--stop-on-failure", dest="stop_on_failure",
+                         action="store_true")
+    p_q_run.add_argument("--dataset-file", dest="dataset_file",
+                         default=None,
+                         help="JSON list (or {'rows': [...]}) of datasets")
+    p_q_run.add_argument("--junit", dest="junit_out", metavar="FILE",
+                         default=None,
+                         help="Write JUnit XML for CI ('-' = stdout)")
+    p_q_run.add_argument("--sarif", dest="sarif_out", metavar="FILE",
+                         default=None,
+                         help="Write SARIF 2.1.0 for code scanning")
+    p_q_run.add_argument("--force", action="store_true",
+                         help="Run even if the case is quarantined")
+
+    q_sub.add_parser("heals", help="Show proposed heals")
+
+    for verb in ("accept", "reject"):
+        p_q_decide = q_sub.add_parser(verb, help=f"{verb} a heal")
+        p_q_decide.add_argument("heal_id", type=int)
+        p_q_decide.add_argument("--actor", default="qa-lead")
+
+    for verb, enabled in (("quarantine", None), ("unquarantine", None)):
+        p_q_q = q_sub.add_parser(verb, help=f"{verb} a case")
+        p_q_q.add_argument("case_id", type=int)
+        if verb == "quarantine":
+            p_q_q.add_argument("--reason", default="")
+            p_q_q.add_argument("--actor", default="qa-lead")
+
+    p_q_retry = q_sub.add_parser("auto-retry",
+                                 help="Toggle the flake auto-retry")
+    p_q_retry.add_argument("case_id", type=int)
+    p_q_retry.add_argument("--off", dest="enabled", action="store_false")
+
+    p_q_ds = q_sub.add_parser("dataset", help="Manage datasets")
+    ds_sub = p_q_ds.add_subparsers(dest="qa_dataset_command")
+    p_q_ds_create = ds_sub.add_parser("create", help="Create a dataset")
+    p_q_ds_create.add_argument("--name", required=True)
+    p_q_ds_create.add_argument("rows_file",
+                               help="JSON rows file (list or {'rows': [...]})")
+    ds_sub.add_parser("list", help="List datasets")
+
     p_monitor = subparsers.add_parser(
         "monitor",
         help="Recurring audit monitors with regression alerts",
@@ -1461,6 +1747,11 @@ def main():
         code = cmd_watch(args)
     elif args.command == "dev-servers":
         code = cmd_dev_servers(args)
+    elif args.command == "qa":
+        if getattr(args, "qa_command", None) == "dataset":
+            code = cmd_qa_dataset(args)
+        else:
+            code = cmd_qa(args)
     elif args.command == "monitor":
         code = cmd_monitor(args)
     elif args.command == "dcm":

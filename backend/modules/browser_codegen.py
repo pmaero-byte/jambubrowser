@@ -34,7 +34,8 @@ def _type_locator(target: str) -> str:
     return f"page.getByLabel({_s(target)}).or(page.getByPlaceholder({_s(target)})).first()"
 
 
-def _step_to_ts(step: dict) -> list[str]:
+def _step_to_ts(step: dict, state: Optional[dict] = None) -> list[str]:
+    state = state if state is not None else {}
     action = (step.get("action") or "").strip().lower()
     target = step.get("target") or step.get("name") or ""
     value = step.get("value", step.get("expected", ""))
@@ -78,15 +79,89 @@ def _step_to_ts(step: dict) -> list[str]:
         path = step.get("path") or "screenshot.png"
         lines.append(f"  await page.screenshot({{ path: {_s(path)}, fullPage: "
                      f"{'true' if step.get('full_page') else 'false'} }});")
+    elif action in ("api", "http", "request"):
+        method = (step.get("method") or "GET").upper()
+        url = step.get("url") or step.get("value") or ""
+        options: list[str] = []
+        body = step.get("body", step.get("json", step.get("data")))
+        if body is not None:
+            options.append(f"data: {json.dumps(body)}")
+        if step.get("headers"):
+            options.append(f"headers: {json.dumps(step['headers'])}")
+        opts = ", {" + ", ".join(options) + "}" if options else ""
+        var = _api_var(state)
+        lines.append(f"  const {var} = await request."
+                     f"{method.lower()}({_s(url)}{opts});")
+        expect = step.get("expect_status")
+        if expect is not None:
+            if str(expect).endswith("xx"):
+                lines.append(f"  expect({var}.ok()).toBeTruthy();")
+            else:
+                lines.append(f"  expect({var}.status()).toBe({expect});")
     elif action == "assert" or action.startswith("assert_"):
         kind = (step.get("kind") or action[len("assert_"):]).strip().lower()
-        lines.extend(_assert_to_ts(kind, target, value))
+        if kind in ("status", "api_status", "json", "api_json", "json_path",
+                    "latency", "api_latency", "schema", "api_schema",
+                    "header", "api_header"):
+            var = f"res{state.get('api_n', 0)}" if state.get("api_n") else "res"
+            if not state.get("api_n"):
+                lines.append("  // NOTE: no preceding api step in this flow.")
+            lines.extend(_api_assert_to_ts(kind, step, var))
+        else:
+            lines.extend(_assert_to_ts(kind, target, value, step))
     else:
         lines.append(f"  // TODO unsupported action: {action} {json.dumps(step)}")
     return lines
 
 
-def _assert_to_ts(kind: str, target: str, value: str) -> list[str]:
+# API steps export to Playwright's `request` fixture, which shares the
+# browser context's cookies — mirroring the engine's session-context calls.
+def _api_var(state: dict) -> str:
+    state["api_n"] = state.get("api_n", 0) + 1
+    return f"res{state['api_n']}"
+
+
+def _json_chain(path: str) -> str:
+    if not path:
+        return ""
+    out = ""
+    for token in path.replace("[", ".").replace("]", "").split("."):
+        if not token:
+            continue
+        out += f"[{token}]" if token.isdigit() else f"[{_s(token)}]"
+    return out
+
+
+def _api_assert_to_ts(kind: str, step: dict, var: str) -> list[str]:
+    value = step.get("value", step.get("expected", ""))
+    if kind in ("status", "api_status"):
+        if str(value).endswith("xx"):
+            return [f"  expect({var}.ok()).toBeTruthy();"]
+        return [f"  expect({var}.status()).toBe({int(value or 200)});"]
+    if kind in ("json", "api_json", "json_path"):
+        chain = _json_chain(step.get("path") or step.get("json_path") or "")
+        expected = step.get("expected", step.get("value"))
+        if expected in (None, ""):
+            return [f"  expect((await {var}.json()){chain}).toBeDefined();"]
+        return [f"  expect((await {var}.json()){chain})"
+                f".toEqual({json.dumps(expected)});"]
+    if kind in ("header", "api_header"):
+        key = step.get("header") or step.get("name") or ""
+        expected = str(step.get("value", step.get("expected", "")))
+        lookup = f"{var}.headers()[{_s(key.lower())}]"
+        if expected:
+            return [f"  expect({lookup}).toContain({_s(expected)});"]
+        return [f"  expect({lookup}).toBeDefined();"]
+    if kind in ("latency", "api_latency"):
+        return [f"  // Budget: api latency <= {value}ms"]
+    if kind in ("schema", "api_schema"):
+        required = step.get("required") or step.get("value") or []
+        return [f"  // Schema check: required keys {json.dumps(required)}"]
+    return [f"  // TODO unsupported api assertion: {kind}"]
+
+
+def _assert_to_ts(kind: str, target: str, value: str,
+                  step: Optional[dict] = None) -> list[str]:
     if kind in ("visible", ""):
         return [f"  await expect({_locator(target)}).toBeVisible();"]
     if kind in ("not_visible", "hidden"):
@@ -140,14 +215,15 @@ def flow_to_playwright(steps, *, name: str = "jambubrowser flow",
     if isinstance(steps, dict):
         steps = steps.get("steps") or []
     body: list[str] = []
+    state: dict = {}
     for step in steps:
-        body.extend(_step_to_ts(step))
+        body.extend(_step_to_ts(step, state))
     prelude = []
     if url:
         prelude = [f"  // Original entry point: {url}"]
     header = (
         "import { test, expect } from '@playwright/test';\n\n"
-        f"test({_s(name)}, async ({{ page }}) => {{\n"
+        f"test({_s(name)}, async ({{ page, request }}) => {{\n"
     )
     if base_url:
         header = (

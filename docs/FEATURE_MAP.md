@@ -267,6 +267,56 @@ federation — the information-access surface a normal browser can't offer.
 
 ---
 
+## 3.5 QA team — managed test cases (the automation-tester layer)
+
+**Headline value:** Managed test cases with verdicts, self-healing,
+data-driven matrices, API assertions, and a flake-quarantined CI gate —
+the daily loop of a manual + automation QA team, run by AI.
+
+### What exists today (2026-09, Milestones 1–2)
+- **Managed cases** (`backend/modules/qa_cases.py`, routes `backend/routes/qa.py`)
+  — case = goal + steps + severity + owner; every run persisted with a
+  verdict; heal events propose-only (accepting is the ONLY step mutator);
+  per-case stats (pass/heal/flake rates). NL authoring: `POST /qa/from-goal`
+  (template plan → stored case) and `jambu qa create --goal "test login"`.
+- **Datasets + binding** (`backend/modules/qa_datasets.py`) — `{{placeholder}}`
+  binding order: dataset row → env var → vault (`vault_<name>` keys pull the
+  case host's credential password; secrets never live in the dataset) →
+  unbound fails the run loudly. One case × N rows = N verdicts.
+- **Flake policy** — a failed run auto-retries once; a retry that passes is
+  `flaky` (green for the gate, counted); ≥3 flakes in 10 runs auto-quarantines
+  the case (runs refuse with 409 unless `force`); 5 straight clean passes
+  auto-promote it back. Thresholds: `JAMBU_QA_FLAKY_AFTER`,
+  `JAMBU_QA_PROMOTE_STREAK`.
+- **API steps** — `{"action": "api", "method", "url", "json", "expect_status"}`
+  runs via the browser context (shared cookies), plus `assert_status`,
+  `assert_json` (dot/index path), `assert_latency`, `assert_schema`,
+  `assert_header`. Non-GET requires `approve` like every mutating action.
+- **CI exports** — JUnit XML (`/qa/cases/{id}/junit`, `jambu qa run --junit`)
+  and SARIF 2.1.0 (`/qa/cases/{id}/sarif`, `jambu qa run --sarif`) with
+  stable rule ids (QA001…) + fingerprints so code scanning dedupes.
+- **Codegen parity** — API steps export to Playwright's `request` fixture
+  (`flow_to_playwright`), so exported specs keep UI + API assertions.
+- CLI: `jambu qa create|list|run|heals|accept|reject|quarantine|unquarantine|auto-retry|dataset`.
+
+### Real problems this solves
+- "My E2E selectors rot every sprint" → propose-only heals with an audit trail.
+- "The red gate nobody trusts" → flake counting + auto-quarantine + auto-promote.
+- "UI says OK but did the backend actually persist?" → API steps share the
+  browser session's cookies.
+- "One test, fifty data rows" → datasets with vault-backed secrets.
+- "CI needs native formats" → JUnit + SARIF, exit codes 0/1/2.
+
+### What still hurts (improvement targets)
+1. No QA dashboard UI yet (stats endpoints exist; the panel is next).
+2. No Jira/Linear defect export (findings already have teams/assignments).
+3. Browser/viewport matrix for cases reuses dataset rows only — the
+   `BrowserAgentService.run_matrix` variants are not yet composed with cases.
+4. SARIF severity is per-case (no per-step severity weighting yet).
+
+---
+
+## 4. Developer — embed Jambubrowser into other tools
 ## 4. Developer — embed Jambubrowser into other tools
 
 **Headline value:** Other programs can use Jambubrowser as a library,

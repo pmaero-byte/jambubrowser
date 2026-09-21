@@ -299,6 +299,78 @@ class PlaywrightPage:
             url,
         )
 
+    async def http_request(self, method: str, url: str, *,
+                           headers: Optional[dict] = None,
+                           body: Any = None,
+                           timeout_ms: int = 15000) -> dict:
+        """Issue an API call from the browser context (shared cookies).
+
+        Uses Playwright's APIRequestContext attached to the page's
+        BrowserContext, so session cookies set by the UI are sent — which is
+        what makes "click, then verify the backend" checks meaningful.
+        Falls back to an in-page ``fetch`` when the adapter lacks it.
+        """
+        method = (method or "GET").upper()
+        headers = {k: str(v) for k, v in (headers or {}).items()}
+        context = getattr(self._page, "context", None)
+        request_ctx = getattr(context, "request", None)
+        if request_ctx is None:
+            request_ctx = getattr(self._page, "request", None)
+        started = time.time()
+        if request_ctx is not None:
+            kwargs: dict = {"headers": headers, "timeout": timeout_ms}
+            if body is not None:
+                if isinstance(body, (dict, list)):
+                    kwargs["data"] = body
+                else:
+                    kwargs["data"] = str(body)
+            response = await request_ctx.fetch(url, method=method, **kwargs)
+            latency_ms = int((time.time() - started) * 1000)
+            text = ""
+            try:
+                text = await response.text()
+            except Exception:
+                text = ""
+            parsed = None
+            try:
+                parsed = json.loads(text) if text else None
+            except ValueError:
+                parsed = None
+            return {
+                "status": response.status, "ok": response.ok,
+                "method": method, "url": url, "latency_ms": latency_ms,
+                "json": parsed, "text": text[:4000],
+                "headers": dict(response.headers or {}),
+            }
+        # Fallback: in-page fetch (same origin/cookies, no custom headers
+        # beyond what the browser permits).
+        result = await self._page.evaluate(
+            """async ({method, url, headers, body}) => {
+                try {
+                    const r = await fetch(url, {method, headers,
+                        body: body === null ? undefined : body});
+                    const text = await r.text();
+                    let json = null;
+                    try { json = JSON.parse(text); } catch (e) {}
+                    return {status: r.status, ok: r.ok, text, json};
+                } catch (e) { return {error: String(e)}; }
+            }""",
+            {"method": method, "url": url, "headers": headers,
+             "body": None if body is None else (
+                 body if isinstance(body, str) else json.dumps(body))},
+        )
+        latency_ms = int((time.time() - started) * 1000)
+        if result.get("error"):
+            return {"status": 0, "ok": False, "method": method, "url": url,
+                    "latency_ms": latency_ms, "error": result["error"],
+                    "json": None, "text": "", "headers": {}}
+        return {
+            "status": result.get("status", 0), "ok": bool(result.get("ok")),
+            "method": method, "url": url, "latency_ms": latency_ms,
+            "json": result.get("json"), "text": (result.get("text") or "")[:4000],
+            "headers": {},
+        }
+
     async def a11y_audit(self) -> dict:
         return await self._page.evaluate(A11Y_JS)
 
@@ -521,6 +593,51 @@ def classify_risk(*parts: str) -> Optional[str]:
     return None
 
 
+def _json_path(payload: Any, path: str) -> Any:
+    """Tiny JSON-path reader for API assertions: ``a.b[0].c`` style.
+
+    Deliberately minimal (no wildcards/filters): QA assertions should be
+    readable, and anything fancier belongs in a real schema check.
+    """
+    if not path:
+        return payload
+    node = payload
+    token = ""
+    i = 0
+    parts: list[Any] = []
+    while i < len(path):
+        ch = path[i]
+        if ch == ".":
+            if token:
+                parts.append(token)
+                token = ""
+        elif ch == "[":
+            if token:
+                parts.append(token)
+                token = ""
+            end = path.find("]", i)
+            if end < 0:
+                return None
+            index = path[i + 1:end].strip().strip("'\"")
+            parts.append(int(index) if index.isdigit() else index)
+            i = end
+        else:
+            token += ch
+        i += 1
+    if token:
+        parts.append(token)
+    for part in parts:
+        if isinstance(part, int):
+            if not isinstance(node, list) or part >= len(node):
+                return None
+            node = node[part]
+        else:
+            if not isinstance(node, dict) or part not in node:
+                return None
+            node = node[part]
+    return node
+
+
 def estimate_tokens(payload) -> int:
     """Rough token estimate for a payload (~4 chars per token).
 
@@ -662,6 +779,8 @@ class BrowserAgentSession:
         self.recorded_steps: list[dict] = []
         self._settle_ms = 0
         self._forbid_evaluate = False
+        # Last API-step response, read by assert_status/json/latency/schema.
+        self._last_api: Optional[dict] = None
 
     # -- helpers -------------------------------------------------------------
 
@@ -1277,6 +1396,58 @@ class BrowserAgentSession:
             )
             return f"pressed {key}", {}
 
+        if action in ("api", "http", "request"):
+            method = (step.get("method") or "GET").upper()
+            url = step.get("url") or step.get("value") or ""
+            if not url:
+                raise SessionRefused("invalid_step", "api requires 'url'")
+            if not is_safe_url(url, allow_private=self.allow_private):
+                raise SessionRefused("unsafe_url",
+                                     f"URL failed safety checks: {url}")
+            mutating = method not in ("GET", "HEAD", "OPTIONS")
+            if mutating and not approve:
+                self._record(action, "blocked",
+                             detail=f"{method} {url} requires approve=true")
+                raise SessionRefused(
+                    "approval_required",
+                    f"{method} requests mutate remote state; re-send with approve=true",
+                )
+            response = await self._call_optional(
+                "http_request", method, url,
+                headers=step.get("headers") or {},
+                body=step.get("body", step.get("json", step.get("data"))),
+                timeout_ms=int(step.get("timeout", 15000)),
+            )
+            self._last_api = response
+            self._record(action, "ok" if response.get("ok") else "failed",
+                         url=self.last_url,
+                         detail=f"{method} {url} → {response.get('status')}")
+            expect = step.get("expect_status")
+            if expect is not None:
+                actual = response.get("status", 0)
+                wanted = int(expect) if str(expect).isdigit() else None
+                if wanted is None:
+                    expect_s = str(expect).lower()
+                    ok = (expect_s == "2xx" and 200 <= actual < 300) or \
+                         (expect_s == "3xx" and 300 <= actual < 400) or \
+                         (expect_s == "4xx" and 400 <= actual < 500) or \
+                         (expect_s == "5xx" and 500 <= actual < 600)
+                else:
+                    ok = actual == wanted
+                if not ok:
+                    raise SessionRefused(
+                        "assertion_failed",
+                        f"{method} {url} returned {actual}, expected {expect}",
+                    )
+            detail = (f"{method} {url} → {response.get('status')} "
+                      f"in {response.get('latency_ms')}ms")
+            return detail, {"api": {
+                "status": response.get("status"),
+                "latency_ms": response.get("latency_ms"),
+                "url": url, "method": method,
+                "ok": bool(response.get("ok")),
+            }}
+
         if action == "hover":
             selector = (step.get("selector") or "").strip()
             if step.get("ref") or step.get("target") or step.get("name"):
@@ -1438,6 +1609,77 @@ class BrowserAgentSession:
             ok = actual <= budget if budget > 0 else actual > 0
             return ok, (f"{metric}={actual:.1f} (budget {budget:g})" if budget > 0
                         else f"{metric}={actual:.1f}")
+
+        if kind in ("status", "api_status"):
+            if self._last_api is None:
+                return False, "no api step ran before this assertion"
+            actual = int(self._last_api.get("status") or 0)
+            expect = value or "2xx"
+            if str(expect).isdigit():
+                ok = actual == int(expect)
+            else:
+                e = str(expect).lower()
+                ok = (e == "2xx" and 200 <= actual < 300) or \
+                     (e == "3xx" and 300 <= actual < 400) or \
+                     (e == "4xx" and 400 <= actual < 500) or \
+                     (e == "5xx" and 500 <= actual < 600)
+            return ok, f"api status {actual} (expected {expect})"
+
+        if kind in ("latency", "api_latency"):
+            if self._last_api is None:
+                return False, "no api step ran before this assertion"
+            actual = int(self._last_api.get("latency_ms") or 0)
+            budget = int(float(value or 0))
+            ok = actual <= budget if budget > 0 else actual > 0
+            return ok, (f"api latency {actual}ms (budget {budget}ms)"
+                        if budget > 0 else f"api latency {actual}ms")
+
+        if kind in ("json", "api_json", "json_path"):
+            if self._last_api is None:
+                return False, "no api step ran before this assertion"
+            payload = self._last_api.get("json")
+            if payload is None:
+                return False, "api response was not JSON"
+            path = (step.get("path") or step.get("json_path") or "")
+            expected = (step.get("expected") if step.get("expected") is not None
+                        else step.get("value"))
+            got = _json_path(payload, path) if path else payload
+            if expected is None or expected == "":
+                ok = got is not None
+                return ok, (f"json {path or '<root>'} present" if ok
+                            else f"json {path or '<root>'} missing")
+            ok = str(got) == str(expected)
+            return ok, (f"json {path or '<root>'}: {got!r}"
+                        + ("" if ok else f" != {expected!r}"))
+
+        if kind in ("schema", "api_schema"):
+            if self._last_api is None:
+                return False, "no api step ran before this assertion"
+            payload = self._last_api.get("json")
+            required = step.get("required") or step.get("value") or []
+            if isinstance(required, str):
+                required = [k.strip() for k in required.split(",") if k.strip()]
+            if not isinstance(payload, dict):
+                return False, "api response was not a JSON object"
+            missing = [k for k in required if k not in payload]
+            return (not missing), (
+                f"schema ok ({len(required)} keys)" if not missing
+                else f"missing keys: {', '.join(missing)}")
+
+        if kind in ("header", "api_header"):
+            if self._last_api is None:
+                return False, "no api step ran before this assertion"
+            headers = {k.lower(): str(v) for k, v in
+                       (self._last_api.get("headers") or {}).items()}
+            key = (step.get("header") or step.get("name") or "").lower()
+            got = headers.get(key)
+            expected = str(step.get("value", step.get("expected", "")))
+            if not expected:
+                ok = got is not None
+                return ok, (f"header {key} present" if ok
+                            else f"header {key} missing")
+            ok = got is not None and expected.lower() in got.lower()
+            return ok, (f"header {key}: {got!r}")
 
         if kind == "made_request":
             made = await self._call_optional("made_request", value)

@@ -307,6 +307,7 @@ from backend.routes.dev_servers import router as dev_servers_router
 from backend.routes.eval_cert import router as eval_cert_router
 from backend.routes.a2a import router as a2a_router
 from backend.routes.verification import router as verification_router
+from backend.routes.qa import router as qa_router
 from backend.mcp_http import (
     card_routes as mcp_card_routes,
     mcp_asgi_app,
@@ -350,6 +351,7 @@ app.include_router(dev_servers_router)
 app.include_router(eval_cert_router)
 app.include_router(a2a_router)
 app.include_router(verification_router)
+app.include_router(qa_router)
 
 # Remote MCP (Streamable HTTP) + public Server Card. The sub-app carries
 # its own token auth; the engine's middleware stack still applies to it.
