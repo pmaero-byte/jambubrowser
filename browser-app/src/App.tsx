@@ -50,6 +50,9 @@ const DcmNodePanel = lazy(() =>
 const MeshPayPanel = lazy(() =>
   import("./components/meshpay/MeshPayPanel").then((m) => ({ default: m.MeshPayPanel }))
 );
+const LenderPanel = lazy(() =>
+  import("./components/dcm/LenderPanel").then((m) => ({ default: m.LenderPanel }))
+);
 const HistoryPanel = lazy(() =>
   import("./components/history/HistoryPanel").then((m) => ({ default: m.HistoryPanel }))
 );
@@ -201,6 +204,8 @@ export default function App() {
         return <MonitorsView />;
       case "dcm-node":
         return <DcmNodePanel />;
+      case "lenders":
+        return <LenderPanel />;
       case "meshpay":
         return <MeshPayPanel />;
       case "history":

@@ -7,6 +7,7 @@ export type CanvasTab =
   | "missions"
   | "monitors"
   | "dcm-node"
+  | "lenders"
   | "meshpay"
   | "history"
   | "recordings"

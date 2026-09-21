@@ -41,6 +41,7 @@ const navActions: { id: CanvasTab; label: string; icon: React.ElementType; short
   { id: "missions", label: "Missions", icon: FolderKanban },
   { id: "monitors", label: "Audit Monitors (regression alerts)", icon: Radar },
   { id: "dcm-node", label: "DCM Node (DecentraCode mesh)", icon: Radio },
+  { id: "lenders", label: "Lend compute (earn DCT on the mesh)", icon: Zap },
   { id: "meshpay", label: "MeshPay (USDC settlement + receipt audit)", icon: Coins },
   { id: "recordings", label: "Recordings (replay browser runs)", icon: Video },
   { id: "privacy", label: "Privacy Controls", icon: Shield, shortcut: "Meta+Shift+P" },

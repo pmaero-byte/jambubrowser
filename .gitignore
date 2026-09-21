@@ -67,3 +67,6 @@ tests/.artifacts/
 
 # Local dev virtualenv
 .venv/
+
+# browser-app dependencies (installed locally for the vitest suite)
+browser-app/node_modules/
