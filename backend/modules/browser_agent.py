@@ -38,7 +38,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Optional, Protocol
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from backend.core.security import is_safe_url
 from backend.modules.browser_debug import (
@@ -49,6 +49,7 @@ from backend.modules.browser_debug import (
     diff_elements,
     map_url_for,
     match_network,
+    NetworkPolicy,
     parse_stack_frames,
     serialize_body,
     SourceMapData,
@@ -213,11 +214,15 @@ class PlaywrightPage:
     and can be drained per flow rather than fetched with extra calls.
     """
 
-    def __init__(self, page, network: Optional[dict] = None):
+    def __init__(self, page, network: Optional[dict] = None,
+                 network_policy: Optional[NetworkPolicy] = None):
         self._page = page
         self.telemetry = Telemetry()
         self._network = network or {}
         self._network_rules = compile_network(network)
+        self.network_policy = network_policy
+        self._route_installed = False
+        self._route_target = getattr(page, "context", None) or page
         self.requests: list[dict] = []
         try:
             page.on("console", lambda msg: self.telemetry.add_console(
@@ -251,15 +256,28 @@ class PlaywrightPage:
         return out
 
     async def setup_network(self, network: Optional[dict]) -> dict:
-        """Install request interception: mocks, failures, delays, offline."""
+        """Install request interception plus the mandatory request policy."""
         self._network = network or {}
         self._network_rules = compile_network(network)
         offline = bool(self._network.get("offline"))
-        if not self._network_rules and not offline:
-            return {"rules": 0, "offline": False}
+        if self._route_installed:
+            return {"rules": len(self._network_rules), "offline": offline,
+                    "supported": True, "policy": True,
+                    "websocket_supported": self.network_policy._websocket_supported}
+        if self.network_policy is None:
+            return {"rules": len(self._network_rules), "offline": offline,
+                    "supported": False, "policy": False}
 
         async def handler(route):
             request = route.request
+            decision = await asyncio.to_thread(
+                self.network_policy.decide,
+                request.url,
+                method=request.method,
+                kind=getattr(request, "resource_type", "http"),
+            )
+            if not decision.allowed:
+                return await route.abort("blockedbyclient")
             rule = match_network(self._network_rules, request.url, request.method)
             if rule is not None:
                 if rule.action == "abort":
@@ -273,16 +291,37 @@ class PlaywrightPage:
                         body=serialize_body(rule.body, rule.content_type),
                         content_type=rule.content_type,
                     )
-            if offline:
+            if self._network.get("offline"):
                 return await route.abort()
             return await route.continue_()
 
         try:
-            await self._page.route("**/*", handler)
+            await self._route_target.route("**/*", handler)
         except Exception:  # adapter without routing support
             return {"rules": len(self._network_rules), "offline": offline,
-                    "supported": False}
-        return {"rules": len(self._network_rules), "offline": offline}
+                    "supported": False, "policy": True}
+        websocket_supported = False
+        route_websocket = getattr(self._route_target, "route_web_socket", None)
+        if callable(route_websocket):
+            async def websocket_handler(websocket_route):
+                decision = await asyncio.to_thread(
+                    self.network_policy.decide,
+                    websocket_route.url, method="GET", kind="websocket",
+                )
+                if not decision.allowed:
+                    return await websocket_route.close(code=1008, reason=decision.reason)
+                return await websocket_route.connect_to_server()
+            try:
+                await route_websocket("**/*", websocket_handler)
+                websocket_supported = True
+            except Exception:
+                websocket_supported = False
+        self.network_policy._websocket_supported = websocket_supported
+        self.network_policy._routing_installed = True
+        self._route_installed = True
+        return {"rules": len(self._network_rules), "offline": offline,
+                "supported": True, "policy": True,
+                "websocket_supported": websocket_supported}
 
     async def evaluate(self, script: str, arg: Any = None):
         if arg is None:
@@ -312,6 +351,15 @@ class PlaywrightPage:
         """
         method = (method or "GET").upper()
         headers = {k: str(v) for k, v in (headers or {}).items()}
+        if self.network_policy is not None:
+            decision = await asyncio.to_thread(
+                self.network_policy.decide, url, method=method, kind="api"
+            )
+            if not decision.allowed:
+                return {"status": 0, "ok": False, "method": method, "url": url,
+                        "latency_ms": 0, "error": f"blocked_{decision.reason}: {decision.detail}",
+                        "json": None, "text": "", "headers": {},
+                        "blocked": True, "reason": decision.reason}
         context = getattr(self._page, "context", None)
         request_ctx = getattr(context, "request", None)
         if request_ctx is None:
@@ -324,7 +372,46 @@ class PlaywrightPage:
                     kwargs["data"] = body
                 else:
                     kwargs["data"] = str(body)
-            response = await request_ctx.fetch(url, method=method, **kwargs)
+            current_url = url
+            current_method = method
+            for redirect_count in range(6):
+                response = await request_ctx.fetch(
+                    current_url, method=current_method, max_redirects=0, **kwargs
+                )
+                if not 300 <= response.status < 400:
+                    break
+                redirect_location = (response.headers or {}).get("location", "")
+                if not redirect_location:
+                    break
+                destination = urljoin(current_url, redirect_location)
+                decision = await asyncio.to_thread(
+                    self.network_policy.decide,
+                    destination, method=current_method, kind="redirect",
+                ) if self.network_policy is not None else NetworkDecision(
+                    True, "adapter_without_request_policy"
+                )
+                if not decision.allowed:
+                    latency_ms = int((time.time() - started) * 1000)
+                    return {
+                        "status": 0, "ok": False, "method": method,
+                        "url": destination, "latency_ms": latency_ms,
+                        "error": f"blocked_redirect: {decision.reason}: {decision.detail}",
+                        "json": None, "text": "", "headers": {},
+                        "blocked": True, "reason": decision.reason,
+                    }
+                if redirect_count == 5:
+                    latency_ms = int((time.time() - started) * 1000)
+                    return {
+                        "status": 0, "ok": False, "method": method,
+                        "url": current_url, "latency_ms": latency_ms,
+                        "error": "blocked_redirect: redirect chain exceeds 5 hops",
+                        "json": None, "text": "", "headers": {},
+                        "blocked": True, "reason": "redirect_loop",
+                    }
+                if response.status in (301, 302, 303) and current_method not in ("GET", "HEAD"):
+                    current_method = "GET"
+                    kwargs.pop("data", None)
+                current_url = destination
             latency_ms = int((time.time() - started) * 1000)
             text = ""
             try:
@@ -758,6 +845,7 @@ class BrowserAgentSession:
             raise ValueError("allow_domains must be non-empty (fail closed)")
         self.id = session_id
         self.page = page
+        self.network_policy = getattr(page, "network_policy", None)
         self.allow_domains = [d.strip() for d in allow_domains if d.strip()]
         self.require_approval = require_approval
         self.scrub_pii = scrub_pii
@@ -855,6 +943,10 @@ class BrowserAgentSession:
             "require_approval": self.require_approval,
             "scrub_pii": self.scrub_pii,
             "allow_private": self.allow_private,
+            "network_policy": (
+                self.network_policy.report() if self.network_policy is not None
+                else {"enforced": False, "reason": "adapter_without_request_policy"}
+            ),
             "created_at": self.created_at,
             "age_seconds": round(time.time() - self.created_at, 1),
             "steps": len(self.steps),
@@ -1171,9 +1263,13 @@ class BrowserAgentSession:
         self._settle_ms = max(0, int(settle_ms or 0))
         self._forbid_evaluate = bool(forbid_evaluate)
 
-        network_info: dict = {"rules": 0, "offline": False}
-        if network:
-            network_info = await self._call_optional("setup_network", network) or network_info
+        network_info: dict = {
+            "rules": 0,
+            "offline": False,
+            "policy": bool(self.network_policy),
+        }
+        if network or self.network_policy is not None:
+            network_info = await self._call_optional("setup_network", network or {}) or network_info
         if freeze_animations:
             try:
                 await self._call_optional("inject_css", DISABLE_ANIM_CSS)
@@ -1240,6 +1336,10 @@ class BrowserAgentSession:
         }
         if network:
             report["network"] = network_info
+        report["network_policy"] = (
+            self.network_policy.report() if self.network_policy is not None
+            else {"enforced": False, "reason": "adapter_without_request_policy"}
+        )
         if resolve_sources:
             report["console_errors_source"] = await self._resolve_sources(
                 telemetry.get("console_errors_detail") or [],
@@ -1401,9 +1501,7 @@ class BrowserAgentSession:
             url = step.get("url") or step.get("value") or ""
             if not url:
                 raise SessionRefused("invalid_step", "api requires 'url'")
-            if not is_safe_url(url, allow_private=self.allow_private):
-                raise SessionRefused("unsafe_url",
-                                     f"URL failed safety checks: {url}")
+            self._check_navigation(url)
             mutating = method not in ("GET", "HEAD", "OPTIONS")
             if mutating and not approve:
                 self._record(action, "blocked",
@@ -1899,6 +1997,8 @@ class BrowserAgentService:
         opts = dict(context_options or {})
         if storage_state:
             opts["storage_state"] = storage_state
+        # Prevent service workers from creating an out-of-band network path.
+        opts.setdefault("service_workers", "block")
         if (trace or har or video) and not artifacts_dir:
             artifacts_dir = tempfile.mkdtemp(prefix="jambu-artifacts-")
         if artifacts_dir:
@@ -1921,8 +2021,30 @@ class BrowserAgentService:
                     await starter()
                 except Exception:
                     log.warning("failed to start trace for %s", session_id, exc_info=True)
+        policy = NetworkPolicy(allow_domains, allow_private=allow_private)
+        adapter = PlaywrightPage(page, network_policy=policy)
+        try:
+            network_info = await adapter.setup_network({})
+            if callable(getattr(page, "route", None)):
+                if not network_info.get("supported"):
+                    raise SessionRefused(
+                        "network_policy_unavailable",
+                        "Playwright request routing could not be installed; session refused",
+                    )
+                if not network_info.get("websocket_supported"):
+                    raise SessionRefused(
+                        "network_policy_unavailable",
+                        "Playwright WebSocket routing is unavailable; session refused",
+                    )
+        except Exception:
+            try:
+                await browser_session.stop()
+            except Exception:
+                log.warning("failed to close browser after policy setup failure",
+                            exc_info=True)
+            raise
         agent = BrowserAgentSession(
-            session_id, PlaywrightPage(page), allow_domains=allow_domains,
+            session_id, adapter, allow_domains=allow_domains,
             require_approval=require_approval, scrub_pii=scrub_pii,
             allow_private=allow_private,
         )

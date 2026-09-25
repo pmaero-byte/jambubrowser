@@ -29,6 +29,7 @@ MCP tools mirror it: `browser_session_open`, `browser_session_snapshot`,
 | Rail | Behaviour |
 |---|---|
 | **Domain allowlist** | Sessions fail closed (non-empty list required). Navigations, redirects, *and link clicks* are checked; a disallowed landing page is reverted to `about:blank` and recorded as a violation. |
+| **Request-level network policy** | Every page request is intercepted through Playwright routing: subresources, `fetch`/XHR, redirects, API steps, and WebSockets are checked against the same allowlist. Unsafe protocols, disallowed hosts, and private-IP DNS rebinding are aborted. The session info and flow report include a bounded policy report. |
 | **Approval gates** | Sessions can require `approve=true` for input actions; a risk classifier (buy/pay/delete/send/transfer/subscribe/confirm…) **always** requires approval, even when the session doesn't — "Delete account" cannot be clicked by an injected instruction. |
 | **PII scrubbing** | Snapshot text, element names and hrefs pass through the shared `PIIDetector` before an agent sees them (`scrub_pii: false` opts out). |
 | **Receipts** | Every step — including refusals — is appended with `outcome: ok/blocked/reverted`, hash-chained via MeshPay's JS-faithful serializer. The log has a Merkle root and can be signed into a verifiable evidence bundle. |
@@ -54,12 +55,6 @@ close: 200
 
 ## What is not done yet
 
-- **Request-level blocking.** The allowlist is enforced at navigation/click
-  level today; a production deployment should also intercept network
-  requests (Playwright `page.route`) so sub-resources and JS-initiated
-  fetches cannot reach disallowed hosts.
-- **Human takeover.** No live-view handoff for CAPTCHA/2FA flows yet
-  (the desktop app's pane is the natural place).
 - **Persistent auth profiles.** Sessions are ephemeral by design; "log in
   once, reuse later" is not implemented (vault + form-filler exist to build
   it on).

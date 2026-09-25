@@ -32,6 +32,13 @@ local product in as few calls as possible, then debug what it finds.
   metadata for PyPI/Homebrew (`docs/PUBLISHING.md`).
 - Tests: backend +~180 (flow/debug/plan/codegen/monitors/dev-server/packaging),
   frontend +~20 (screencast/takeover/native-view/flow-monitors).
+- **Request-level browser network policy** — sessions install Playwright routing
+  before navigation and apply the explicit host allowlist to subresources,
+  `fetch`/XHR, API requests, redirects, and WebSockets. Unsafe protocols,
+  disallowed hosts, private-IP DNS rebinding, redirect loops, and unsupported
+  WebSocket routing fail closed. Session and flow reports include a bounded
+  network-policy audit.
+
 
 ### Fixed — payment double-spend race + adversarial hardening of the new surfaces
 

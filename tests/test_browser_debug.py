@@ -1,7 +1,11 @@
 """Unit tests for the pure browser-debugging helpers."""
 from __future__ import annotations
 
+import asyncio
+
+from backend.modules.browser_agent import PlaywrightPage
 from backend.modules.browser_debug import (
+    NetworkPolicy,
     SourceMapData,
     compile_network,
     decode_vlq,
@@ -46,6 +50,160 @@ class TestNetwork:
 
     def test_empty_network(self):
         assert compile_network(None) == []
+
+
+class TestRequestPolicy:
+    def test_blocks_non_http_protocols_and_disallowed_hosts(self):
+        policy = NetworkPolicy(["example.com"], resolver=lambda host: ["93.184.216.34"])
+        assert policy.decide("ftp://example.com/file").reason == "blocked_protocol"
+        assert policy.decide("file:///etc/passwd").reason == "blocked_protocol"
+        assert policy.decide("https://evil.test/x").reason == "blocked_domain"
+
+    def test_subresources_fetch_xhr_and_images_use_same_policy(self):
+        policy = NetworkPolicy(["example.com"], resolver=lambda host: ["93.184.216.34"])
+        for kind in ("image", "script", "font", "fetch", "xhr"):
+            decision = policy.decide("https://cdn.evil.test/a", kind=kind)
+            assert decision.allowed is False
+            assert decision.reason == "blocked_domain"
+
+    def test_private_literal_and_dns_rebinding_are_blocked(self):
+        policy = NetworkPolicy(["example.com", "127.0.0.1"], resolver=lambda host: ["127.0.0.1"])
+        assert policy.decide("http://127.0.0.1/").reason == "private_address"
+        assert policy.decide("https://example.com/").reason == "private_address"
+
+    def test_websocket_protocol_and_redirect_destination_are_checked(self):
+        policy = NetworkPolicy(["example.com"], resolver=lambda host: ["93.184.216.34"])
+        assert policy.decide("wss://example.com/socket", kind="websocket").allowed is True
+        assert policy.decide("https://evil.test/after-redirect").reason == "blocked_domain"
+
+    def test_allow_private_is_explicit_and_report_is_bounded(self):
+        policy = NetworkPolicy(["localhost", "127.0.0.1"], allow_private=True, max_events=2)
+        assert policy.decide("http://127.0.0.1:3000/").allowed is True
+        for i in range(4):
+            policy.decide(f"https://evil.test/{i}")
+        report = policy.report()
+        assert len(report["requests_seen"]) == 2
+        assert len(report["blocked_requests"]) == 2
+        assert report["allow_private"] is True
+        assert report["websocket_supported"] is None
+
+
+class _Request:
+    def __init__(self, url, method="GET", resource_type="document"):
+        self.url, self.method, self.resource_type = url, method, resource_type
+
+
+class _Route:
+    def __init__(self, request):
+        self.request = request
+        self.action = None
+        self.error_code = None
+
+    async def abort(self, error_code=None):
+        self.action = "abort"
+        self.error_code = error_code
+
+    async def continue_(self):
+        self.action = "continue"
+
+    async def fulfill(self, **kwargs):
+        self.action = "fulfill"
+
+
+class _WebSocketRoute:
+    def __init__(self, url):
+        self.url = url
+        self.action = None
+        self.close_code = None
+
+    async def close(self, code=None, reason=None):
+        self.action, self.close_code = "close", code
+
+    async def connect_to_server(self):
+        self.action = "connect"
+
+
+class _PlaywrightPage:
+    def __init__(self):
+        self.context = self
+        self.http_handler = None
+        self.websocket_handler = None
+
+    def on(self, *_args):
+        pass
+
+    async def route(self, _pattern, handler):
+        self.http_handler = handler
+
+    async def route_web_socket(self, _pattern, handler):
+        self.websocket_handler = handler
+
+
+
+class _Response:
+    def __init__(self, status, headers=None, text=""):
+        self.status = status
+        self.ok = status < 400
+        self.headers = headers or {}
+        self._text = text
+
+    async def text(self):
+        return self._text
+
+
+class _RequestContext:
+    def __init__(self, response):
+        self.response = response
+        self.calls = []
+
+    async def fetch(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+        return self.response
+
+
+class TestRequestRouting:
+    def test_route_aborts_disallowed_subresource_and_allows_allowed_request(self):
+        async def check():
+            raw = _PlaywrightPage()
+            policy = NetworkPolicy(["example.com"], resolver=lambda host: ["93.184.216.34"])
+            page = PlaywrightPage(raw, network_policy=policy)
+            await page.setup_network({})
+            assert policy.report()["enforced"] is True
+            blocked = _Route(_Request("https://evil.test/pixel.png", resource_type="image"))
+            allowed = _Route(_Request("https://example.com/app.js", resource_type="script"))
+            await raw.http_handler(blocked)
+            await raw.http_handler(allowed)
+            assert (blocked.action, blocked.error_code) == ("abort", "blockedbyclient")
+            assert allowed.action == "continue"
+        asyncio.run(check())
+
+    def test_api_context_disables_redirects_and_blocks_destination(self):
+        async def check():
+            response = _Response(302, {"location": "https://evil.test/next"})
+            request_ctx = _RequestContext(response)
+            raw = _PlaywrightPage()
+            raw.context = type("Context", (), {"request": request_ctx})()
+            policy = NetworkPolicy(["example.com"], resolver=lambda host: ["93.184.216.34"])
+            page = PlaywrightPage(raw, network_policy=policy)
+            result = await page.http_request("GET", "https://example.com/start")
+            assert result["blocked"] is True
+            assert result["reason"] == "blocked_domain"
+            assert request_ctx.calls[0][1]["max_redirects"] == 0
+        asyncio.run(check())
+
+    def test_websocket_route_closes_disallowed_destination(self):
+        async def check():
+            raw = _PlaywrightPage()
+            policy = NetworkPolicy(["example.com"], resolver=lambda host: ["93.184.216.34"])
+            page = PlaywrightPage(raw, network_policy=policy)
+            await page.setup_network({})
+            blocked = _WebSocketRoute("wss://evil.test/socket")
+            allowed = _WebSocketRoute("wss://example.com/socket")
+            await raw.websocket_handler(blocked)
+            await raw.websocket_handler(allowed)
+            assert (blocked.action, blocked.close_code) == ("close", 1008)
+            assert allowed.action == "connect"
+        asyncio.run(check())
 
 
 class TestDomDiff:

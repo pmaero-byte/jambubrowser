@@ -1,6 +1,6 @@
 # Jambubrowser Improvement Plan — build, debug, and improve products with AI
 
-**Status:** implemented through `main@7705cea` unless marked otherwise.
+**Status:** implemented through `main@91c5e7f` unless marked otherwise.
 **Scope:** the agent-driven browser-testing platform: one-call test flows,
 debugging telemetry, authoring, CI/CLI integration, and the desktop live view.
 **Test evidence:** backend 1461 passed / 9 skipped; frontend 393 passed;
@@ -187,8 +187,8 @@ investment, in order: (a) `test.step` block scoping for shared setup,
 option, (c) data-driven `test.each` expansion into matrix variants.
 
 ### 3.3 Suggested next increments (all finishable)
-1. `jambu watch` — rerun a flow file on local file change (dev-loop staple).
-2. Flow-monitor UI panel parity with the audit Monitors panel.
-3. Token accounting: per-call token estimates on flow reports.
-4. Coverage: export `evaluate`-free flows only (flag JS-dependent steps).
-5. Publish `jambu` to PyPI/Homebrew so `jambu test` is one install away.
+1. Coverage: export `evaluate`-free flows only (flag JS-dependent steps) and
+   report uncovered assertions/error states.
+2. Improve importer fidelity for `test.step`, `storageState`/fixture seeding,
+   `test.each`, page objects, and parameterized environments.
+3. Publish `jambu` to PyPI/Homebrew so `jambu test` is one install away.

@@ -141,6 +141,16 @@ report.
 
 ## Debugging capabilities (M1)
 
+### Request-level network enforcement
+
+Every session installs Playwright request routing before the first navigation.
+The same policy covers page resources, `fetch`/XHR, API steps, redirects and
+WebSockets. Disallowed hosts and unsafe protocols are aborted; public hostnames
+are DNS-resolved to reject private-address rebinding. `allow_private: true` is
+the explicit exception and still requires the host to be in the allowlist.
+The session `info` response and flow report include a bounded `network_policy`
+report with allowed domains, request decisions, and blocked requests.
+
 ### Request interception / API mocking
 Pass a `network` policy to run the app in any state (error, empty, slow, offline):
 

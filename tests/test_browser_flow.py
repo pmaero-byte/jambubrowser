@@ -776,6 +776,7 @@ class TestArtifactsAndContext:
         ))
         assert captured["context_options"]["storage_state"] == {"cookies": [], "origins": []}
         assert captured["context_options"]["record_har_path"].endswith("network.har")
+        assert captured["context_options"]["service_workers"] == "block"
         assert captured["trace_started"] is True
 
         result = run(service.close(session.id))

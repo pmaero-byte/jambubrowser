@@ -14,13 +14,177 @@ Pure, dependency-free utilities used by the browser flow runner:
 """
 from __future__ import annotations
 
+import asyncio
 import fnmatch
+import ipaddress
 import re
+import socket
+from dataclasses import dataclass
 from typing import Any, Optional
 from urllib.parse import urlparse
 
+
+_ALLOWED_REQUEST_SCHEMES = {"http", "https", "ws", "wss"}
+_BROWSER_INTERNAL_SCHEMES = {"about", "data", "blob"}
+
+
+@dataclass(frozen=True)
+class NetworkDecision:
+    allowed: bool
+    reason: str
+    host: str = ""
+    scheme: str = ""
+    detail: str = ""
+
+
+def host_matches_allowlist(host: str, allow_domains: list[str]) -> bool:
+    """Match a host against exact domains/subdomains, never a wildcard."""
+    host = (host or "").lower().rstrip(".")
+    if not host:
+        return False
+    for domain in allow_domains or []:
+        domain = str(domain).strip().lower().lstrip(".")
+        if domain and domain != "*" and (host == domain or host.endswith("." + domain)):
+            return True
+    return False
+
+
+def _ip_is_non_public(address: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        return False
+    return bool(
+        not ip.is_global
+    )
+
+
+class NetworkPolicy:
+    """Fail-closed policy applied to every browser-originated request.
+
+    The domain check is independent of navigation checks: page resources,
+    ``fetch``/XHR, redirects and WebSockets all pass through this object.
+    Hostnames are resolved for public-host requests to prevent DNS rebinding
+    into RFC1918/loopback/link-local space. A resolver can be injected for
+    deterministic tests.
+    """
+
+    def __init__(self, allow_domains: list[str], *, allow_private: bool = False,
+                 resolver=None, max_events: int = 100):
+        self.allow_domains = [str(d).strip().lower() for d in allow_domains if str(d).strip()]
+        self.allow_private = bool(allow_private)
+        self._resolver = resolver or self._default_resolver
+        self.max_events = max_events
+        self.seen: list[dict] = []
+        self.blocked: list[dict] = []
+        self._websocket_supported: Optional[bool] = None
+        self._routing_installed = False
+
+    @staticmethod
+    def _default_resolver(host: str) -> list[str]:
+        infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+        return [str(info[4][0]) for info in infos]
+
+    def _record(self, decision: NetworkDecision, method: str, kind: str) -> None:
+        event = {
+            "allowed": decision.allowed, "reason": decision.reason,
+            "method": method, "kind": kind, "scheme": decision.scheme,
+            "host": decision.host,
+            "url": f"{decision.scheme}://{decision.host}" if decision.host else decision.scheme,
+            "detail": decision.detail,
+        }
+        self.seen.append(event)
+        if not decision.allowed:
+            self.blocked.append(event)
+        if len(self.seen) > self.max_events:
+            del self.seen[: len(self.seen) - self.max_events]
+        if len(self.blocked) > self.max_events:
+            del self.blocked[: len(self.blocked) - self.max_events]
+
+    def decide(self, url: str, *, method: str = "GET", kind: str = "http") -> NetworkDecision:
+        """Return an allow/deny decision without performing network I/O itself."""
+        raw = str(url or "")
+        try:
+            parsed = urlparse(raw)
+            scheme = (parsed.scheme or "").lower()
+            host = (parsed.hostname or "").lower().rstrip(".")
+        except Exception:
+            return NetworkDecision(False, "invalid_url", detail="URL could not be parsed")
+
+        if not raw or len(raw) > 8192:
+            decision = NetworkDecision(False, "invalid_url", scheme=scheme, host=host,
+                                       detail="URL is empty or exceeds 8192 characters")
+            self._record(decision, method, kind)
+            return decision
+        if scheme in _BROWSER_INTERNAL_SCHEMES and not host:
+            decision = NetworkDecision(True, "browser_internal", scheme=scheme, host=host)
+            self._record(decision, method, kind)
+            return decision
+        if scheme not in _ALLOWED_REQUEST_SCHEMES:
+            decision = NetworkDecision(False, "blocked_protocol", scheme=scheme, host=host,
+                                       detail=f"protocol {scheme or '(none)'} is not allowed")
+            self._record(decision, method, kind)
+            return decision
+        if not host:
+            decision = NetworkDecision(False, "invalid_url", scheme=scheme, host=host,
+                                       detail="request URL has no hostname")
+            self._record(decision, method, kind)
+            return decision
+        if not host_matches_allowlist(host, self.allow_domains):
+            decision = NetworkDecision(False, "blocked_domain", scheme=scheme, host=host,
+                                       detail="host is outside the session allowlist")
+            self._record(decision, method, kind)
+            return decision
+
+        try:
+            literal_ip = ipaddress.ip_address(host)
+        except ValueError:
+            literal_ip = None
+        if literal_ip is not None:
+            if literal_ip.is_unspecified:
+                decision = NetworkDecision(False, "private_address", scheme=scheme, host=host,
+                                           detail="unspecified address is never routable")
+                self._record(decision, method, kind)
+                return decision
+            if _ip_is_non_public(host) and not self.allow_private:
+                decision = NetworkDecision(False, "private_address", scheme=scheme, host=host,
+                                           detail="private, loopback, or reserved address")
+                self._record(decision, method, kind)
+                return decision
+        else:
+            try:
+                addresses = self._resolver(host)
+            except Exception as exc:
+                decision = NetworkDecision(False, "dns_resolution_failed", scheme=scheme,
+                                           host=host, detail=f"DNS lookup failed: {exc}"[:160])
+                self._record(decision, method, kind)
+                return decision
+            if not addresses or (any(_ip_is_non_public(str(address)) for address in addresses)
+                                 and not self.allow_private):
+                decision = NetworkDecision(False, "private_address", scheme=scheme, host=host,
+                                           detail="hostname resolves to a non-public address")
+                self._record(decision, method, kind)
+                return decision
+
+        decision = NetworkDecision(True, "allowed", scheme=scheme, host=host)
+        self._record(decision, method, kind)
+        return decision
+
+    def report(self) -> dict:
+        return {
+            "enforced": self._routing_installed,
+            "allow_domains": list(self.allow_domains),
+            "allow_private": self.allow_private,
+            "allowed_protocols": sorted(_ALLOWED_REQUEST_SCHEMES),
+            "browser_internal_protocols": sorted(_BROWSER_INTERNAL_SCHEMES),
+            "websocket_supported": self._websocket_supported,
+            "requests_seen": list(self.seen),
+            "blocked_requests": list(self.blocked),
+        }
+
+
 # ---------------------------------------------------------------------------
-# Network policy
+# Network mocks/fails/delays (flow-level test controls)
 # ---------------------------------------------------------------------------
 
 _METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
