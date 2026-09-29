@@ -301,6 +301,91 @@ class TestReceipts:
 # Service lifecycle
 # ---------------------------------------------------------------------------
 
+class TestCompactSnapshot:
+    """The observation projector, wired to the live session snapshot path.
+
+    ``compact_observation`` used to be imported by the agent and never
+    called, so nothing exercised it end to end.
+    """
+
+    def test_default_snapshot_is_unchanged(self):
+        session = make_session()
+        seed_elements(session.page)
+        result = run(session.snapshot())
+        assert result["count"] == 4
+        assert len(result["elements"]) == 4      # full catalog, not a projection
+
+    def test_compact_returns_rows_not_elements(self):
+        session = make_session()
+        seed_elements(session.page)
+        view = run(session.snapshot(compact=True))
+        assert "elements" not in view
+        assert view["columns"] == ["ref", "role", "name"]
+        assert view["shown"] == 4
+        assert view["total"] == 4
+        assert view["tokens_estimate"] > 0
+
+    def test_compact_still_refreshes_the_catalog(self):
+        """A compact read must leave ``act`` able to resolve the same refs."""
+        session = make_session()
+        seed_elements(session.page)
+        view = run(session.snapshot(compact=True))
+        ref = view["rows"][0][0]
+        assert ref in session.catalog
+        result = run(session.act("click", ref, approve=True))
+        assert result["outcome"] == "ok"
+
+    def test_first_delta_lists_rows_rather_than_reporting_all_added(self):
+        """With no previous catalog a delta would be a lie ("everything added")."""
+        session = make_session()
+        seed_elements(session.page)
+        view = run(session.snapshot(compact=True, delta=True))
+        assert "rows" in view
+        assert "delta" not in view
+        assert view["shown"] == 4
+
+    def test_delta_reports_only_what_moved(self):
+        session = make_session()
+        seed_elements(session.page)
+        run(session.snapshot(compact=True))          # establishes a baseline
+        page = session.page
+        page.elements[3]["value"] = "typed@example.com"   # the Email input
+        page.elements.append({
+            "ref": "@e5", "tag": "a", "role": "", "type": "",
+            "name": "Sign out", "href": "https://example.com/out",
+        })
+        view = run(session.snapshot(compact=True, delta=True))
+        assert "rows" not in view
+        assert view["delta"]["counts"]["added"] == 1
+        assert view["delta"]["counts"]["changed"] == 1
+        assert view["shown"] == 2
+        assert any("Sign out" in cell for cell in view["delta"]["added"][0])
+
+    def test_query_and_roles_narrow_through_the_session(self):
+        session = make_session()
+        seed_elements(session.page)
+        view = run(session.snapshot(compact=True, observe={"query": "email"}))
+        assert view["matched"] == 1
+        assert "Email" in view["rows"][0]
+
+    def test_unknown_observe_option_is_refused_with_the_valid_set(self):
+        session = make_session()
+        seed_elements(session.page)
+        with pytest.raises(SessionRefused) as e:
+            run(session.snapshot(compact=True, observe={"nonsense": 1}))
+        assert e.value.reason == "invalid_observation"
+        assert "nonsense" in e.value.detail
+
+    def test_pii_is_still_scrubbed_in_a_compact_observation(self):
+        """The projection must not become a scrubbing bypass."""
+        session = make_session()
+        seed_elements(session.page)
+        view = run(session.snapshot(compact=True, observe={"text": "contact"}))
+        blob = str(view)
+        assert "alice@example.com" not in blob
+        assert "555-123-4567" not in blob
+
+
 class TestService:
     def test_session_caps_and_close(self):
         service = BrowserAgentService(max_sessions=1)
@@ -404,3 +489,56 @@ class TestRoutes:
     def test_unknown_session_is_404(self, client):
         assert client.get("/browser/sessions/nope").status_code == 404
         assert client.get("/browser/sessions/nope/snapshot").status_code == 404
+
+    def test_snapshot_compact_query_params(self, client, monkeypatch):
+        session = self._install_session(monkeypatch)
+        seed_elements(session.page)
+        sid = session.id
+
+        full = client.get(f"/browser/sessions/{sid}/snapshot").json()
+        assert "elements" in full                     # default unchanged
+
+        compact = client.get(
+            f"/browser/sessions/{sid}/snapshot",
+            params={"compact": "true", "query": "email"},
+        )
+        assert compact.status_code == 200
+        body = compact.json()
+        assert "elements" not in body
+        assert body["matched"] == 1
+        assert body["columns"] == ["ref", "role", "name"]
+
+        by_role = client.get(
+            f"/browser/sessions/{sid}/snapshot",
+            params={"compact": "true", "roles": "button", "fields": "ref,name"},
+        ).json()
+        assert by_role["matched"] == 1                 # only "Delete account"
+        assert by_role["columns"] == ["ref", "name"]
+
+        # 'all' needs every word in one element; 'any' is a candidate set.
+        strict = client.get(
+            f"/browser/sessions/{sid}/snapshot",
+            params={"compact": "true", "query": "email delete"},
+        ).json()
+        assert strict["matched"] == 0
+        loose = client.get(
+            f"/browser/sessions/{sid}/snapshot",
+            params={"compact": "true", "query": "email delete", "match": "any"},
+        ).json()
+        assert loose["matched"] == 2
+
+    def test_snapshot_delta_over_http(self, client, monkeypatch):
+        session = self._install_session(monkeypatch)
+        seed_elements(session.page)
+        sid = session.id
+        client.get(f"/browser/sessions/{sid}/snapshot")   # baseline
+
+        session.page.elements.append({
+            "ref": "@e5", "tag": "a", "role": "", "type": "",
+            "name": "Sign out", "href": "https://example.com/out",
+        })
+        body = client.get(
+            f"/browser/sessions/{sid}/snapshot", params={"delta": "true"},
+        ).json()
+        assert body["delta"]["counts"]["added"] == 1
+        assert body["shown"] == 1

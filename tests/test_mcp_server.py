@@ -353,6 +353,65 @@ def test_mcp_live_e2e():
     assert rc == 0
 
 
+def test_snapshot_tool_exposes_compact_arguments():
+    """The compact projection must be reachable from the MCP surface.
+
+    Same tool, extra optional args — so the tool count (and every doc that
+    quotes it) stays put.
+    """
+    async def go():
+        async with _stdio_session() as s:
+            tools_resp = await s.list_tools()
+            return tools_resp.tools
+
+    by_name = {t.name: t for t in asyncio.run(go())}
+    props = by_name["browser_session_snapshot"].inputSchema.get("properties", {})
+    for arg in ("compact", "delta", "query", "roles", "max_tokens"):
+        assert arg in props, f"browser_session_snapshot must accept {arg!r}"
+
+
+def test_render_compact_surfaces_omissions():
+    """A budgeted view must disclose what it dropped.
+
+    Silently trimming rows would let a model believe it saw the whole page.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from backend.mcp_server import _render_compact
+
+    rows_view = _render_compact({
+        "url": "https://example.com/", "title": "Page",
+        "columns": ["ref", "role", "name"],
+        "total": 40, "matched": 40, "shown": 2, "hidden_omitted": 3,
+        "rows": [["@e1", "button", "Buy now"]],
+        "truncated": True, "omitted": ["38 further matches"],
+        "hint": "narrow with query=…", "tokens_estimate": 42,
+    })
+    assert "@e1" in rows_view and "Buy now" in rows_view
+    assert "38 further matches" in rows_view
+    assert "3 hidden" in rows_view
+    assert "42" in rows_view                       # the token estimate
+
+    delta_view = _render_compact({
+        "url": "https://example.com/", "title": "Page",
+        "columns": ["ref", "role", "name"],
+        "total": 5, "matched": 5, "shown": 2,
+        "delta": {
+            "columns": ["ref", "role", "name"],
+            "added": [["@e5", "link", "Sign out"]],
+            "changed": [{"before": ["@e1", "button", "Save"],
+                         "after": ["@e1", "button", "Save"]}],
+            "removed": ["Cancel"],
+            "counts": {"added": 1, "changed": 1, "removed": 1},
+        },
+        "tokens_estimate": 30,
+    })
+    assert "Sign out" in delta_view
+    assert "changed" in delta_view
+    assert "Cancel" in delta_view
+    # A delta view must not also dump the full row listing.
+    assert "columns:" not in delta_view
+
+
 # ---------------------------------------------------------------------------
 # Standalone runner
 # ---------------------------------------------------------------------------

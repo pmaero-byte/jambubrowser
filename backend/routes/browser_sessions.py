@@ -211,10 +211,36 @@ async def navigate(session_id: str, req: NavigateRequest):
 
 
 @router.get("/{session_id}/snapshot")
-async def snapshot(session_id: str):
+async def snapshot(session_id: str, compact: bool = False, delta: bool = False,
+                   query: str = "", roles: Optional[str] = None,
+                   fields: Optional[str] = None, match: str = "all",
+                   text: Optional[str] = None, max_tokens: int = 0):
+    """Full page state, or a token-budgeted projection of it.
+
+    ``compact=true`` runs the state through the observation projector:
+    ``columns``/``rows`` instead of per-element dicts, optionally filtered by
+    ``query`` (matched against name/value/href/role/type), ``roles``, and
+    ``fields``. ``match=any`` treats the query words as a candidate set
+    instead of requiring all of them. ``delta=true`` reports only what moved
+    since the previous observation — the cheapest way to ask "did that click do
+    anything?" after a mutating step. The default response is unchanged.
+    """
     session = _get(session_id)
+    observe: dict = {}
+    if query:
+        observe["query"] = query
+    if roles:
+        observe["roles"] = [r.strip() for r in roles.split(",") if r.strip()]
+    if fields:
+        observe["fields"] = [f.strip() for f in fields.split(",") if f.strip()]
+    if match and match != "all":
+        observe["match"] = match
+    if text:
+        observe["text"] = text
+    if max_tokens:
+        observe["max_tokens"] = max_tokens
     try:
-        return await session.snapshot()
+        return await session.snapshot(compact=compact, delta=delta, observe=observe)
     except SessionRefused as refusal:
         raise _refusal_to_http(refusal)
 

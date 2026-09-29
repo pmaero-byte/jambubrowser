@@ -77,6 +77,11 @@ MAX_BATCH_ACTS = 25
 MAX_UPLOAD_FILES = 10
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 MAX_FRAMES = 12
+# Options ``snapshot(compact=…)`` forwards to the pure observation projector.
+_OBSERVE_OPTIONS = frozenset({
+    "query", "roles", "fields", "match", "changed_since",
+    "include_hidden", "limit", "text", "max_tokens",
+})
 # How many times a flow may silently re-observe to rescue a stale target
 # before it gives up and asks the agent for a fresh observation.
 DEFAULT_REOBSERVE_BUDGET = 3
@@ -1539,11 +1544,39 @@ class BrowserAgentSession:
             state["frames"] = raw["frames"]
         return state
 
-    async def snapshot(self) -> dict:
+    async def snapshot(self, *, compact: bool = False, delta: bool = False,
+                       observe: Optional[dict] = None) -> dict:
+        """Perceive the page, optionally projected down to a token budget.
+
+        The full state is what ``act`` resolves refs against and what the
+        evidence bundle records, so it stays the default. ``compact``
+        returns the same page through :func:`compact_observation` — column
+        rows instead of dicts, a relevance filter and a hard token ceiling
+        — for a caller that only needs to *read* the page rather than act
+        on every row. ``delta`` additionally reports only what moved since
+        the previous observation, which is the question a caller actually
+        has right after a mutating step.
+        """
+        previous = list(self.catalog.values())
         state = await self._read_state()
         self._record("snapshot", "ok", url=self.last_url,
                      detail=f"{state['count']} elements")
-        return state
+        if not compact and not delta:
+            return state
+        options = dict(observe or {})
+        unknown = sorted(set(options) - _OBSERVE_OPTIONS)
+        if unknown:
+            raise SessionRefused(
+                "invalid_observation",
+                f"unknown observe option(s): {', '.join(unknown)}; "
+                f"expected any of {', '.join(sorted(_OBSERVE_OPTIONS))}",
+            )
+        if delta:
+            # An absent previous catalog must stay None. Diffing against an
+            # empty list would report the whole page as "added" instead of
+            # listing its rows, which is the opposite of a delta.
+            options.setdefault("changed_since", previous or None)
+        return compact_observation(state, **options)
 
     async def act(self, action: str, ref: str, *, text: str = "",
                   approve: bool = False, selector: str = "",

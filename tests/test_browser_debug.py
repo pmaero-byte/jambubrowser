@@ -5,14 +5,20 @@ import asyncio
 
 from backend.modules.browser_agent import PlaywrightPage
 from backend.modules.browser_debug import (
+    DEFAULT_OBSERVE_FIELDS,
+    MAX_OBSERVE_ROWS,
     NetworkPolicy,
     SourceMapData,
+    compact_observation,
     compile_network,
     decode_vlq,
     diff_elements,
+    diff_view,
+    element_identity,
     map_url_for,
     match_network,
     parse_stack_frames,
+    search_text,
     serialize_body,
 )
 
@@ -259,3 +265,176 @@ class TestSourceMaps:
     def test_map_url_for(self):
         assert map_url_for("https://x/app.js") == "https://x/app.js.map"
         assert map_url_for("https://x/app.js?v=1") == "https://x/app.js.map"
+
+
+def _state(**overrides) -> dict:
+    """A small page: one button, one visible input, one hidden input."""
+    state = {
+        "url": "https://example.com/form",
+        "title": "Form",
+        "text": "Order confirmed\nThanks for your purchase\nFooter text",
+        "elements": [
+            {"ref": "@e1", "tag": "button", "role": "button",
+             "name": "Submit order", "value": "", "visible": True, "disabled": False},
+            {"ref": "@e2", "tag": "input", "role": "input", "name": "Email",
+             "value": "a@b.com", "visible": True, "disabled": False},
+            {"ref": "@e3", "tag": "input", "role": "input", "name": "Secret",
+             "value": "", "visible": False, "disabled": False},
+        ],
+        "count": 3,
+    }
+    state.update(overrides)
+    return state
+
+
+class TestCompactObservation:
+    def test_projects_to_positional_rows_and_counts_the_hidden(self):
+        view = compact_observation(_state())
+        assert view["columns"] == list(DEFAULT_OBSERVE_FIELDS)
+        assert view["total"] == 3
+        assert view["hidden_omitted"] == 1        # the hidden input is dropped
+        assert view["matched"] == 2
+        assert view["shown"] == 2
+        assert view["url"] == "https://example.com/form"
+        assert [row[0] for row in view["rows"]] == ["@e1", "@e2"]
+        # Never the raw catalog: this is the whole point of the projection.
+        assert "elements" not in view
+
+    def test_include_hidden_opts_back_in(self):
+        view = compact_observation(_state(), include_hidden=True)
+        assert view["hidden_omitted"] == 0
+        assert view["matched"] == 3
+
+    def test_ref_is_always_kept_but_unknown_fields_are_dropped(self):
+        view = compact_observation(_state(), fields=["name", "bogus"])
+        # 'ref' is prepended because the agent needs a handle to act on;
+        # 'bogus' is not a real field and must not reach the output.
+        assert view["columns"] == ["ref", "name"]
+
+    def test_query_narrows_the_catalog(self):
+        view = compact_observation(_state(), query="email")
+        assert view["matched"] == 1
+        assert "Email" in view["rows"][0]
+
+    def test_roles_filter_by_role_or_tag(self):
+        view = compact_observation(_state(), roles=["input"])
+        assert view["matched"] == 1               # hidden input excluded
+        assert "Email" in view["rows"][0]
+        assert compact_observation(_state(), roles=["button"])["matched"] == 1
+
+    def test_match_any_is_a_candidate_set(self):
+        both = compact_observation(_state(), query="email submit")
+        assert both["matched"] == 0               # 'all' semantics: needs both
+        either = compact_observation(_state(), query="email submit", match="any")
+        assert either["matched"] == 2
+
+    def test_text_search_returns_only_matching_lines(self):
+        view = compact_observation(_state(), text="order confirmed")
+        assert view["text"]["hit"] is True
+        assert any("Order confirmed" in line for line in view["text"]["matches"])
+
+    def test_text_miss_is_reported_rather_than_omitted(self):
+        """A search that ran and found nothing must say so.
+
+        Dropping the key would be indistinguishable from "no search
+        requested", and the model would retry the same query forever.
+        """
+        view = compact_observation(_state(), text="nonexistent phrase")
+        assert view["text"]["hit"] is False
+        assert view["text"]["matches"] == []
+
+    def test_max_tokens_shrinks_rows_and_says_so(self):
+        many = _state(elements=[
+            {"ref": f"@e{i}", "tag": "button", "role": "button",
+             "name": f"Button number {i}", "value": "", "visible": True}
+            for i in range(1, 41)
+        ], count=40)
+        view = compact_observation(many, max_tokens=60)
+        assert view["total"] == 40
+        assert view["shown"] < 40                # rows were dropped
+        assert view["truncated"] is True
+        assert view["omitted"]                    # and the drop is disclosed
+        assert view["hint"]                       # with a way to widen it
+        assert view["tokens_estimate"] > 0
+
+    def test_budget_is_not_reported_as_truncated_when_it_fits(self):
+        view = compact_observation(_state(), max_tokens=10_000)
+        assert view["truncated"] is False
+        assert "omitted" not in view
+
+    def test_row_cap_bounds_a_large_catalog(self):
+        many = _state(elements=[
+            {"ref": f"@e{i}", "tag": "button", "role": "button",
+             "name": f"B{i}", "value": "", "visible": True}
+            for i in range(1, 121)
+        ], count=120)
+        view = compact_observation(many)
+        assert len(view["rows"]) == MAX_OBSERVE_ROWS
+        assert view["matched"] == 120             # the full count is still honest
+
+
+class TestElementIdentity:
+    def test_ignores_query_string_and_trailing_slash(self):
+        """Refs renumber on every read, so identity must key on content.
+
+        Otherwise one inserted node renumbers every later ref and the delta
+        reports the whole page as churn.
+        """
+        a = {"tag": "a", "role": "link", "name": "Next", "href": "https://x.com/next/"}
+        b = {"tag": "a", "role": "link", "name": "Next", "href": "https://x.com/next?utm=1"}
+        assert element_identity(a) == element_identity(b)
+
+    def test_different_content_is_a_different_identity(self):
+        a = {"tag": "a", "role": "link", "name": "Next", "href": "/next"}
+        b = {"tag": "a", "role": "link", "name": "Back", "href": "/next"}
+        assert element_identity(a) != element_identity(b)
+
+
+class TestDiffView:
+    def test_added_changed_removed_with_before_and_after(self):
+        before = [{"ref": "@e1", "tag": "button", "role": "button",
+                   "name": "Save", "value": ""}]
+        after = [
+            {"ref": "@e9", "tag": "button", "role": "button",
+             "name": "Save", "value": "typed"},
+            {"ref": "@e5", "tag": "a", "role": "link", "name": "Done", "href": "/done"},
+        ]
+        delta = diff_view(before, after, fields=["ref", "role", "name"])
+        assert delta["counts"] == {"added": 1, "changed": 1, "removed": 0}
+        assert delta["changed"][0]["before"][0] == "@e1"
+        assert delta["changed"][0]["after"][0] == "@e9"
+        assert delta["added"][0][0] == "@e5"
+        assert delta["columns"] == ["ref", "role", "name"]
+
+    def test_compact_observation_delta_mode_reuses_it(self):
+        before = _state()["elements"]
+        after = [
+            before[0],
+            {**before[1], "value": "typed@example.com"},
+            {"ref": "@e4", "tag": "a", "role": "link", "name": "Done", "href": "/done"},
+        ]
+        view = compact_observation(_state(elements=after), changed_since=before)
+        assert "rows" not in view               # delta mode, not a full listing
+        assert view["delta"]["counts"]["added"] == 1
+        assert view["delta"]["counts"]["changed"] == 1
+        assert view["shown"] == 2               # added + changed, not the page
+
+
+class TestSearchText:
+    def test_returns_matching_lines_with_context(self):
+        found = search_text("Header\nOrder confirmed\nFooter", "order confirmed")
+        assert found["hit"] is True
+        assert found["total_hits"] == 1
+        assert any("Order confirmed" in line for line in found["matches"])
+
+    def test_miss_is_reported_not_silent(self):
+        assert search_text("Header", "nothing here") == {"hit": False, "matches": []}
+
+    def test_empty_inputs_short_circuit(self):
+        assert search_text("", "x") == {}
+        assert search_text("some text", "") == {}
+
+    def test_repeated_lines_are_deduplicated(self):
+        found = search_text("\n".join(["Buy now"] * 50), "buy now")
+        assert found["hit"] is True
+        assert len(found["matches"]) == 1        # one line, not fifty

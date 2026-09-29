@@ -15,6 +15,7 @@ POST /browser/sessions            {allow_domains: ["example.com"], require_appro
 
 POST /browser/sessions/{id}/navigate   {url}          # allowlist-checked
 GET  /browser/sessions/{id}/snapshot                  # catalog: @e1… + scrubbed text
+GET  /browser/sessions/{id}/snapshot?compact=true     # token-budgeted projection
 POST /browser/sessions/{id}/act        {action, ref, text?, approve?}
 GET  /browser/sessions/{id}/receipts                  # hash chain + Merkle root
 POST /browser/sessions/{id}/evidence                  # signed bundle (E3)
@@ -23,6 +24,40 @@ DELETE /browser/sessions/{id}
 
 MCP tools mirror it: `browser_session_open`, `browser_session_snapshot`,
 `browser_session_act`, `browser_session_receipts`, `browser_session_close`.
+
+## Spending fewer tokens on perception
+
+A full snapshot ships every interactive element as a dict plus the scrubbed
+body text, on every read. On a real page that is the single largest line item
+in an agent's context, and nothing in the pipeline budgets for it. The
+snapshot endpoint (and `browser_session_snapshot`) therefore takes an opt-in
+projection:
+
+```
+GET /browser/sessions/{id}/snapshot?compact=true&query=save&roles=button
+```
+
+| Param | Effect |
+|---|---|
+| `compact` | `columns`/`rows` instead of one dict per element, with default-valued cells dropped |
+| `query` | Keep only elements matching these words (name/value/href/role/type); `match=any` gives a candidate set |
+| `roles` | Comma-separated role/tag allowlist, e.g. `button,input` |
+| `fields` | Columns to keep; `ref` is always included since the agent needs a handle |
+| `text` | Return only the page-text lines matching this phrase, instead of 4000 characters |
+| `max_tokens` | Halve the view until it fits the budget |
+| `delta` | Report only what moved **since the previous snapshot** |
+
+`delta` is the cheapest way to answer "did that click do anything?" after a
+mutating step: it returns added/changed/removed rows keyed on element
+*content*, not on refs (which renumber on every read and would otherwise
+report the whole page as churn). On a first snapshot there is nothing to
+compare against, so it degrades to a plain row listing rather than claiming
+every element is new.
+
+The projection never widens what the agent may see — it is applied to the
+same scrubbed state, after the same allowlist and approval rails — and it
+reports what it dropped (`truncated`, `omitted`, `hint`, `tokens_estimate`)
+rather than trimming silently.
 
 ## The rails (what prompt injection cannot do)
 

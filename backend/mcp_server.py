@@ -825,20 +825,100 @@ async def browser_session_open(allow_domains: str, require_approval: bool = True
     )
 
 
+def _render_compact(view: dict) -> str:
+    """Render a compact observation (columns/rows or a delta) for a model.
+
+    The projector already dropped default-valued cells, so cells are joined
+    positionally against ``columns`` rather than as key/value pairs. Any
+    omission the projector reported is surfaced verbatim instead of being
+    silently trimmed — a model that cannot see 12 rows must be told so.
+    """
+    lines = [f"# {view.get('title', '')} — {view.get('url', '')}\n"]
+    columns = view.get("columns") or []
+    delta = view.get("delta")
+
+    def row(cells: list) -> str:
+        return " | ".join(str(c) for c in cells if c not in (None, ""))
+
+    if delta:
+        counts = delta.get("counts") or {}
+        lines.append(
+            f"## changed since last snapshot "
+            f"(+{counts.get('added', 0)} ~{counts.get('changed', 0)} "
+            f"-{counts.get('removed', 0)})\n"
+        )
+        for entry in delta.get("added") or []:
+            lines.append(f"- added `{row(entry)}`")
+        for entry in delta.get("changed") or []:
+            lines.append(f"- changed `{row(entry.get('before', []))}` -> `{row(entry.get('after', []))}`")
+        for name in delta.get("removed") or []:
+            lines.append(f"- removed {name}")
+    else:
+        lines.append(f"## {view.get('shown', 0)} of {view.get('total', 0)} elements")
+        lines.append(f"columns: {' | '.join(columns)}\n")
+        for entry in view.get("rows") or []:
+            lines.append(f"- `{row(entry)}`")
+
+    if view.get("text"):
+        matches = view["text"].get("matches") or []
+        lines.append("\nPage text matches:")
+        lines.extend(f"  {m}" for m in matches)
+
+    footer = []
+    if view.get("hidden_omitted"):
+        footer.append(f"{view['hidden_omitted']} hidden")
+    if view.get("omitted"):
+        footer.append("omitted: " + ", ".join(view["omitted"]))
+    if view.get("hint"):
+        footer.append(view["hint"])
+    if footer:
+        lines.append("\n(" + " — ".join(footer) + ")")
+    lines.append(f"\n~{view.get('tokens_estimate', 0)} tokens")
+    return "\n".join(lines)
+
+
 @mcp.tool()
-async def browser_session_snapshot(session_id: str) -> str:
+async def browser_session_snapshot(session_id: str, compact: bool = False,
+                                   delta: bool = False, query: str = "",
+                                   roles: str = "", max_tokens: int = 0) -> str:
     """
     Perception step: accessibility-style snapshot with a typed element
     catalog (refs @e1…). Act on refs, never on selector guesses.
 
+    Set ``compact`` to get the token-budgeted projection instead of the full
+    catalog: ``columns``/``rows`` rather than one dict per element, narrowed by
+    ``query`` (matched against an element's name/value/href/role) and
+    ``roles`` (comma-separated), and halved until it fits ``max_tokens``.
+    Prefer it on large pages — a 200-element catalog is the single largest
+    line item in your context. Add ``delta`` to report only what moved since
+    the previous snapshot, which is the cheapest way to check whether an act
+    changed anything.
+
     Args:
         session_id: Session from browser_session_open
+        compact: Return the token-budgeted projection instead of the full catalog
+        delta: Report only what changed since the previous snapshot
+        query: Only elements matching these words (compact mode)
+        roles: Comma-separated role/tag allowlist, e.g. "button,input" (compact mode)
+        max_tokens: Shrink the compact view until it fits this budget
     """
+    params: dict = {}
+    if compact or delta:
+        params = {"compact": compact, "delta": delta}
+        if query:
+            params["query"] = query
+        if roles:
+            params["roles"] = roles
+        if max_tokens:
+            params["max_tokens"] = max_tokens
     result = await _call_engine(
-        "GET", f"/browser/sessions/{session_id}/snapshot", timeout=60.0,
+        "GET", f"/browser/sessions/{session_id}/snapshot", json_data=params or None,
+        timeout=60.0,
     )
     if "error" in result:
         return f"Snapshot failed: {result['error']}"
+    if params:
+        return _render_compact(result)
     lines = [f"# {result.get('title', '')} — {result.get('url', '')}\n"]
     for e in (result.get("elements") or [])[:25]:
         risk = f" ⚠{e['risk']}" if e.get("risk") else ""

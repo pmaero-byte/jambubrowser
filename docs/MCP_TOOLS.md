@@ -264,7 +264,7 @@ Args:
 **Signature**
 
 ```python
-browser_session_snapshot(session_id: str)
+browser_session_snapshot(session_id: str, compact: bool = False, delta: bool = False, query: str = '', roles: str = '', max_tokens: int = 0)
 ```
 
 **Description**
@@ -272,8 +272,22 @@ browser_session_snapshot(session_id: str)
 Perception step: accessibility-style snapshot with a typed element
 catalog (refs @e1…). Act on refs, never on selector guesses.
 
+Set ``compact`` to get the token-budgeted projection instead of the full
+catalog: ``columns``/``rows`` rather than one dict per element, narrowed by
+``query`` (matched against an element's name/value/href/role) and
+``roles`` (comma-separated), and halved until it fits ``max_tokens``.
+Prefer it on large pages — a 200-element catalog is the single largest
+line item in your context. Add ``delta`` to report only what moved since
+the previous snapshot, which is the cheapest way to check whether an act
+changed anything.
+
 Args:
     session_id: Session from browser_session_open
+    compact: Return the token-budgeted projection instead of the full catalog
+    delta: Report only what changed since the previous snapshot
+    query: Only elements matching these words (compact mode)
+    roles: Comma-separated role/tag allowlist, e.g. "button,input" (compact mode)
+    max_tokens: Shrink the compact view until it fits this budget
 
 ### `browser_session_telemetry`
 
