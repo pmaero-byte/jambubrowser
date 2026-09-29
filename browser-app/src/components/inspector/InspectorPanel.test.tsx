@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 // Mock the app store
 const mockUseAppStore = vi.hoisted(() => vi.fn());
@@ -19,9 +19,24 @@ vi.mock("motion/react", () => ({
   AnimatePresence: ({ children }: any) => <>{children}</>,
 }));
 
-// Mock KnowledgeMini
+// Mock KnowledgeMini: rendered as a button that drives `onSelectNode` so tests
+// can exercise the node-selection → entity-detail wiring.
 vi.mock("../knowledge/KnowledgeMini", () => ({
-  KnowledgeMini: () => <div data-testid="knowledge-mini">Knowledge Graph</div>,
+  KnowledgeMini: ({ onSelectNode }: any) => (
+    <button data-testid="knowledge-mini" onClick={() => onSelectNode?.("vault")}>
+      Knowledge Graph
+    </button>
+  ),
+}));
+
+vi.mock("../knowledge/EntityDetailPanel", () => ({
+  EntityDetailPanel: ({ entityId, onClose }: any) => (
+    <div data-testid="entity-detail" data-entity-id={entityId}>
+      <button data-testid="entity-detail-close" onClick={onClose}>
+        close
+      </button>
+    </div>
+  ),
 }));
 
 const defaultStore = {
@@ -123,5 +138,25 @@ describe("InspectorPanel", () => {
     const closeBtn = screen.getByTitle("Close inspector");
     closeBtn.click();
     expect(toggleInspector).toHaveBeenCalled();
+  });
+
+  it("mounts EntityDetailPanel for the node selected on the graph", async () => {
+    const { InspectorPanel } = await import("./InspectorPanel");
+    render(<InspectorPanel />);
+    expect(screen.queryByTestId("entity-detail")).toBeNull();
+    fireEvent.click(screen.getByTestId("knowledge-mini"));
+    const detail = await screen.findByTestId("entity-detail");
+    expect(detail.getAttribute("data-entity-id")).toBe("vault");
+  });
+
+  it("unmounts EntityDetailPanel when it is closed", async () => {
+    const { InspectorPanel } = await import("./InspectorPanel");
+    render(<InspectorPanel />);
+    fireEvent.click(screen.getByTestId("knowledge-mini"));
+    await screen.findByTestId("entity-detail");
+    fireEvent.click(screen.getByTestId("entity-detail-close"));
+    await waitFor(() =>
+      expect(screen.queryByTestId("entity-detail")).toBeNull()
+    );
   });
 });

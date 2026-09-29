@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { FolderKanban, Plus, StopCircle, RefreshCw, Clock } from "lucide-react";
+import { FolderKanban, Plus, StopCircle, RefreshCw, Clock, ChevronDown, ChevronRight } from "lucide-react";
 import { Button } from "../ui/button";
 import { localFetch } from "../../utils/api";
+import { MissionResultsViewer } from "./MissionResultsViewer";
 
 interface Mission {
   id: string;
@@ -17,6 +18,8 @@ export function MissionsPanel() {
   const [missions, setMissions] = useState<Mission[]>([]);
   const [loading, setLoading] = useState(false);
   const [newQuery, setNewQuery] = useState("");
+  // Which mission (if any) has its collected results expanded inline.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const loadMissions = async () => {
     setLoading(true);
@@ -127,6 +130,25 @@ export function MissionsPanel() {
                   </Button>
                 )}
               </div>
+
+              <div className="mt-1.5">
+                <button
+                  type="button"
+                  onClick={() => setExpandedId((cur) => (cur === m.id ? null : m.id))}
+                  className="flex items-center gap-1 rounded px-1 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  aria-expanded={expandedId === m.id}
+                  data-testid={`mission-results-toggle-${m.id}`}
+                >
+                  {expandedId === m.id ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                  Results
+                </button>
+              </div>
+
+              {expandedId === m.id && (
+                <div className="mt-1 overflow-hidden rounded border border-border/60 bg-background/40">
+                  <MissionResultsViewer missionId={m.id} />
+                </div>
+              )}
             </motion.div>
           ))}
         </AnimatePresence>

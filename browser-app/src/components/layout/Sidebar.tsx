@@ -20,6 +20,7 @@ import {
   Video,
   Radio,
   Coins,
+  Target,
 } from "lucide-react";
 import { useAppStore, type CanvasTab } from "../../store/appStore";
 import { useAgentWebSocket } from "../../utils/useAgentWebSocket";
@@ -30,6 +31,7 @@ const workspaceNav: { id: CanvasTab; label: string; icon: React.ElementType }[] 
   { id: "logs", label: "Logs", icon: FileText },
   { id: "memory", label: "Memory", icon: Brain },
   { id: "missions", label: "Missions", icon: FolderKanban },
+  { id: "goals", label: "Goals", icon: Target },
   { id: "monitors", label: "Monitors", icon: Radar },
   { id: "qa", label: "QA", icon: FlaskConical },
   { id: "dcm-node", label: "DCM Node", icon: Radio },

@@ -74,6 +74,9 @@ const AgentView = lazy(() =>
 const QaPanel = lazy(() =>
   import("./components/qa/QaPanel").then((m) => ({ default: m.QaPanel }))
 );
+const GoalsPanel = lazy(() =>
+  import("./components/goals/GoalsPanel").then((m) => ({ default: m.GoalsPanel }))
+);
 
 const USER_ID = "default";
 
@@ -200,6 +203,8 @@ export default function App() {
         return <MemoryPanel />;
       case "missions":
         return <MissionsPanel />;
+      case "goals":
+        return <GoalsPanel />;
       case "monitors":
         return <MonitorsView />;
       case "dcm-node":

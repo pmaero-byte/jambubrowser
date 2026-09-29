@@ -5,6 +5,7 @@ export type CanvasTab =
   | "browser"
   | "logs"
   | "missions"
+  | "goals"
   | "monitors"
   | "dcm-node"
   | "meshpay"

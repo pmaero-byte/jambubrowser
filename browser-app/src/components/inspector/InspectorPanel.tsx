@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { PanelRightClose, FileText, Brain, Activity } from "lucide-react";
 import { useAppStore } from "../../store/appStore";
 import { KnowledgeMini } from "../knowledge/KnowledgeMini";
+import { EntityDetailPanel } from "../knowledge/EntityDetailPanel";
 
 export function InspectorPanel() {
   const { activeTab, toggleInspector, messages } = useAppStore();
@@ -50,22 +51,15 @@ export function InspectorPanel() {
               {section.key === "knowledge" && (
                 <>
                   <KnowledgeMini onSelectNode={setSelectedNode} />
-                  <AnimatePresence>
-                    {selectedNode && (
-                      <motion.div
-                        key="selected-pill"
-                        initial={{ opacity: 0, x: -6, height: 0 }}
-                        animate={{ opacity: 1, x: 0, height: "auto" }}
-                        exit={{ opacity: 0, x: -6, height: 0 }}
-                        transition={{ duration: 0.18 }}
-                        className="overflow-hidden"
-                      >
-                        <div className="mt-2 rounded-md bg-muted px-2 py-1 text-xs">
-                          Selected: <span className="text-accent">{selectedNode}</span>
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
+                  {selectedNode && (
+                    <div className="mt-2 h-72">
+                      <EntityDetailPanel
+                        entityId={selectedNode}
+                        onClose={() => setSelectedNode(null)}
+                        onSelectEntity={setSelectedNode}
+                      />
+                    </div>
+                  )}
                 </>
               )}
 

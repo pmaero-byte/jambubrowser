@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 // Mock localFetch
 const mockLocalFetch = vi.hoisted(() => vi.fn());
@@ -14,6 +14,14 @@ vi.mock("motion/react", () => ({
     span: ({ children, ...props }: any) => <span {...props}>{children}</span>,
   },
   AnimatePresence: ({ children }: any) => <>{children}</>,
+}));
+
+// Mock the results viewer so the panel/child wiring can be asserted without
+// hitting /mission/{id}/results.
+vi.mock("./MissionResultsViewer", () => ({
+  MissionResultsViewer: ({ missionId }: any) => (
+    <div data-testid="mission-results" data-mission-id={missionId} />
+  ),
 }));
 
 describe("MissionsPanel", () => {
@@ -100,5 +108,27 @@ describe("MissionsPanel", () => {
     // Stop button should be present for active mission
     const stopButtons = screen.getAllByRole("button");
     expect(stopButtons.length).toBeGreaterThan(0);
+  });
+
+  it("mounts MissionResultsViewer for a mission when results are expanded", async () => {
+    const { MissionsPanel } = await import("./MissionsPanel");
+    render(<MissionsPanel />);
+    await screen.findByText("AI research");
+    expect(screen.queryByTestId("mission-results")).toBeNull();
+    fireEvent.click(screen.getByTestId("mission-results-toggle-1"));
+    const viewer = await screen.findByTestId("mission-results");
+    expect(viewer.getAttribute("data-mission-id")).toBe("1");
+  });
+
+  it("unmounts MissionResultsViewer when results are collapsed again", async () => {
+    const { MissionsPanel } = await import("./MissionsPanel");
+    render(<MissionsPanel />);
+    await screen.findByText("AI research");
+    fireEvent.click(screen.getByTestId("mission-results-toggle-1"));
+    await screen.findByTestId("mission-results");
+    fireEvent.click(screen.getByTestId("mission-results-toggle-1"));
+    await waitFor(() =>
+      expect(screen.queryByTestId("mission-results")).toBeNull()
+    );
   });
 });

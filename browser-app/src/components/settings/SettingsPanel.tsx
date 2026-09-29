@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Settings, Cpu, Shield, Globe, RefreshCw, Check, AlertCircle, HardDrive } from "lucide-react";
+import { Settings, Cpu, Shield, Globe, RefreshCw, Check, AlertCircle, HardDrive, Layers } from "lucide-react";
 import { Button } from "../ui/button";
 import { localFetch } from "../../utils/api";
 import { useAppStore } from "../../store/appStore";
+import { MoaPresetsEditor } from "../llm/MoaPresetsEditor";
 
 const isTauri = typeof window !== "undefined" && "__TAURI__" in window;
 let tauriInvoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
@@ -148,6 +149,18 @@ export function SettingsPanel() {
                   <p className="text-xs text-muted-foreground">No providers available.</p>
                 )}
               </div>
+            </div>
+
+            <div className="rounded-md border border-border bg-card p-3">
+              <div className="mb-2 flex items-center gap-1.5 text-xs font-medium">
+                <Layers size={14} />
+                <span>Mixture-of-Agents Presets</span>
+              </div>
+              <p className="mb-2 text-[10px] text-muted-foreground">
+                Configure how fan-out presets combine reference models with an
+                aggregator. Applies to requests routed to a <code>moa</code> preset.
+              </p>
+              <MoaPresetsEditor availableProviders={providers?.providers ?? []} />
             </div>
 
             {persistentProfile !== null && (

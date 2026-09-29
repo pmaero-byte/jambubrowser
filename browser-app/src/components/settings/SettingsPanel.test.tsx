@@ -7,6 +7,17 @@ vi.mock("../../utils/api", () => ({
   localFetch: mockLocalFetch,
 }));
 
+// Mock the MoA editor so the Settings→MoA wiring can be asserted without the
+// editor's own preset fetch/save calls.
+vi.mock("../llm/MoaPresetsEditor", () => ({
+  MoaPresetsEditor: ({ availableProviders }: any) => (
+    <div
+      data-testid="moa-presets-editor"
+      data-providers={availableProviders.join(",")}
+    />
+  ),
+}));
+
 // Mock motion to avoid animation overhead
 vi.mock("motion/react", () => ({
   motion: {
@@ -113,5 +124,12 @@ describe("SettingsPanel", () => {
     // The Browser Profile section only shows in Tauri environment
     // In jsdom, it won't render, so we just verify the component loads
     expect(screen.getByText("Settings")).toBeDefined();
+  });
+
+  it("mounts MoaPresetsEditor seeded with the loaded providers", async () => {
+    const { SettingsPanel } = await import("./SettingsPanel");
+    render(<SettingsPanel />);
+    const editor = await screen.findByTestId("moa-presets-editor");
+    expect(editor.getAttribute("data-providers")).toBe("ollama,anthropic");
   });
 });
