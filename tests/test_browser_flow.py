@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 
 import pytest
 
@@ -56,6 +57,14 @@ class FlowPage:
         self.source_maps: dict[str, str] = {}
         self.selector_actions: list[tuple] = []
         self.eval_scripts: list[str] = []
+        self.uploads: list[dict] = []
+        self.downloads: list[dict] = []
+        self.dialog_arms: list[tuple] = []
+        self.dialogs: list[dict] = []
+        self.download_info: dict = {}
+        self.wait_functions: list[str] = []
+        self.wait_function_error: str = ""
+        self.snapshot_calls = 0
         self.dom: dict[str, dict] = {
             "#submit": {"visible": True, "text": "Submit", "value": "",
                         "checked": False, "enabled": True, "count": 1},
@@ -68,6 +77,7 @@ class FlowPage:
         self.url = url
 
     async def snapshot(self) -> dict:
+        self.snapshot_calls += 1
         return {
             "url": self.url, "title": self.title,
             "elements": self.elements, "text": self.text,
@@ -126,6 +136,35 @@ class FlowPage:
             if e["ref"] == ref:
                 e["checked"] = checked
 
+    # -- dialogs / uploads / downloads / JS waits ------------------------------
+
+    def arm_dialog(self, accept: bool = True, text: str = "") -> None:
+        """Mirrors PlaywrightPage.arm_dialog: synchronous, one-shot policy."""
+        self.dialog_arms.append((bool(accept), text or ""))
+
+    async def set_input_files(self, ref: str, files) -> dict:
+        self.uploads.append({"mode": "input", "ref": ref, "files": list(files)})
+        return {"uploaded": len(list(files)), "mode": "input"}
+
+    async def upload_via_chooser(self, ref: str, files) -> dict:
+        self.uploads.append({"mode": "chooser", "ref": ref, "files": list(files)})
+        return {"uploaded": len(list(files)), "mode": "chooser"}
+
+    async def download_via_click(self, ref, dest_dir: str = "",
+                                 timeout_ms: int = 0, match: str = "") -> dict:
+        self.downloads.append({"ref": ref, "dest": dest_dir, "match": match})
+        return dict(self.download_info or written_download(dest_dir))
+
+    async def download_via_selector(self, selector, dest_dir: str = "",
+                                    timeout_ms: int = 0, match: str = "") -> dict:
+        self.downloads.append({"selector": selector, "dest": dest_dir, "match": match})
+        return dict(self.download_info or written_download(dest_dir))
+
+    async def wait_for_function(self, script: str, timeout_ms: int = 0) -> None:
+        self.wait_functions.append(script)
+        if self.wait_function_error:
+            raise TimeoutError(self.wait_function_error)
+
     async def reload(self) -> None:
         self.reloaded += 1
 
@@ -148,6 +187,7 @@ class FlowPage:
             "console_errors": list(self.console) + list(self.page_errors),
             "console_errors_detail": detail,
             "console_warnings": [],
+            "dialogs": list(self.dialogs),
             "failed_requests": list(self.failed_requests),
             "bad_responses": [],
         }
@@ -458,6 +498,250 @@ class TestFlowRunner:
         run(session.run_flow([{"action": "navigate", "url": "https://example.com/"}]))
         receipts = session.receipts()
         assert receipts["steps"][-1]["action"] == "run_flow"
+
+
+def written_download(dest_dir: str, name: str = "report.csv") -> dict:
+    """Stand-in for ``PlaywrightPage._store_download``'s metadata dict."""
+    return {
+        "file": name,
+        "url": f"https://example.com/{name}",
+        "bytes": 128,
+        "path": os.path.join(dest_dir or ".", name),
+    }
+
+
+def add_element(page: FlowPage, ref: str, name: str, **extra) -> dict:
+    """Append a catalog entry so a step can resolve a bespoke target."""
+    element = {"ref": ref, "tag": "button", "role": "", "type": "", "name": name,
+               "href": "", "visible": True}
+    element.update(extra)
+    page.elements.append(element)
+    return element
+
+
+# ---------------------------------------------------------------------------
+# Dialogs
+# ---------------------------------------------------------------------------
+
+class TestDialogSteps:
+    def test_dialog_step_arms_acceptance_for_the_next_action(self):
+        page = FlowPage()
+        seed(page)
+        session = make_session(page)
+        report = run(session.run_flow([
+            {"action": "navigate", "url": "https://example.com/"},
+            {"action": "dialog", "dialog": "accept"},
+            {"action": "click", "target": "Delete account", "approve": True},
+        ]))
+        assert report["ok"] is True
+        # The policy is staged *before* the acting step, so the listener
+        # Playwright installs can honour it when the dialog fires.
+        assert page.dialog_arms == [(True, "")]
+        assert "@e4" in page.clicks
+
+    def test_dialog_policy_on_an_action_arms_before_acting(self):
+        page = FlowPage()
+        seed(page)
+        session = make_session(page)
+        report = run(session.run_flow([
+            {"action": "navigate", "url": "https://example.com/"},
+            {"action": "click", "target": "Delete account", "dialog": "dismiss",
+             "approve": True},
+        ]))
+        assert report["ok"] is True
+        assert page.dialog_arms == [(False, "")]
+
+    def test_prompt_answer_carries_the_typed_text(self):
+        page = FlowPage()
+        seed(page)
+        session = make_session(page)
+        report = run(session.run_flow([
+            {"action": "navigate", "url": "https://example.com/"},
+            {"action": "type", "target": "Email", "value": "user@example.com",
+             "dialog": "accept:blue"},
+        ]))
+        assert report["ok"] is True
+        assert page.dialog_arms == [(True, "blue")]
+
+    def test_assert_dialog_reads_the_collector(self):
+        page = FlowPage()
+        seed(page)
+        page.dialogs = [{"type": "confirm", "message": "Delete account?",
+                         "accepted": True}]
+        session = make_session(page)
+        report = run(session.run_flow([
+            {"action": "navigate", "url": "https://example.com/"},
+            {"action": "assert", "kind": "dialog", "type": "confirm",
+             "value": "Delete"},
+            {"action": "assert", "kind": "dialog", "accepted": True},
+        ]))
+        assert report["ok"] is True
+        assert report["passed"] == 3
+
+    def test_assert_dialog_fails_on_a_wrong_type(self):
+        page = FlowPage()
+        seed(page)
+        page.dialogs = [{"type": "alert", "message": "Saved", "accepted": False}]
+        session = make_session(page)
+        report = run(session.run_flow([
+            {"action": "assert", "kind": "dialog", "type": "confirm"},
+        ]))
+        assert report["ok"] is False
+        assert report["steps"][0]["reason"] == "assertion_failed"
+
+    def test_assert_no_dialog(self):
+        page = FlowPage()
+        seed(page)
+        session = make_session(page)
+        assert run(session.run_flow([
+            {"action": "assert", "kind": "no_dialog"},
+        ]))["ok"] is True
+        page.dialogs = [{"type": "alert", "message": "Saved", "accepted": False}]
+        report = run(session.run_flow([{"action": "assert", "kind": "no_dialog"}]))
+        assert report["ok"] is False
+
+
+# ---------------------------------------------------------------------------
+# Uploads and downloads
+# ---------------------------------------------------------------------------
+
+class TestUploadAndDownloadSteps:
+    def _files(self, tmp_path, monkeypatch, names=("avatar.png",)):
+        root = os.path.realpath(str(tmp_path))
+        monkeypatch.setenv("JAMBU_UPLOAD_ROOTS", root)
+        out = []
+        for name in names:
+            path = os.path.join(root, name)
+            with open(path, "wb") as handle:
+                handle.write(b"binary-bits")
+            out.append(path)
+        return out
+
+    def test_upload_to_a_file_input_uses_the_input(self, tmp_path, monkeypatch):
+        page = FlowPage()
+        seed(page)
+        add_element(page, "@f1", "Avatar upload", tag="input", type="file")
+        files = self._files(tmp_path, monkeypatch)
+        session = make_session(page)
+        report = run(session.run_flow([
+            {"action": "navigate", "url": "https://example.com/"},
+            {"action": "upload", "target": "Avatar upload", "files": files,
+             "approve": True},
+        ]))
+        assert report["ok"] is True
+        assert page.uploads == [{"mode": "input", "ref": "@f1", "files": files}]
+
+    def test_upload_via_chooser_for_a_button(self, tmp_path, monkeypatch):
+        page = FlowPage()
+        seed(page)
+        add_element(page, "@b1", "Attach file")
+        files = self._files(tmp_path, monkeypatch, ("a.csv", "b.csv"))
+        session = make_session(page)
+        report = run(session.run_flow([
+            {"action": "navigate", "url": "https://example.com/"},
+            {"action": "upload", "target": "Attach file", "files": files,
+             "chooser": True, "approve": True},
+        ]))
+        assert report["ok"] is True
+        assert page.uploads[0]["mode"] == "chooser"
+        assert page.uploads[0]["ref"] == "@b1"
+
+    def test_upload_needs_explicit_approval(self, tmp_path, monkeypatch):
+        page = FlowPage()
+        seed(page)
+        add_element(page, "@f1", "Avatar upload", tag="input", type="file")
+        files = self._files(tmp_path, monkeypatch)
+        session = make_session(page)
+        report = run(session.run_flow([
+            {"action": "navigate", "url": "https://example.com/"},
+            {"action": "upload", "target": "Avatar upload", "files": files},
+        ]))
+        assert report["ok"] is False
+        assert report["steps"][1]["reason"] == "approval_required"
+        assert page.uploads == []
+
+    def test_paths_outside_the_upload_root_are_denied(self, tmp_path, monkeypatch):
+        page = FlowPage()
+        seed(page)
+        add_element(page, "@f1", "Avatar upload", tag="input", type="file")
+        monkeypatch.setenv("JAMBU_UPLOAD_ROOTS", os.path.realpath(str(tmp_path)))
+        session = make_session(page)
+        report = run(session.run_flow([
+            {"action": "navigate", "url": "https://example.com/"},
+            {"action": "upload", "target": "Avatar upload",
+             "files": ["/etc/hosts"], "approve": True},
+        ]))
+        assert report["ok"] is False
+        assert report["steps"][1]["reason"] == "upload_path_denied"
+
+    def test_download_click_records_the_destination(self):
+        page = FlowPage()
+        seed(page)
+        add_element(page, "@d1", "Export CSV")
+        page.download_info = written_download("downloads", "report.csv")
+        session = make_session(page)
+        report = run(session.run_flow([
+            {"action": "navigate", "url": "https://example.com/"},
+            {"action": "download", "target": "Export CSV", "match": "*.csv"},
+        ]))
+        assert report["ok"] is True
+        assert page.downloads[0]["ref"] == "@d1"
+        assert page.downloads[0]["match"] == "*.csv"
+        assert "report.csv" in report["steps"][1]["detail"]
+
+    def test_download_name_mismatch_fails_the_step(self):
+        page = FlowPage()
+        seed(page)
+        add_element(page, "@d1", "Export CSV")
+        page.download_info = {"file": "report.txt", "mismatch": "*.csv"}
+        session = make_session(page)
+        report = run(session.run_flow([
+            {"action": "navigate", "url": "https://example.com/"},
+            {"action": "download", "target": "Export CSV", "match": "*.csv"},
+        ]))
+        assert report["ok"] is False
+        assert report["steps"][1]["reason"] == "download_mismatch"
+
+
+# ---------------------------------------------------------------------------
+# Complex waits
+# ---------------------------------------------------------------------------
+
+class TestComplexWaits:
+    def test_js_predicate_waits_on_the_page(self):
+        page = FlowPage()
+        seed(page)
+        session = make_session(page)
+        report = run(session.run_flow([
+            {"action": "navigate", "url": "https://example.com/"},
+            {"action": "wait", "js": "window.ready === true", "approve": True},
+        ]))
+        assert report["ok"] is True
+        assert page.wait_functions == ["window.ready === true"]
+
+    def test_js_predicate_needs_approval(self):
+        page = FlowPage()
+        seed(page)
+        session = make_session(page)
+        report = run(session.run_flow([
+            {"action": "navigate", "url": "https://example.com/"},
+            {"action": "wait", "js": "window.ready === true"},
+        ]))
+        assert report["ok"] is False
+        assert report["steps"][1]["reason"] == "approval_required"
+        assert page.wait_functions == []
+
+    def test_js_predicate_timeout_fails_the_step(self):
+        page = FlowPage()
+        seed(page)
+        page.wait_function_error = "window.ready never became true"
+        session = make_session(page)
+        report = run(session.run_flow([
+            {"action": "navigate", "url": "https://example.com/"},
+            {"action": "wait", "js": "window.ready === true", "approve": True},
+        ]))
+        assert report["ok"] is False
+        assert "window.ready" in json.dumps(report["steps"][1])
 
 
 # ---------------------------------------------------------------------------
@@ -1148,3 +1432,37 @@ class TestTokensAndCoverage:
 
         assert estimate_tokens("x" * 400) == 100
         assert estimate_tokens({}) >= 1
+
+
+class TestExplicitFlowStatuses:
+    def test_safety_refusal_is_blocked_not_product_failure(self):
+        report = run(make_session().run_flow([
+            {"action": "navigate", "url": "https://evil.example.net/"},
+        ]))
+        assert report["ok"] is False
+        assert report["status"] == "blocked"
+        assert report["steps"][0]["status"] == "blocked"
+        assert report["diagnostics"]["categories"]["blocked_domain"] == 1
+
+    def test_harness_exception_is_inconclusive(self):
+        page = FlowPage()
+        async def broken_goto(_url):
+            raise RuntimeError("browser disconnected")
+        page.goto = broken_goto
+        report = run(make_session(page).run_flow([
+            {"action": "navigate", "url": "https://example.com/"},
+        ]))
+        assert report["ok"] is False
+        assert report["status"] == "inconclusive"
+        assert report["steps"][0]["reason"] == "harness_error"
+        assert report["diagnostics"]["categories"]["harness_error"] == 1
+
+    def test_assertion_failure_is_failed(self):
+        page = FlowPage()
+        seed(page)
+        report = run(make_session(page).run_flow([
+            {"action": "assert_visible", "target": "Not present"},
+        ]))
+        assert report["status"] == "failed"
+        assert report["steps"][0]["status"] == "failed"
+        assert report["diagnostics"]["failed_steps"] == 1

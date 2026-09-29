@@ -45,6 +45,7 @@ from backend.modules.browser_debug import (
     A11Y_JS,
     PERF_JS,
     PERF_OBSERVER_JS,
+    compact_observation,
     compile_network,
     diff_elements,
     map_url_for,
@@ -54,7 +55,7 @@ from backend.modules.browser_debug import (
     serialize_body,
     SourceMapData,
 )
-from backend.modules.meshpay import js_dumps, merkle_root
+from backend.decentralized.meshpay import js_dumps, merkle_root
 
 log = logging.getLogger("jambu.browser_agent")
 
@@ -70,12 +71,25 @@ MAX_TARGET_CANDIDATES = 5
 MAX_TELEMETRY = 100
 DEFAULT_STEP_TIMEOUT_MS = 5000
 MAX_ASSERT_TEXT = 2000
+# Compound acts: one step, one catalog read, one re-observation.
+MAX_BATCH_ACTS = 25
+# File uploads / downloads: bounded so a flow cannot exfiltrate or hoard disks.
+MAX_UPLOAD_FILES = 10
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+MAX_FRAMES = 12
+# How many times a flow may silently re-observe to rescue a stale target
+# before it gives up and asks the agent for a fresh observation.
+DEFAULT_REOBSERVE_BUDGET = 3
 
 # Actions that change page state and therefore trigger an internal re-observe.
 _MUTATING_ACTIONS = {
     "click", "type", "press", "select", "hover", "navigate", "reload",
-    "back", "forward", "check", "uncheck", "evaluate",
+    "back", "forward", "check", "uncheck", "evaluate", "upload", "download",
 }
+
+# Actions the single-primitive verb (``act``) accepts; everything else in the
+# vocabulary is reachable through the flow runner / batch verb.
+_ACT_ACTIONS = ("click", "type", "upload")
 
 # Loopback / private hosts that a *local* test session is allowed to reach.
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0", "host.docker.internal"}
@@ -95,16 +109,25 @@ RISKY_PATTERNS = (
     "donate", "upgrade", "cancel plan", "close account",
 )
 
+# Catalog collector. Takes ``[start]`` so the ref numbering continues across
+# frames, and walks *into* open shadow roots — a custom element's buttons are
+# otherwise invisible to the agent, and Playwright's CSS engine dispatches to
+# them fine (it pierces open shadow DOM), so cataloging them is enough.
 SNAPSHOT_JS = """
-() => {
+([start]) => {
   const out = {url: location.href, title: document.title, elements: [], text: ""};
-  const sel = 'a, button, input, select, textarea, [role="button"], [role="link"], [role="checkbox"], [role="tab"]';
-  let i = 0;
-  for (const el of document.querySelectorAll(sel)) {
+  const TAGS = new Set(['A', 'BUTTON', 'INPUT', 'SELECT', 'TEXTAREA']);
+  const ROLES = new Set(['button', 'link', 'checkbox', 'tab', 'textbox', 'combobox']);
+  let i = start || 0;
+  let truncated = false;
+  const interactive = (el) => TAGS.has(el.tagName)
+    || ROLES.has((el.getAttribute('role') || '').toLowerCase());
+  const collect = (el, shadow) => {
     const ref = `@e${++i}`;
     el.setAttribute('data-jambu-ref', ref);
     const name = (el.innerText || el.value || el.getAttribute('aria-label')
-                  || el.getAttribute('placeholder') || '').trim().slice(0, 120);
+                  || el.getAttribute('placeholder') || el.getAttribute('title')
+                  || '').trim().slice(0, 120);
     const rect = el.getBoundingClientRect();
     const style = window.getComputedStyle(el);
     const visible = rect.width > 0 && rect.height > 0
@@ -115,13 +138,29 @@ SNAPSHOT_JS = """
       name, href: el.href || '',
       value: (typeof el.value === 'string' ? el.value.slice(0, 200) : ''),
       visible, disabled: !!el.disabled, checked: !!el.checked,
+      shadow: !!shadow,
     });
-    if (out.elements.length >= %d) break;
-  }
+    if (out.elements.length >= %d) { truncated = true; return true; }
+    return false;
+  };
+  const walk = (root, shadow) => {
+    let nodes;
+    try { nodes = root.querySelectorAll('*'); } catch (e) { return false; }
+    for (const el of nodes) {
+      try {
+        if (interactive(el) && collect(el, shadow)) return true;
+        if (el.shadowRoot && walk(el.shadowRoot, true)) return true;
+      } catch (e) { /* detached node mid-navigation: skip it */ }
+    }
+    return false;
+  };
+  walk(document, false);
+  out.truncated = truncated;
   out.text = (document.body ? document.body.innerText : '').slice(0, %d);
   return out;
 }
 """ % (MAX_ELEMENTS, MAX_TEXT_CHARS)
+
 
 
 # ---------------------------------------------------------------------------
@@ -150,6 +189,7 @@ class Telemetry:
         self.page_errors: list[str] = []
         self.failed_requests: list[dict] = []
         self.bad_responses: list[dict] = []
+        self.dialogs: list[dict] = []
 
     @staticmethod
     def _trim(seq: list, cap: int) -> None:
@@ -179,6 +219,19 @@ class Telemetry:
         })
         self._trim(self.bad_responses, self.cap)
 
+    def add_dialog(self, kind: str, message: str, *, accepted: bool,
+                   text: str = "") -> None:
+        """Record a native dialog (alert/confirm/prompt/beforeunload).
+
+        Dialogs are *interaction*, not just noise: an unhandled ``confirm()``
+        silently swallows the click that raised it, so flows need to see them.
+        """
+        self.dialogs.append({
+            "type": (kind or "dialog"), "message": (message or "")[:200],
+            "accepted": bool(accepted), "text": (text or "")[:100],
+        })
+        self._trim(self.dialogs, self.cap)
+
     def errors(self) -> list[str]:
         """Console errors + uncaught page errors as plain strings."""
         out = [c["text"] for c in self.console if c.get("level") == "error"]
@@ -195,6 +248,7 @@ class Telemetry:
             "console_warnings": [c["text"] for c in self.console if c.get("level") == "warning"],
             "failed_requests": list(self.failed_requests),
             "bad_responses": list(self.bad_responses),
+            "dialogs": list(self.dialogs),
         }
 
     def drain(self) -> dict:
@@ -203,6 +257,7 @@ class Telemetry:
         self.page_errors.clear()
         self.failed_requests.clear()
         self.bad_responses.clear()
+        self.dialogs.clear()
         return data
 
 
@@ -241,6 +296,44 @@ class PlaywrightPage:
             page.on("request", lambda req: self._track_request(req.method, req.url))
         except Exception:  # adapters/fakes without event support
             pass
+        # Ref → frame index recorded by the last snapshot, so acting on an
+        # element inside an iframe dispatches inside that frame.
+        self._ref_frames: dict[str, int] = {}
+        # One-shot dialog policy armed by a step. Default is *dismiss*, which
+        # matches Playwright's own behaviour: a stray confirm() on a destructive
+        # action must never be auto-accepted on the agent's behalf.
+        self._dialog_policy: Optional[dict] = None
+        try:
+            page.on("dialog", self._on_dialog)
+        except Exception:  # adapters/fakes without dialog events
+            pass
+
+    async def _on_dialog(self, dialog) -> None:
+        """Record every native dialog and apply the armed policy (else dismiss).
+
+        Recording matters as much as answering: without this, an unhandled
+        ``confirm()`` looks to the agent like a click that did nothing.
+        """
+        policy = self._dialog_policy or {}
+        self._dialog_policy = None
+        accept = bool(policy.get("accept"))
+        kind = str(getattr(dialog, "type", "dialog") or "dialog")
+        message = str(getattr(dialog, "message", "") or "")
+        text = str(policy.get("text") or "")
+        try:
+            if accept and kind == "prompt" and text:
+                await dialog.accept(text)
+            elif accept:
+                await dialog.accept()
+            else:
+                await dialog.dismiss()
+        except Exception:  # already handled by the page, or page is closing
+            pass
+        self.telemetry.add_dialog(kind, message, accepted=accept, text=text)
+
+    def arm_dialog(self, accept: bool = True, text: str = "") -> None:
+        """Arm the *next* dialog raised by a subsequent action."""
+        self._dialog_policy = {"accept": bool(accept), "text": text or ""}
 
     def _track_request(self, method: str, url: str) -> None:
         self.requests.append({"method": method, "url": (url or "")[:300]})
@@ -478,17 +571,150 @@ class PlaywrightPage:
     async def goto(self, url: str) -> None:
         await self._page.goto(url, wait_until="domcontentloaded", timeout=20000)
 
+    # -- catalog: multi-frame + shadow DOM -----------------------------------
+
+    @staticmethod
+    def _ref_selector(ref: str) -> str:
+        return f'[data-jambu-ref="{ref}"]'
+
+    def _target_frame(self, ref: str):
+        """The frame that owns ``ref`` in the last snapshot (main frame default)."""
+        index = self._ref_frames.get(ref, 0)
+        if not index:
+            return self._page
+        frames = list(getattr(self._page, "frames", None) or [])
+        if 0 <= index < len(frames):
+            return frames[index]
+        return self._page
+
     async def snapshot(self) -> dict:
-        return await self._page.evaluate(SNAPSHOT_JS)
+        frames = list(getattr(self._page, "frames", None) or [])
+        if len(frames) > 1:
+            return await self._snapshot_frames(frames[:MAX_FRAMES])
+        self._ref_frames = {}
+        return await self._page.evaluate(SNAPSHOT_JS, [0])
+
+    async def _snapshot_frames(self, frames: list) -> dict:
+        """Collect one catalog across same-process frames with continuing refs.
+
+        Iframes hold a lot of real UI (payments, auth, uploads, embedded
+        editors). Cataloging only the top document makes those invisible, so
+        refs are numbered globally and each element records its frame index for
+        dispatch. Frames that refuse to evaluate (detached, cross-process) are
+        reported instead of silently dropping content.
+        """
+        out: dict = {"url": self._page.url, "title": "", "elements": [],
+                     "text": "", "frames": []}
+        ref_frames: dict[str, int] = {}
+        count = 0
+        for index, frame in enumerate(frames):
+            url = str(getattr(frame, "url", "") or "")
+            try:
+                raw = await frame.evaluate(SNAPSHOT_JS, [count]) or {}
+            except Exception:
+                out["frames"].append({"i": index, "url": url[:120], "error": True})
+                continue
+            elements = raw.get("elements") or []
+            for element in elements:
+                if index:
+                    element["frame"] = index
+                    element["frame_url"] = url[:120]
+            ref_frames.update({e["ref"]: index for e in elements if e.get("ref")})
+            count += len(elements)
+            out["elements"].extend(elements)
+            if index == 0:
+                out["title"] = raw.get("title") or ""
+                out["text"] = raw.get("text") or ""
+            out["frames"].append({"i": index, "url": url[:120], "elements": len(elements)})
+            if count >= MAX_ELEMENTS:
+                break
+        out["truncated"] = bool(count >= MAX_ELEMENTS)
+        self._ref_frames = ref_frames
+        return out
 
     async def click(self, ref: str) -> None:
-        await self._page.click(f'[data-jambu-ref="{ref}"]', timeout=10000)
+        await self._target_frame(ref).click(self._ref_selector(ref), timeout=10000)
 
     async def type_text(self, ref: str, text: str) -> None:
-        await self._page.fill(f'[data-jambu-ref="{ref}"]', text, timeout=10000)
+        await self._target_frame(ref).fill(self._ref_selector(ref), text, timeout=10000)
 
     async def current_url(self) -> str:
         return self._page.url
+
+    # -- uploads / downloads --------------------------------------------------
+
+    async def set_input_files(self, ref: str, files: list,
+                              timeout_ms: int = DEFAULT_STEP_TIMEOUT_MS) -> dict:
+        """Attach files directly to an ``<input type=file>`` (no chooser)."""
+        await self._target_frame(ref).set_input_files(
+            self._ref_selector(ref), list(files), timeout=timeout_ms,
+        )
+        return {"uploaded": len(files), "mode": "input"}
+
+    async def set_input_files_selector(self, selector: str, files: list,
+                                       timeout_ms: int = DEFAULT_STEP_TIMEOUT_MS) -> dict:
+        await self._page.set_input_files(
+            self._engine_selector(selector), list(files), timeout=timeout_ms,
+        )
+        return {"uploaded": len(files), "mode": "input"}
+
+    async def upload_via_chooser(self, ref: str, files: list,
+                                 timeout_ms: int = DEFAULT_STEP_TIMEOUT_MS) -> dict:
+        """Click an element that opens the OS file picker, then feed it files."""
+        frame = self._target_frame(ref)
+        async with self._page.expect_file_chooser(timeout=timeout_ms) as info:
+            await frame.click(self._ref_selector(ref), timeout=timeout_ms)
+        chooser = await info.value
+        await chooser.set_files(list(files))
+        return {"uploaded": len(files), "mode": "chooser"}
+
+    async def download_via_click(self, ref: str, dest_dir: str,
+                                 timeout_ms: int = 15000,
+                                 match: str = "") -> dict:
+        """Click a link/button that starts a download and save it to *dest_dir*."""
+        frame = self._target_frame(ref)
+        async with self._page.expect_download(timeout=timeout_ms) as info:
+            await frame.click(self._ref_selector(ref), timeout=timeout_ms)
+        return await self._store_download(await info.value, dest_dir, match)
+
+    async def download_via_selector(self, selector: str, dest_dir: str,
+                                    timeout_ms: int = 15000,
+                                    match: str = "") -> dict:
+        async with self._page.expect_download(timeout=timeout_ms) as info:
+            await self._page.click(self._engine_selector(selector), timeout=timeout_ms)
+        return await self._store_download(await info.value, dest_dir, match)
+
+    @staticmethod
+    async def _store_download(download, dest_dir: str, match: str = "") -> dict:
+        """Persist a Playwright download inside *dest_dir* with a content digest."""
+        import fnmatch
+
+        name = os.path.basename(str(getattr(download, "suggested_filename", "")
+                                    or "download.bin"))
+        info: dict = {
+            "file": name, "url": str(getattr(download, "url", "") or "")[:300],
+        }
+        if match and not fnmatch.fnmatch(name, match):
+            info["mismatch"] = match
+            return info
+        os.makedirs(dest_dir, exist_ok=True)
+        path = os.path.join(dest_dir, name)
+        await download.save_as(path)
+        info["path"] = path
+        info["bytes"] = os.path.getsize(path)
+        digest = hashlib.sha256()
+        with open(path, "rb") as handle:
+            for _ in range(40):  # fingerprint the first 5 MB, not the whole disk
+                chunk = handle.read(131072)
+                if not chunk:
+                    break
+                digest.update(chunk)
+        info["sha256_12"] = digest.hexdigest()[:12]
+        return info
+
+    async def wait_for_function(self, script: str,
+                                timeout_ms: int = DEFAULT_STEP_TIMEOUT_MS) -> None:
+        await self._page.wait_for_function(script, timeout=timeout_ms)
 
     # -- selector dispatch (CSS/XPath direct addressing) ---------------------
 
@@ -583,17 +809,23 @@ class PlaywrightPage:
         )
 
     async def press(self, ref: str, key: str) -> None:
-        target = f'[data-jambu-ref="{ref}"]' if ref else "body"
-        await self._page.press(target, key, timeout=10000)
+        if not ref:
+            await self._page.press("body", key, timeout=10000)
+            return
+        await self._target_frame(ref).press(self._ref_selector(ref), key, timeout=10000)
 
     async def hover(self, ref: str) -> None:
-        await self._page.hover(f'[data-jambu-ref="{ref}"]', timeout=10000)
+        await self._target_frame(ref).hover(self._ref_selector(ref), timeout=10000)
 
     async def select_option(self, ref: str, value: str) -> None:
-        await self._page.select_option(f'[data-jambu-ref="{ref}"]', value, timeout=10000)
+        await self._target_frame(ref).select_option(
+            self._ref_selector(ref), value, timeout=10000,
+        )
 
     async def check(self, ref: str, checked: bool = True) -> None:
-        await self._page.set_checked(f'[data-jambu-ref="{ref}"]', checked, timeout=10000)
+        await self._target_frame(ref).set_checked(
+            self._ref_selector(ref), checked, timeout=10000,
+        )
 
     async def reload(self) -> None:
         await self._page.reload(wait_until="domcontentloaded", timeout=20000)
@@ -741,6 +973,219 @@ def estimate_tokens(payload) -> int:
     return max(1, len(text) // 4)
 
 
+_FLOW_BLOCKED_REASONS = {
+    "approval_required", "blocked_domain", "blocked_protocol", "human_takeover",
+    "private_address", "unsafe_url", "invalid_url", "target_required",
+    "unknown_ref", "dns_resolution_failed", "redirect_loop",
+    "upload_path_denied", "upload_limit",
+}
+
+
+# ---------------------------------------------------------------------------
+# Local file access: uploads in, downloads out
+# ---------------------------------------------------------------------------
+
+UPLOAD_ROOTS_ENV = "JAMBU_UPLOAD_ROOTS"
+DOWNLOAD_DIR_ENV = "JAMBU_DOWNLOAD_DIR"
+
+
+def _roots(raw: str) -> list[str]:
+    parts = [p for p in (raw or "").split(os.pathsep) if p.strip()]
+    return [os.path.realpath(os.path.expanduser(p)) for p in parts]
+
+
+def upload_roots() -> list[str]:
+    """Directories an agent may read files *from* (default: the working dir).
+
+    An upload step reads from the machine running the engine, so without a root
+    fence a flow could ship ``~/.ssh/id_rsa`` through a contact form.
+    """
+    return _roots(os.environ.get(UPLOAD_ROOTS_ENV, "")) or [os.path.realpath(os.getcwd())]
+
+
+def resolve_upload_paths(files: Any, *, roots: Optional[list[str]] = None) -> list[str]:
+    """Validate agent-supplied upload paths; raise :class:`SessionRefused`.
+
+    Every path must resolve inside a configured root, exist, and be a regular
+    file under :data:`MAX_UPLOAD_BYTES`. Count is capped by MAX_UPLOAD_FILES.
+    """
+    if isinstance(files, str):
+        files = [p for p in files.split(os.pathsep) if p.strip()]
+    if not isinstance(files, list) or not files:
+        raise SessionRefused("invalid_step", "upload requires a non-empty 'files' list")
+    if len(files) > MAX_UPLOAD_FILES:
+        raise SessionRefused(
+            "upload_limit", f"at most {MAX_UPLOAD_FILES} files per upload step",
+        )
+    allowed = roots if roots is not None else upload_roots()
+    out: list[str] = []
+    for item in files:
+        if not isinstance(item, str) or not item.strip():
+            raise SessionRefused("invalid_step", "upload file entries must be strings")
+        candidate = os.path.realpath(os.path.expanduser(item.strip()))
+        if not any(
+            candidate == root or candidate.startswith(root + os.sep)
+            for root in allowed
+        ):
+            raise SessionRefused(
+                "upload_path_denied",
+                f"{item!r} is outside the upload roots "
+                f"({UPLOAD_ROOTS_ENV}={os.pathsep.join(allowed)})",
+            )
+        if not os.path.isfile(candidate):
+            raise SessionRefused("upload_path_denied", f"not a readable file: {item!r}")
+        size = os.path.getsize(candidate)
+        if size > MAX_UPLOAD_BYTES:
+            raise SessionRefused(
+                "upload_limit", f"{item!r} is {size} bytes (cap {MAX_UPLOAD_BYTES})",
+            )
+        out.append(candidate)
+    return out
+
+
+def download_dir_for(session_id: str, artifacts_dir: Optional[str] = None) -> str:
+    """Where saved downloads land: the session's artifact dir when it has one."""
+    if artifacts_dir:
+        return artifacts_dir
+    configured = _roots(os.environ.get(DOWNLOAD_DIR_ENV, ""))
+    base = configured[0] if configured else os.path.join(
+        tempfile.gettempdir(), f"jambu-downloads-{session_id}",
+    )
+    os.makedirs(base, exist_ok=True)
+    return base
+
+
+def estimate_primitive_cost(steps: list[dict], elements: int = 40,
+                            text_chars: int = 600) -> dict:
+    """What the same work costs as a primitive snapshot/act loop.
+
+    The comparison is deliberately generous to the loop: one open + one close,
+    one act per step, and a fresh snapshot before every step that needs refs
+    (a loop cannot know refs changed, so it re-observes). A snapshot is charged
+    as ``60 + 15*min(elements, 25) + text/4`` tokens, matching the shape of the
+    real snapshot renderer. Honest numbers, not marketing: if the flow's own
+    report is bigger than this estimate, the flow did not save anything.
+    """
+    acts = len(steps) or 1
+    mutating = sum(
+        1 for s in steps
+        if isinstance(s, dict) and (s.get("action") or "").lower() in _MUTATING_ACTIONS
+    )
+    snapshots = 1 + mutating
+    snapshot_tokens = 60 + 15 * min(max(elements, 0), 25) + max(text_chars, 0) // 4
+    calls = 1 + 1 + acts + snapshots
+    tokens = 28 + 10 + acts * 12 + snapshots * snapshot_tokens
+    return {"calls": calls, "tokens": tokens}
+
+
+# Engine-lifetime tally of what flows saved versus a primitive loop, so the
+# "token-efficient" claim is a number the product can show rather than assert.
+_METER: dict = {"runs": 0, "steps": 0, "flow_tokens": 0,
+                "primitive_tokens": 0, "calls_avoided": 0}
+
+
+def record_flow_savings(savings: dict) -> dict:
+    """Add one flow's savings to the engine tally and return the running total."""
+    _METER["runs"] += 1
+    _METER["steps"] += int(savings.get("steps", 0) or 0)
+    _METER["flow_tokens"] += int(savings.get("flow_tokens", 0) or 0)
+    _METER["primitive_tokens"] += int(savings.get("primitive_tokens", 0) or 0)
+    _METER["calls_avoided"] += int(savings.get("calls_avoided", 0) or 0)
+    return token_savings()
+
+
+def token_savings() -> dict:
+    """Running totals: tokens/calls a primitive loop would have spent."""
+    saved = max(0, _METER["primitive_tokens"] - _METER["flow_tokens"])
+    return {
+        "runs": _METER["runs"],
+        "steps": _METER["steps"],
+        "flow_tokens": _METER["flow_tokens"],
+        "primitive_tokens": _METER["primitive_tokens"],
+        "saved_tokens": saved,
+        "calls_avoided": _METER["calls_avoided"],
+    }
+
+
+def reset_token_savings() -> None:
+    """Test hook: zero the engine tally."""
+    for key in _METER:
+        _METER[key] = 0
+
+
+
+def classify_step_failure(reason: Optional[str]) -> str:
+    """Classify a step failure without changing the historical ``ok`` field."""
+    if reason in _FLOW_BLOCKED_REASONS:
+        return "blocked"
+    if reason in {"error", "harness_error", "timeout", "page_closed"}:
+        return "inconclusive"
+    return "failed"
+
+
+def classify_flow_status(results: list[dict]) -> str:
+    """Return the user-facing run status while preserving step-level detail."""
+    statuses = {result.get("status") for result in results}
+    if not statuses or statuses <= {"passed"}:
+        return "passed"
+    if "inconclusive" in statuses:
+        return "inconclusive"
+    if "blocked" in statuses:
+        return "blocked"
+    return "failed"
+
+
+def summarize_flow_diagnostics(results: list[dict], telemetry: dict) -> dict:
+    """Build a compact, machine-readable diagnosis for a flow report."""
+    failures = [r for r in results if r.get("status") != "passed"]
+    categories: dict[str, int] = {}
+    for result in failures:
+        reason = str(result.get("reason") or result.get("status") or "failed")
+        categories[reason] = categories.get(reason, 0) + 1
+    diagnostics = []
+    for result in failures[:20]:
+        diagnostics.append({
+            "step": result.get("i"),
+            "action": result.get("action"),
+            "status": result.get("status"),
+            "reason": result.get("reason", ""),
+            "error": result.get("error", ""),
+            "cause": result.get("cause", {}),
+        })
+    if telemetry.get("console_errors"):
+        diagnostics.append({
+            "kind": "console",
+            "count": len(telemetry.get("console_errors") or []),
+            "samples": list(telemetry.get("console_errors") or [])[:5],
+        })
+    if telemetry.get("failed_requests"):
+        diagnostics.append({
+            "kind": "network",
+            "count": len(telemetry.get("failed_requests") or []),
+            "samples": list(telemetry.get("failed_requests") or [])[:5],
+        })
+    if telemetry.get("bad_responses"):
+        diagnostics.append({
+            "kind": "http",
+            "count": len(telemetry.get("bad_responses") or []),
+            "samples": list(telemetry.get("bad_responses") or [])[:5],
+        })
+    if telemetry.get("dialogs"):
+        diagnostics.append({
+            "kind": "dialog",
+            "count": len(telemetry.get("dialogs") or []),
+            "samples": [
+                f"{d.get('type')}:{d.get('message', '')[:80]}"
+                f"{'(accepted)' if d.get('accepted') else '(dismissed)'}"
+                for d in list(telemetry.get("dialogs") or [])[:5]
+            ],
+        })
+    return {
+        "failed_steps": len(failures),
+        "categories": categories,
+        "items": diagnostics,
+    }
+
 def normalize_flow_steps(steps) -> list[dict]:
     """Accept a JSON string, a ``{"steps": [...]}`` wrapper, or a list.
 
@@ -769,9 +1214,57 @@ def normalize_flow_steps(steps) -> list[dict]:
     return out
 
 
+def parse_dialog_spec(spec: Any) -> tuple[bool, str]:
+    """Normalise a dialog answer spec to ``(accept, prompt_text)``.
+
+    Accepts ``"accept"`` / ``"dismiss"`` / ``true`` / ``{"accept": false}`` so
+    both the JSON flow and the MCP string args read naturally.
+    """
+    if isinstance(spec, dict):
+        raw = spec.get("accept", spec.get("action", True))
+        text = str(spec.get("text", spec.get("prompt_text", "")) or "")
+    else:
+        raw, text = spec, ""
+    if isinstance(raw, str):
+        verb = raw.strip()
+        # "accept:my answer" answers prompt() without the object form.
+        if ":" in verb and verb.split(":", 1)[0].strip().lower() in (
+            "accept", "dismiss", "ok", "no", "cancel"
+        ):
+            verb, _, text = verb.partition(":")
+        accept = verb.strip().lower() in ("accept", "ok", "yes", "true", "1", "y")
+    else:
+        accept = bool(raw)
+    return accept, text
+
+
+def normalize_acts(actions: Any) -> list[dict]:
+    """Accept a JSON string, an ``{"actions": [...]}`` wrapper, or a list."""
+    if isinstance(actions, str):
+        try:
+            actions = json.loads(actions)
+        except json.JSONDecodeError as exc:
+            raise SessionRefused("invalid_step", f"actions is not valid JSON: {exc}") from exc
+    if isinstance(actions, dict):
+        actions = actions.get("actions") or actions.get("steps")
+    if not isinstance(actions, list) or not actions:
+        raise SessionRefused("invalid_step", "actions must be a non-empty list")
+    if len(actions) > MAX_BATCH_ACTS:
+        raise SessionRefused(
+            "invalid_step", f"at most {MAX_BATCH_ACTS} acts per batch",
+        )
+    out: list[dict] = []
+    for item in actions:
+        if isinstance(item, dict):
+            out.append(item)
+        else:
+            raise SessionRefused("invalid_step", f"unsupported act: {item!r}")
+    return out
+
+
 def render_flow_report(report: dict, *, max_errors: int = 5) -> str:
     """Render a flow report as a compact, token-lean Markdown digest."""
-    icon = "PASS" if report.get("ok") else "FAIL"
+    icon = str(report.get("status") or ("PASS" if report.get("ok") else "FAIL")).upper()
     head = (
         f"# Browser test {icon} — {report.get('passed', 0)}/{report.get('total', 0)} steps "
         f"in {report.get('duration_ms', 0)}ms\n"
@@ -779,13 +1272,22 @@ def render_flow_report(report: dict, *, max_errors: int = 5) -> str:
         f"~{report.get('tokens_estimate', estimate_tokens(report))} tokens"
         f"{' · uses JS evaluate' if report.get('uses_evaluate') else ''}"
     )
+    savings = report.get("savings") or {}
+    if savings.get("saved_tokens"):
+        head += (
+            f"\nsaved ~{savings['saved_tokens']} tokens and "
+            f"{savings.get('calls_avoided', 0)} tool calls vs a snapshot/act loop"
+        )
     lines = [head, ""]
     for step in report.get("steps") or []:
-        mark = "ok " if step.get("status") == "passed" else "FAIL"
+        status = step.get("status") or ("passed" if step.get("ok", True) else "failed")
+        mark = {"passed": "ok", "blocked": "BLOCK", "inconclusive": "INCONCLUSIVE"}.get(
+            str(status), "FAIL",
+        )
         bit = f"{mark} #{step.get('i')} {step.get('action')}"
         if step.get("detail"):
             bit += f" — {step['detail']}"
-        if step.get("status") == "failed":
+        if status != "passed":
             bit += f" — {step.get('reason')}: {step.get('error')}"
         lines.append(bit)
         for cand in step.get("candidates") or []:
@@ -821,6 +1323,14 @@ def render_flow_report(report: dict, *, max_errors: int = 5) -> str:
     if bad:
         lines.append(f"\nHTTP >=400 ({len(bad)}):")
         lines.extend(f"  - {r.get('status')} {r.get('method')} {r.get('url')[:120]}" for r in bad[:max_errors])
+    dialogs = report.get("dialogs") or []
+    if dialogs:
+        lines.append(f"\ndialogs ({len(dialogs)}):")
+        lines.extend(
+            f"  - {d.get('type')} {str(d.get('message', ''))[:100]} "
+            f"{'accepted' if d.get('accepted') else 'dismissed'}"
+            for d in dialogs[:max_errors]
+        )
     artifacts = report.get("artifacts") or {}
     if artifacts:
         lines.append("\nartifacts: " + ", ".join(f"{k}={v}" for k, v in artifacts.items()))
@@ -840,6 +1350,7 @@ class BrowserAgentSession:
         scrub_pii: bool = True,
         allow_private: bool = False,
         created_at: Optional[float] = None,
+        artifacts_dir: Optional[str] = None,
     ):
         if not allow_domains:
             raise ValueError("allow_domains must be non-empty (fail closed)")
@@ -869,6 +1380,8 @@ class BrowserAgentSession:
         self._forbid_evaluate = False
         # Last API-step response, read by assert_status/json/latency/schema.
         self._last_api: Optional[dict] = None
+        # Where saved downloads land (artifact dir when the session has one).
+        self.artifacts_dir = artifacts_dir
 
     # -- helpers -------------------------------------------------------------
 
@@ -936,6 +1449,11 @@ class BrowserAgentSession:
 
     # -- API -----------------------------------------------------------------
 
+    @property
+    def download_dir(self) -> str:
+        """Directory saved downloads land in (created on the first download)."""
+        return download_dir_for(self.id, self.artifacts_dir)
+
     def info(self) -> dict:
         return {
             "session_id": self.id,
@@ -997,6 +1515,12 @@ class BrowserAgentSession:
                 "visible": element.get("visible", True),
                 "disabled": bool(element.get("disabled", False)),
                 "checked": element.get("checked"),
+                # Only present when the element is not in the top document:
+                # an agent must know a ref lives in an iframe (or a shadow root)
+                # before it decides a click "did nothing".
+                **({"frame": element["frame"], "frame_url": element.get("frame_url", "")}
+                   if element.get("frame") else {}),
+                **({"shadow": True} if element.get("shadow") else {}),
                 "risk": classify_risk(
                     element.get("name") or "", element.get("href") or "",
                 ),
@@ -1004,13 +1528,16 @@ class BrowserAgentSession:
         self.catalog = {e["ref"]: e for e in elements if e.get("ref")}
         text = self._scrub((raw.get("text") or "")[:MAX_TEXT_CHARS])
         self.last_url = raw.get("url") or self.last_url
-        return {
+        state = {
             "url": self.last_url,
             "title": self._scrub(raw.get("title") or ""),
             "text": text,
             "elements": elements,
             "count": len(elements),
         }
+        if raw.get("frames"):
+            state["frames"] = raw["frames"]
+        return state
 
     async def snapshot(self) -> dict:
         state = await self._read_state()
@@ -1019,10 +1546,24 @@ class BrowserAgentSession:
         return state
 
     async def act(self, action: str, ref: str, *, text: str = "",
-                  approve: bool = False, selector: str = "") -> dict:
-        if action not in ("click", "type"):
+                  approve: bool = False, selector: str = "",
+                  files: Optional[list] = None, dialog: Any = "") -> dict:
+        """One primitive action, with the rails.
+
+        ``dialog`` answers the native dialog this action raises (``"accept"`` /
+        ``"dismiss"`` / ``{"accept": true, "text": "…"}`` for ``prompt()``),
+        which is what makes a ``confirm()``-guarded button testable in one call
+        instead of an arm-then-click race.
+        """
+        if action not in _ACT_ACTIONS:
             raise SessionRefused("unknown_action", f"unsupported action: {action}")
         self._require_agent_control(action)
+        if dialog:
+            await self.arm_dialog(dialog)
+        if action == "upload":
+            return await self.upload_files(
+                ref, files or [], approve=approve, selector=selector,
+            )
         if selector and not ref:
             return await self.act_selector(action, selector, text=text, approve=approve)
 
@@ -1127,6 +1668,180 @@ class BrowserAgentSession:
             {"action": action, "selector": selector, **({"value": self._scrub(text)} if action == "type" else {})}
         )
         return {"outcome": "ok", "url": self.last_url, "step": step.to_dict()}
+
+    # -- dialogs --------------------------------------------------------------
+
+    async def arm_dialog(self, spec: Any) -> dict:
+        """Decide how the *next* dialog raised by an action is answered.
+
+        Nothing is armed by default, which means dialogs get dismissed (the
+        Playwright default) and still land in telemetry — an agent that ignores
+        ``confirm()`` learns it changed nothing instead of guessing.
+        """
+        accept, text = parse_dialog_spec(spec)
+        await self._call_optional("arm_dialog", accept, text)
+        self._record("dialog", "ok", detail=f"armed {'accept' if accept else 'dismiss'}")
+        return {"armed": "accept" if accept else "dismiss",
+                **({"text": text} if text else {})}
+
+    # -- uploads --------------------------------------------------------------
+
+    async def upload_files(self, ref: str, files: Any, *, approve: bool = False,
+                           selector: str = "", chooser: Optional[bool] = None) -> dict:
+        """Attach local files to a file input, or feed the picker a button opens.
+
+        Uploads read from the engine's own disk and the risk classifier cannot
+        see file contents, so they always need ``approve=true`` plus a path that
+        resolves inside the configured upload roots.
+        """
+        self._require_agent_control("upload")
+        if not approve:
+            self._record("upload", "blocked", ref=ref or None,
+                         detail="uploads require approve=true")
+            raise SessionRefused(
+                "approval_required",
+                "upload reads local files; re-send with approve=true",
+            )
+        paths = resolve_upload_paths(files)
+        element = self.catalog.get(ref) if ref else None
+        if element is None and not selector:
+            raise SessionRefused("target_required", "upload needs a 'ref' or 'selector'")
+        wants_input = chooser is False or (
+            chooser is None and element is not None
+            and (element.get("tag") or "").lower() == "input"
+            and (element.get("type") or "").lower() == "file"
+        )
+        if selector and not ref:
+            info = await self._call_optional("set_input_files_selector", selector, paths)
+        elif wants_input:
+            info = await self._call_optional("set_input_files", ref, paths)
+        else:
+            info = await self._call_optional("upload_via_chooser", ref, paths)
+        info = info or {}
+        names = [os.path.basename(p) for p in paths]
+        mode = str(info.get("mode") or ("input" if wants_input else "chooser"))
+        step = self._record("upload", "ok", ref=ref or None,
+                            detail=f"{len(paths)} file(s) via {mode}")
+        self._capture_step({
+            "action": "upload",
+            "target": (element or {}).get("name") or ref or selector,
+            "files": names,
+            **({"chooser": True} if mode == "chooser" else {}),
+        })
+        return {"outcome": "ok", "url": self.last_url, "uploaded": names,
+                "mode": mode, "step": step.to_dict()}
+
+    # -- batched primitives ---------------------------------------------------
+
+    async def act_many(self, actions: Any, *, approve: bool = False,
+                       stop_on_error: bool = True) -> dict:
+        """Run up to :data:`MAX_BATCH_ACTS` primitives in one call.
+
+        The primitive loop's cost is round trips, not the actions: N acts means
+        N tool calls and, because refs go stale after any mutation, up to N
+        re-observations. This keeps every per-action receipt and refusal (each
+        act is still recorded and hash-chained) but pays one tool call, one
+        response, and zero re-snapshots while refs stay valid. When the page
+        navigates mid-batch, the result says ``reobserve: true`` so the agent
+        re-observes once instead of guessing.
+        """
+        items = normalize_acts(actions)
+        before_tel = self._telemetry_counts()
+        before_url = self.last_url
+        results: list[dict] = []
+        failed = 0
+        stopped_at: Optional[int] = None
+        for index, item in enumerate(items):
+            action = str(item.get("action") or "").strip().lower()
+            ref = str(item.get("ref") or "")
+            entry: dict = {"i": index, "action": action or "?"}
+            if ref:
+                entry["ref"] = ref
+            wants_approve = bool(item.get("approve", approve))
+            try:
+                if action in _ACT_ACTIONS:
+                    extra = await self.act(
+                        action, ref,
+                        text=str(item.get("text", item.get("value", "")) or ""),
+                        approve=wants_approve,
+                        selector=str(item.get("selector") or ""),
+                        files=item.get("files"),
+                        dialog=item.get("dialog", ""),
+                    )
+                else:
+                    # Everything the flow runner understands (press, select,
+                    # check, hover, wait, assert_*, navigate, download, …) is
+                    # fair game in a batch too — with observe=False so the batch
+                    # pays for one observation, not one per act.
+                    summary, extra = await self._run_step(
+                        dict(item), approve=wants_approve, observe=False,
+                    )
+                    entry["detail"] = summary
+                entry["ok"] = True
+                if extra.get("uploaded"):
+                    entry["uploaded"] = extra["uploaded"]
+                if extra.get("download"):
+                    entry["download"] = extra["download"]
+                if self.last_url != before_url:
+                    entry["url"] = self.last_url
+            except SessionRefused as refusal:
+                entry["ok"] = False
+                entry["reason"] = refusal.reason
+                entry["error"] = (refusal.detail or refusal.reason)[:200]
+                if refusal.candidates:
+                    entry["candidates"] = refusal.candidates[:MAX_TARGET_CANDIDATES]
+                failed += 1
+            except Exception as exc:  # harness/page error, not a safety refusal
+                entry["ok"] = False
+                entry["reason"] = "harness_error"
+                entry["error"] = str(exc)[:200]
+                failed += 1
+            results.append(entry)
+            if failed and stop_on_error:
+                stopped_at = index
+                break
+        deltas = {
+            key: value - before_tel.get(key, 0)
+            for key, value in self._telemetry_counts().items()
+        }
+        deltas = {key: value for key, value in deltas.items() if value}
+        self._record(
+            "act_batch", "ok" if not failed else "failed",
+            detail=f"{len(results) - failed}/{len(items)} acts ok",
+        )
+        out: dict = {
+            "ok": failed == 0,
+            "count": len(results),
+            "passed": len(results) - failed,
+            "url": self.last_url,
+            "results": results,
+        }
+        if stopped_at is not None:
+            out["stopped_at"] = stopped_at
+        if self.last_url != before_url:
+            out["reobserve"] = True
+        if deltas:
+            out["telemetry"] = deltas
+        return out
+
+    def telemetry_report(self, *, drain: bool = False) -> dict:
+        """Read standing console/network/dialog telemetry — no re-snapshot.
+
+        Lets a primitive loop answer "did anything break?" for a few dozen
+        tokens instead of re-snapshotting the page to find out.
+        """
+        data = self._drain_telemetry() if drain else self._peek_telemetry()
+        data.setdefault("dialogs", [])
+        out: dict = {
+            "session_id": self.id, "url": self.last_url,
+            "supported": bool(data), **data,
+        }
+        made = getattr(self.page, "requests", None)
+        if isinstance(made, list):
+            out["requests_made"] = len(made)
+        if drain:
+            self._record("telemetry", "ok", detail="drained")
+        return out
 
     def resolve_target(self, target: str) -> str:
         """Resolve a ref or a human-readable target to a catalog ref.
@@ -1297,15 +2012,15 @@ class BrowserAgentSession:
                     result.update(evidence)
                 passed += 1
             except SessionRefused as refusal:
-                result["status"] = "failed"
+                result["status"] = classify_step_failure(refusal.reason)
                 result["reason"] = refusal.reason
                 result["error"] = refusal.detail or refusal.reason
                 if refusal.candidates:
                     result["candidates"] = refusal.candidates
                 failed += 1
             except Exception as exc:  # unexpected page/tool error
-                result["status"] = "failed"
-                result["reason"] = "error"
+                result["status"] = "inconclusive"
+                result["reason"] = "harness_error"
                 result["error"] = str(exc)[:300]
                 failed += 1
 
@@ -1315,13 +2030,14 @@ class BrowserAgentSession:
                 result["cause"] = cause
             result["ms"] = int((time.time() - t0) * 1000)
             results.append(result)
-            if result["status"] == "failed" and stop_on_failure:
+            if result["status"] != "passed" and stop_on_failure:
                 break
 
         telemetry = self._drain_telemetry()
         state = await self._safe_state()
         report = {
             "ok": failed == 0,
+            "status": classify_flow_status(results),
             "passed": passed,
             "failed": failed,
             "total": len(results),
@@ -1330,6 +2046,7 @@ class BrowserAgentSession:
             "console_warnings": telemetry.get("console_warnings", []),
             "failed_requests": telemetry.get("failed_requests", []),
             "bad_responses": telemetry.get("bad_responses", []),
+            "dialogs": telemetry.get("dialogs", []),
             "final_url": state.get("url", self.last_url),
             "title": state.get("title", ""),
             "duration_ms": int((time.time() - started) * 1000),
@@ -1340,6 +2057,7 @@ class BrowserAgentSession:
             self.network_policy.report() if self.network_policy is not None
             else {"enforced": False, "reason": "adapter_without_request_policy"}
         )
+        report["diagnostics"] = summarize_flow_diagnostics(results, telemetry)
         if resolve_sources:
             report["console_errors_source"] = await self._resolve_sources(
                 telemetry.get("console_errors_detail") or [],
@@ -1348,6 +2066,24 @@ class BrowserAgentSession:
             (s.get("action") or "").lower() == "evaluate" for s in normalized
         )
         report["tokens_estimate"] = estimate_tokens(report)
+        # The answer to "is this actually cheaper?": the same script driven as
+        # MCP primitives costs one call per action plus a fresh page state
+        # after every mutation that moves the DOM.
+        primitive = estimate_primitive_cost(
+            normalized,
+            elements=len(self.catalog) or int(state.get("count") or 0),
+            text_chars=len(str(state.get("text") or "")),
+        )
+        report["savings"] = {
+            "steps": len(normalized),
+            "flow_calls": 1,
+            "primitive_calls": primitive["calls"],
+            "calls_avoided": max(0, primitive["calls"] - 1),
+            "flow_tokens": report["tokens_estimate"],
+            "primitive_tokens": primitive["tokens"],
+            "saved_tokens": max(0, primitive["tokens"] - report["tokens_estimate"]),
+        }
+        record_flow_savings(report["savings"])
         self._record(
             "run_flow", "ok" if report["ok"] else "failed",
             detail=f"{passed}/{len(results)} steps passed",
@@ -1360,6 +2096,7 @@ class BrowserAgentSession:
             "console_errors": len(t.get("console_errors") or []),
             "failed_requests": len(t.get("failed_requests") or []),
             "bad_responses": len(t.get("bad_responses") or []),
+            "dialogs": len(t.get("dialogs") or []),
         }
 
     def _attribute(self, before_elements: list[dict], before_tel: dict) -> dict:
@@ -1369,12 +2106,19 @@ class BrowserAgentSession:
         new_errors = (tel.get("console_errors") or [])[before_tel["console_errors"]:]
         new_failed = (tel.get("failed_requests") or [])[before_tel["failed_requests"]:]
         new_bad = (tel.get("bad_responses") or [])[before_tel["bad_responses"]:]
+        new_dialogs = (tel.get("dialogs") or [])[before_tel.get("dialogs", 0):]
         if new_errors:
             cause["console_errors"] = [e[:160] for e in new_errors[:3]]
         if new_failed:
             cause["failed_requests"] = new_failed[:3]
         if new_bad:
             cause["bad_responses"] = new_bad[:3]
+        if new_dialogs:
+            cause["dialogs"] = [
+                f"{d.get('type')}:{d.get('message', '')[:60]}"
+                f"{'(accepted)' if d.get('accepted') else '(dismissed)'}"
+                for d in new_dialogs[:3]
+            ]
         dom = diff_elements(before_elements, list(self.catalog.values()))
         dom_small = {k: dom[k] for k in ("added", "removed", "changed") if dom.get(k)}
         if dom_small:
@@ -1430,6 +2174,18 @@ class BrowserAgentSession:
         if action in _MUTATING_ACTIONS:
             self._require_agent_control(action)
         timeout = int(step.get("timeout", DEFAULT_STEP_TIMEOUT_MS))
+
+        # A step can answer the dialog *it* raises. Arming has to happen before
+        # the dispatch, and the answer is one-shot so it cannot leak downstream.
+        if step.get("dialog") and action != "dialog":
+            await self.arm_dialog(step["dialog"])
+
+        if action == "dialog":
+            spec = step.get("dialog") or {
+                "accept": step.get("accept", True), "text": step.get("text", ""),
+            }
+            info = await self.arm_dialog(spec)
+            return f"next dialog will be {info['armed']}", {}
 
         if action == "navigate":
             url = step.get("url") or step.get("value") or ""
@@ -1597,6 +2353,65 @@ class BrowserAgentSession:
                 await self._read_state()
             return f"{action} {selector[:60]}", {}
 
+        if action in ("upload", "attach_file", "set_input_files"):
+            selector = (step.get("selector") or "").strip()
+            chooser = step.get("chooser")
+            files = step.get("files", step.get("file"))
+            if step.get("ref") or step.get("target") or step.get("name"):
+                ref = await self._target(step)
+            elif selector:
+                ref = ""
+            else:
+                raise SessionRefused(
+                    "target_required", "upload needs a 'ref', 'target' or 'selector'",
+                )
+            res = await self.upload_files(
+                ref, files, approve=approve, selector=selector,
+                chooser=None if chooser is None else bool(chooser),
+            )
+            if observe:
+                await self._read_state()
+            return (
+                f"uploaded {len(res['uploaded'])} file(s) via {res['mode']}",
+                {"uploaded": res["uploaded"], "upload_mode": res["mode"]},
+            )
+
+        if action == "download":
+            selector = (step.get("selector") or "").strip()
+            match = str(step.get("match", "") or "")
+            dtimeout = int(step.get("timeout", 15000))
+            target = step.get("target") or step.get("name") or ""
+            if step.get("ref") or target:
+                ref = await self._target(step)
+                info = await self._call_optional(
+                    "download_via_click", ref, self.download_dir,
+                    timeout_ms=dtimeout, match=match,
+                )
+            elif selector:
+                ref = ""
+                info = await self._call_optional(
+                    "download_via_selector", selector, self.download_dir,
+                    timeout_ms=dtimeout, match=match,
+                )
+            else:
+                raise SessionRefused(
+                    "target_required", "download needs a 'ref', 'target' or 'selector'",
+                )
+            info = info or {}
+            if info.get("mismatch"):
+                raise SessionRefused(
+                    "download_mismatch",
+                    f"downloaded {info.get('file')!r}, expected {info['mismatch']!r}",
+                )
+            self._capture_step({
+                "action": "download", "target": target or ref or selector,
+                **({"match": match} if match else {}),
+            })
+            return (
+                f"downloaded {info.get('file')} ({info.get('bytes', 0)} bytes)",
+                {"download": info},
+            )
+
         if action == "evaluate":
             script = step.get("script") or step.get("value") or ""
             if not script.strip():
@@ -1619,7 +2434,7 @@ class BrowserAgentSession:
             return "evaluated", {"evaluated": text}
 
         if action in ("wait", "wait_for"):
-            await self._run_wait(step, timeout)
+            await self._run_wait(step, timeout, approve)
             await self._read_state()
             return "waited", {}
 
@@ -1639,7 +2454,19 @@ class BrowserAgentSession:
 
         raise SessionRefused("unknown_action", f"unsupported action: {action}")
 
-    async def _run_wait(self, step: dict, timeout: int) -> None:
+    async def _run_wait(self, step: dict, timeout: int, approve: bool = False) -> None:
+        if step.get("js"):
+            # A JS predicate is the escape hatch for "wait until the app is
+            # actually ready" (a flag, a promise, a component state) — but it
+            # runs script, so it carries evaluate's approval gate.
+            if not approve:
+                raise SessionRefused(
+                    "approval_required",
+                    "wait with a 'js' predicate runs script on the page; "
+                    "re-send with approve=true",
+                )
+            await self._call_optional("wait_for_function", str(step["js"]), timeout)
+            return
         if step.get("selector"):
             await self._call_optional("wait_for_selector", step["selector"], timeout)
             return
@@ -1679,6 +2506,36 @@ class BrowserAgentSession:
             "not_checked", "enabled", "disabled",
         ):
             return await self._assert_selector(kind, selector, value)
+
+        if kind in ("dialog", "no_dialog", "no_dialogs"):
+            dialogs = self._peek_telemetry().get("dialogs") or []
+            if kind in ("no_dialog", "no_dialogs"):
+                if not dialogs:
+                    return True, "no dialog was raised"
+                return False, (
+                    f"{len(dialogs)} dialog(s) raised; last: "
+                    f"{dialogs[-1].get('type')}:{str(dialogs[-1].get('message', ''))[:60]}"
+                )
+            if not dialogs:
+                return False, "no dialog was raised"
+            last = dialogs[-1]
+            want_type = str(step.get("type", "") or "")
+            if want_type and last.get("type") != want_type:
+                return False, f"last dialog was {last.get('type')}, wanted {want_type}"
+            if value and value not in str(last.get("message") or ""):
+                return False, (
+                    f"dialog message {str(last.get('message'))[:80]!r} "
+                    f"does not contain {value!r}"
+                )
+            if step.get("accepted") is not None:
+                if bool(last.get("accepted")) != bool(step.get("accepted")):
+                    return False, (
+                        "dialog was " + ("accepted" if last.get("accepted") else "dismissed")
+                    )
+            state_bit = ""
+            if step.get("accepted") is not None:
+                state_bit = " accepted" if last.get("accepted") else " dismissed"
+            return True, f"dialog {last.get('type')}{state_bit}"
 
         if kind in ("no_a11y_violations", "a11y_clean", "accessible"):
             audit = await self._call_optional("a11y_audit")
@@ -1999,6 +2856,9 @@ class BrowserAgentService:
             opts["storage_state"] = storage_state
         # Prevent service workers from creating an out-of-band network path.
         opts.setdefault("service_workers", "block")
+        # Downloads are a first-class flow step ("export the CSV, then assert on
+        # it"), so the context has to be allowed to accept them in the first place.
+        opts.setdefault("accept_downloads", True)
         if (trace or har or video) and not artifacts_dir:
             artifacts_dir = tempfile.mkdtemp(prefix="jambu-artifacts-")
         if artifacts_dir:
@@ -2046,7 +2906,7 @@ class BrowserAgentService:
         agent = BrowserAgentSession(
             session_id, adapter, allow_domains=allow_domains,
             require_approval=require_approval, scrub_pii=scrub_pii,
-            allow_private=allow_private,
+            allow_private=allow_private, artifacts_dir=artifacts_dir,
         )
         self._sessions[session_id] = agent
         self._browser_sessions[session_id] = browser_session

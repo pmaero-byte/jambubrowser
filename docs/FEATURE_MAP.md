@@ -335,7 +335,7 @@ service, or agent — via CLI, MCP, eval framework, or plugins.
 ### What exists today
 - **CLI tool** (`cli/`) — `jambu` command-line client + GitHub Action
   for CI/CD (`dd61dd7 feat(cli): jambu CLI tool + GitHub Action`).
-- **MCP server** (`tools/mcp/`) — 21 tools exposed over Model Context
+- **MCP server** (`tools/mcp/`) — 45 tools exposed over Model Context
   Protocol, so Claude / Cursor / other MCP clients can drive Jambubrowser.
   Tests: `tests/test_mcp_server.py` (stdio smoke).
 - **Eval framework** (`backend/eval/`, ~1.5k LOC) — harness, metrics,

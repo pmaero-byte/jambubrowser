@@ -390,7 +390,7 @@ All components live in `browser-app/src/` and are shared between the desktop (Ta
 | **A2A Agent** | `backend/modules/a2a.py` | Agent2Agent v0.3 JSON-RPC (SendMessage/GetTask/CancelTask) with audit, certification, and mesh-inference skills |
 | **Verification Tiers** | `backend/modules/verification.py` | Value-at-risk policy, known-answer canaries, sampled redundant execution with tolerance comparison + worker scorecards |
 | **MeshPay** | `backend/modules/meshpay/` | Independent DCM receipt-chain verification (JS-faithful serializer), epoch Merkle roots, USDC payout plans, Solana memo anchoring |
-| **DCM Client** | `backend/modules/dcm_client.py` | DecentraCode Mesh REST: status, models, join-info, earnings, settlement log |
+| **DCM Client** | `backend/decentralized/dcm_client.py` | DecentraCode Mesh REST: status, models, join-info, earnings, settlement log |
 | **Remote MCP** | `backend/mcp_http.py` | Streamable-HTTP MCP transport with token auth + Server Card (stdio lives in `mcp_server.py`) |
 | **Audit Monitors** | `backend/modules/audit_monitor.py` | Recurring audits, finding diffing, regression alerts, scheduler |
 | **Visual Diff** | `backend/modules/visual_diff.py` | Screenshot change % + red-over-dim heatmap rendering |
@@ -415,7 +415,7 @@ cd browser-app && npm run build && npm run typecheck && npm run lint && npm test
 
 The CI workflow (`.github/workflows/test.yml`) runs all passing test categories on every push:
 core backend, LLM layer, memory, agent loop, security middleware stack (9 files),
-engine runtime, MCP server (stdio + remote Streamable HTTP, 28 tools), eval, CLI, AI employees (6 specialist auditors),
+engine runtime, MCP server (stdio + remote Streamable HTTP, 45 tools), eval, CLI, AI employees (6 specialist auditors),
 and more. Tests requiring live services (E2E, real LLM, SearXNG, SOCKS proxy)
 are excluded from CI — run those manually when the corresponding service is up.
 

@@ -54,6 +54,22 @@ class ActRequest(BaseModel):
     text: str = ""
     approve: bool = False
     selector: str = ""
+    files: Optional[list[str]] = None
+    dialog: Optional[str] = None
+
+
+class ActBatchRequest(BaseModel):
+    actions: list[dict]
+    approve: bool = False
+    stop_on_error: bool = True
+
+    @validator("actions")
+    def validate_actions(cls, v):
+        if not v:
+            raise ValueError("actions must be non-empty")
+        if len(v) > 25:
+            raise ValueError("at most 25 actions per batch")
+        return v
 
 
 class TakeoverRequest(BaseModel):
@@ -164,6 +180,19 @@ async def list_sessions():
     return {"sessions": sessions, "count": len(sessions)}
 
 
+@router.get("/savings")
+async def token_savings():
+    """Tokens/calls the flow + batch verbs saved versus a primitive MCP loop.
+
+    Counted across every flow run by this engine process: ``primitive_tokens``
+    is what the same scripts would have cost as one tool call per action plus a
+    fresh snapshot after each mutation.
+    """
+    from backend.modules.browser_agent import token_savings as _savings
+
+    return _savings()
+
+
 @router.get("/{session_id}")
 async def session_info(session_id: str):
     try:
@@ -196,8 +225,39 @@ async def act(session_id: str, req: ActRequest):
     try:
         return await session.act(
             req.action, req.ref, text=req.text, approve=req.approve,
-            selector=req.selector,
+            selector=req.selector, files=req.files, dialog=req.dialog,
         )
+    except SessionRefused as refusal:
+        raise _refusal_to_http(refusal)
+
+
+@router.post("/{session_id}/act_batch")
+async def act_batch(session_id: str, req: ActBatchRequest):
+    """Run several primitives in one call — the low-token way to drive a form.
+
+    Each act still produces its own receipt and refusal; only the round trips
+    and re-observations are shared. If the page navigated mid-batch the answer
+    carries ``reobserve: true``: snapshot once before continuing.
+    """
+    session = _get(session_id)
+    try:
+        return await session.act_many(
+            req.actions, approve=req.approve, stop_on_error=req.stop_on_error,
+        )
+    except SessionRefused as refusal:
+        raise _refusal_to_http(refusal)
+
+
+@router.get("/{session_id}/telemetry")
+async def telemetry(session_id: str, drain: bool = False):
+    """Console/network/dialog telemetry collected since the session opened.
+
+    Cheaper than a snapshot when the only question is "did anything break?".
+    ``drain=true`` clears the buffers so the next call reports a fresh delta.
+    """
+    session = _get(session_id)
+    try:
+        return session.telemetry_report(drain=drain)
     except SessionRefused as refusal:
         raise _refusal_to_http(refusal)
 
@@ -412,7 +472,7 @@ async def set_takeover(session_id: str, req: TakeoverRequest):
 @router.post("/{session_id}/evidence")
 async def session_evidence(session_id: str):
     """Sign the session's receipt log into a verifiable evidence bundle."""
-    from backend.modules.evidence import build_bundle, save_bundle
+    from backend.decentralized.evidence import build_bundle, save_bundle
 
     session = _get(session_id)
     receipt_log = session.receipts()

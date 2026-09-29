@@ -2,7 +2,7 @@
 
 Auto-generated from `backend/mcp_server.py` by `tools/mcp/generate_docs.py`. Do not edit by hand — re-run the generator after adding or renaming a tool.
 
-**Total tools:** 42
+**Total tools:** 45
 
 ## Table of contents
 
@@ -12,15 +12,18 @@ Auto-generated from `backend/mcp_server.py` by `tools/mcp/generate_docs.py`. Do 
 - [`browser_export_playwright`](#browser_export_playwright)
 - [`browser_import_playwright`](#browser_import_playwright)
 - [`browser_session_act`](#browser_session_act)
+- [`browser_session_act_batch`](#browser_session_act_batch)
 - [`browser_session_close`](#browser_session_close)
 - [`browser_session_open`](#browser_session_open)
 - [`browser_session_receipts`](#browser_session_receipts)
 - [`browser_session_run`](#browser_session_run)
 - [`browser_session_snapshot`](#browser_session_snapshot)
+- [`browser_session_telemetry`](#browser_session_telemetry)
 - [`browser_task`](#browser_task)
 - [`browser_test_flow`](#browser_test_flow)
 - [`browser_test_matrix`](#browser_test_matrix)
 - [`browser_test_plan`](#browser_test_plan)
+- [`browser_token_savings`](#browser_token_savings)
 - [`check_engine_health`](#check_engine_health)
 - [`click_element`](#click_element)
 - [`dcm_earnings`](#dcm_earnings)
@@ -146,7 +149,7 @@ Args:
 **Signature**
 
 ```python
-browser_session_act(session_id: str, action: str, ref: str, text: str = '', approve: bool = False)
+browser_session_act(session_id: str, action: str, ref: str, text: str = '', approve: bool = False, files: str = '', dialog: str = '')
 ```
 
 **Description**
@@ -157,10 +160,33 @@ as delete/pay/send always require approve=true).
 
 Args:
     session_id: Session id
-    action: "click" or "type"
+    action: "click", "type" or "upload"
     ref: Element ref from the last snapshot (e.g. @e3)
     text: Text to type (for action="type")
     approve: Explicit approval for input/risky actions
+    files: Comma-separated local file paths (for action="upload"); must sit inside JAMBU_UPLOAD_ROOTS
+    dialog: Answer the dialog this action raises: "accept", "dismiss", or "accept:<text>" for prompt()
+
+### `browser_session_act_batch`
+
+**Signature**
+
+```python
+browser_session_act_batch(session_id: str, actions: str, approve: bool = False, stop_on_error: bool = True)
+```
+
+**Description**
+
+Run several primitives in ONE call — the cheap way to fill a form or walk a
+wizard. Every act still gets its own receipt and refusal; only the round
+trips (and therefore the tokens) are shared, and no re-snapshot happens
+between acts while refs stay valid.
+
+Args:
+    session_id: Session id
+    actions: JSON array of acts, e.g. [{"action":"type","ref":"@e3","text":"a@b.com"},{"action":"check","ref":"@e7"},{"action":"press","ref":"@e9","text":"Enter"},{"action":"assert_visible","target":"Welcome"}]. Any flow step works: click/type/upload/press/select/check/hover/wait/assert_*/dialog/download
+    approve: Explicit approval applied to acts that do not set their own
+    stop_on_error: Stop at the first refusal (default) or run all acts and report each
 
 ### `browser_session_close`
 
@@ -248,6 +274,23 @@ catalog (refs @e1…). Act on refs, never on selector guesses.
 
 Args:
     session_id: Session from browser_session_open
+
+### `browser_session_telemetry`
+
+**Signature**
+
+```python
+browser_session_telemetry(session_id: str, drain: bool = False)
+```
+
+**Description**
+
+Ask "did anything break?" without paying for a snapshot: collected console
+errors, failed/4xx-5xx requests and native dialogs since the session opened.
+
+Args:
+    session_id: Session id
+    drain: Clear the buffers after reading, so the next call is a fresh delta
 
 ### `browser_task`
 
@@ -359,6 +402,15 @@ Args:
     goal: What to test, e.g. "test login with a valid user"
     kind: Force a template: smoke|login|signup|checkout|search|accessibility|performance|responsive
     use_llm: Refine the plan with the configured LLM (default: template only)
+
+### `browser_token_savings`
+
+**Description**
+
+What the flow/batch verbs saved versus driving the browser one primitive per
+tool call: calls avoided and estimated tokens, counted for this engine.
+
+(no args)
 
 ### `check_engine_health`
 

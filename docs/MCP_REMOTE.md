@@ -1,7 +1,7 @@
 # Remote MCP — Streamable HTTP with token auth
 
 `backend/mcp_server.py` is the stdio server for local installs (Claude
-Desktop, Cursor). `backend/mcp_http.py` exposes the same **28 tools** over
+Desktop, Cursor). `backend/mcp_http.py` exposes the same **45 tools** over
 **Streamable HTTP** — the transport 55% of registry servers now use and
 the one the 2026 MCP roadmap builds on (SSE is deprecated).
 
@@ -61,10 +61,18 @@ Client configuration (Claude, Cursor, any MCP client with remote support):
 
 `JAMBU_MCP_PROFILE` (default `full`):
 
-- `full` — all 28 tools.
-- `curated` — 27 tools; drops `execute_tool` (arbitrary saved-tool
+- `full` — all 45 tools.
+- `curated` — 44 tools; drops `execute_tool` (arbitrary saved-tool
   execution) so remote callers must opt in explicitly to that capability.
   Curated also keeps the surface compact for better tool selection.
+- `developer` — 8 tools; keeps only the high-level browser-testing verbs
+  (`browser_task`, `browser_test_*`, `browser_session_run`,
+  `browser_export_playwright`, `browser_import_playwright`,
+  `check_engine_health`) so an agent pays the smallest selection cost.
+
+The exact membership lives in `CURATED_EXCLUDES` / `DEVELOPER_TOOLS` in
+`backend/mcp_server.py`; `tests/test_mcp_docs_generator.py` keeps the counts
+above in sync with the registry.
 
 ## Discovery / registry
 

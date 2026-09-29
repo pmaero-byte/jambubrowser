@@ -7,6 +7,9 @@ Pure, dependency-free utilities used by the browser flow runner:
   rules and match them against requests (Playwright routes the page through
   them; tests exercise the matcher directly).
 - **DOM deltas** — summarise what changed between two element catalogs.
+- **Token-efficient observation** — project a full page state down to the
+  smallest view a model can still act on (column rows, relevance filter,
+  delta-only, hard token ceiling).
 - **Source maps** — a real Base64-VLQ decoder and mapping lookup, so console
   errors can be reported against original source instead of bundle offsets.
 - **Page probes** — self-contained JavaScript for accessibility and
@@ -17,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import fnmatch
 import ipaddress
+import json
 import re
 import socket
 from dataclasses import dataclass
@@ -312,6 +316,289 @@ def diff_elements(before: list[dict], after: list[dict]) -> dict:
         "removed_names": [(b[r].get("name") or "")[:40] for r in removed[:5]],
         "changed_names": [(a[r].get("name") or "")[:40] for r in changed[:5]],
     }
+
+
+# ---------------------------------------------------------------------------
+# Token-efficient observation
+# ---------------------------------------------------------------------------
+# A raw snapshot ships every interactive element with eight fields plus the
+# body text, on every observation. That is the largest single line item in an
+# agent's context and nothing in the pipeline budgets for it. The helpers below
+# turn a full state payload into the smallest view that still lets a model act
+# and assert. Pure functions, no I/O — the session applies them.
+
+# Fields an agent may project an observation down to.
+OBSERVE_FIELDS = (
+    "ref", "role", "name", "value", "checked", "disabled", "visible", "href",
+)
+# The default projection: enough to click, type, and read a control's label.
+DEFAULT_OBSERVE_FIELDS = ("ref", "role", "name")
+MAX_OBSERVE_ROWS = 60
+MAX_OBSERVE_MATCHES = 12
+MAX_OBSERVE_TEXT = 600
+_VALUE_FIELDS = ("value", "checked")
+
+
+def element_identity(element: dict) -> str:
+    """Content identity for an element, stable across observations.
+
+    ``SNAPSHOT_JS`` hands out positional refs (``@e1``, ``@e2``, …) on every
+    read, so a ref only means anything inside a single observation. Anything
+    that compares two catalogs has to key on content instead — otherwise one
+    inserted node renumbers every later ref and the diff reports the whole
+    page as churn.
+    """
+    href = (element.get("href") or "").split("?", 1)[0].rstrip("/")
+    return "|".join([
+        (element.get("tag") or "").lower(),
+        (element.get("role") or "").lower(),
+        (element.get("name") or "").strip().lower(),
+        href.lower(),
+    ])
+
+
+def _project_fields(fields) -> list[str]:
+    if not fields:
+        return list(DEFAULT_OBSERVE_FIELDS)
+    keep = [f for f in fields if f in OBSERVE_FIELDS]
+    if "ref" not in keep:
+        keep.insert(0, "ref")  # the agent always needs a handle to act on
+    return keep
+
+
+def _element_row(element: dict, fields: list[str]) -> list:
+    """One element as a positional row, dropping default-valued cells.
+
+    ``{"ref": "@e1", "role": "button", "name": "Ok", "value": "",
+    "disabled": false, "visible": true}`` is ~90 characters of mostly noise;
+    the same control as three cells is ~25. Defaults are omitted so the agent
+    only pays for what deviates from a normal enabled control.
+    """
+    row: list = []
+    for field in fields:
+        value = element.get(field)
+        if field in _VALUE_FIELDS and value in ("", None, False):
+            continue
+        if field in ("disabled", "visible") and value is True:
+            continue
+        row.append(value)
+    return row
+
+
+def _term_hit(term: str, haystack: str, words: set[str]) -> bool:
+    """Match one query term against an element.
+
+    Short terms must land on a whole word, otherwise a query like
+    "sign in email" matches every link containing "link" (L-**in**-k) and
+    the agent gets the whole page back. Longer terms fall back to substring
+    so "email" still finds ``EmailAddress``.
+    """
+    if term in words:
+        return True
+    return len(term) > 3 and term in haystack
+
+
+def _matches(element: dict, query: str, roles: list[str], match: str = "all") -> bool:
+    if roles:
+        tag = (element.get("role") or element.get("tag") or "").lower()
+        if tag not in roles:
+            return False
+    if not query:
+        return True
+    haystack = " ".join(
+        str(element.get(field) or "")
+        for field in ("name", "value", "href", "role", "type")
+    ).lower()
+    words = set(re.split(r"[^a-z0-9@._-]+", haystack))
+    terms = query.lower().split()
+    hits = [_term_hit(term, haystack, words) for term in terms]
+    return any(hits) if match == "any" else all(hits)
+
+
+def diff_view(before: list[dict], after: list[dict], *,
+              fields=None, limit: int = MAX_OBSERVE_MATCHES) -> dict:
+    """Identity-keyed added/removed/changed rows, sized for a model to read.
+
+    ``diff_elements`` answers "how much churn?" for cause attribution. This
+    answers the question an agent actually has after every mutating step —
+    "what do I need to re-assert?" — with before/after values attached to
+    each change so no extra observation is required to interpret it.
+    """
+    keep = _project_fields(fields)
+    b: dict[str, dict] = {}
+    a: dict[str, dict] = {}
+    for element in before or []:
+        b.setdefault(element_identity(element), element)
+    for element in after or []:
+        a.setdefault(element_identity(element), element)
+
+    added = [_element_row(a[k], keep) for k in a if k not in b]
+    removed = [
+        (b[k].get("name") or b[k].get("tag") or "?")[:40] for k in b if k not in a
+    ]
+    changed = [
+        {"before": _element_row(b[k], keep), "after": _element_row(a[k], keep)}
+        for k in a if k in b and _signature(a[k]) != _signature(b[k])
+    ]
+    return {
+        "columns": keep,
+        "added": added[:limit],
+        "changed": changed[:limit],
+        "removed": removed[:limit],
+        "counts": {
+            "added": len(added),
+            "changed": len(changed),
+            "removed": len(removed),
+        },
+    }
+
+
+def search_text(text: str, query: str, *, context: int = 1,
+                limit: int = MAX_OBSERVE_MATCHES,
+                max_chars: int = MAX_OBSERVE_TEXT) -> dict:
+    """Matching page-text lines with a little surrounding context.
+
+    Replaces "here are 4000 characters, tell me whether the order
+    confirmation is on screen" with the two lines that answer it. The
+    payload is capped at ``max_chars`` so a page with the same phrase
+    repeated 400 times cannot blow the budget; the cap is reported in
+    ``truncated`` rather than silently applied.
+    """
+    if not query or not text:
+        return {}
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    terms = query.lower().split()
+    hits = [
+        i for i, line in enumerate(lines)
+        if all(term in line.lower() for term in terms)
+    ]
+    if not hits:
+        return {"hit": False, "matches": []}
+    picked: list[str] = []
+    seen: set[int] = set()
+    deduped: set[str] = set()
+    truncated = False
+    spent = 0
+    for i in hits[:limit]:
+        for j in range(max(0, i - context), min(len(lines), i + context + 1)):
+            if j in seen:
+                continue
+            seen.add(j)
+            line = lines[j][:200]
+            # The same sentence repeated down a page (nav footers, repeated
+            # rows) costs a full line each time and adds no information.
+            if line in deduped:
+                continue
+            if spent + len(line) > max_chars:
+                truncated = True
+                continue
+            deduped.add(line)
+            spent += len(line)
+            picked.append(line)
+    return {
+        "hit": True, "matches": picked, "lines": len(lines),
+        "truncated": truncated, "total_hits": len(hits),
+    }
+
+
+def compact_observation(
+    state: dict, *, query: str = "", roles=None, fields=None, match: str = "all",
+    changed_since: Optional[list[dict]] = None, include_hidden: bool = False,
+    limit: Optional[int] = None, text: Optional[str] = None, max_tokens: int = 0,
+) -> dict:
+    """Project a full page state into a token-budgeted observation.
+
+    Three levers, in order of payoff:
+
+    - **columns/rows** instead of dicts, with default-valued cells dropped;
+    - **relevance** — ``query`` (matched against the element's name/value/
+      href/role/type; ``match="any"`` for a candidate set, ``"all"`` for a
+      precise one) and ``roles`` narrow a 200-row catalog to the handful the
+      agent is about to use;
+    - **delta** — ``changed_since`` returns only what moved, reusing the same
+      signature the cause attribution already computes.
+
+    ``max_tokens`` is a hard ceiling, not a hint: rows halve, then optional
+    text is dropped, until the estimate fits. Everything dropped is reported
+    in ``truncated``/``omitted`` alongside a ``hint`` naming the call that
+    would retrieve it, so the model can widen its next request deliberately
+    instead of guessing and paying for a full snapshot.
+    """
+    elements = list(state.get("elements") or [])
+    keep = _project_fields(fields)
+    role_list = [str(r).strip().lower() for r in (roles or []) if str(r).strip()]
+
+    hidden = 0
+    candidates: list[dict] = []
+    for element in elements:
+        if not element.get("visible", True) and not include_hidden:
+            hidden += 1
+            continue
+        if _matches(element, query, role_list, match):
+            candidates.append(element)
+
+    view: dict = {
+        "url": state.get("url", ""),
+        "title": (state.get("title") or "")[:120],
+        "columns": keep,
+        "total": len(elements),
+        "matched": len(candidates),
+        "hidden_omitted": hidden,
+    }
+
+    if changed_since is not None:
+        view["delta"] = diff_view(
+            changed_since, candidates, fields=keep, limit=limit or MAX_OBSERVE_MATCHES,
+        )
+        view["shown"] = len(view["delta"]["added"]) + len(view["delta"]["changed"])
+    else:
+        cap = max(1, int(limit or MAX_OBSERVE_ROWS))
+        view["rows"] = [_element_row(e, keep) for e in candidates[:cap]]
+        view["shown"] = len(view["rows"])
+
+    if text:
+        found = search_text(state.get("text") or "", text, max_chars=MAX_OBSERVE_TEXT)
+        if found:
+            view["text"] = found
+
+    omitted: list[str] = []
+    if max_tokens:
+        def size() -> int:
+            probe = {k: v for k, v in view.items()
+                     if k not in ("tokens_estimate", "truncated", "omitted", "hint")}
+            return max(1, len(json.dumps(probe, separators=(",", ":"), default=str)) // 4)
+
+        while size() > max_tokens:
+            if view.get("rows"):
+                view["rows"] = view["rows"][:max(1, len(view["rows"]) // 2)]
+                view["shown"] = len(view["rows"])
+            elif view.get("delta", {}).get("changed"):
+                view["delta"]["changed"] = view["delta"]["changed"][:1]
+                view["shown"] = 1 + len(view["delta"]["added"])
+            elif view.get("delta", {}).get("added"):
+                view["delta"]["added"] = view["delta"]["added"][:1]
+                view["shown"] = 1
+            elif view.get("text"):
+                view.pop("text", None)
+                omitted.append("text")
+            else:
+                break
+        if "text" in view and view["text"].get("truncated"):
+            omitted.append("text truncated")
+        if "delta" not in view and view.get("matched", 0) > view.get("shown", 0):
+            omitted.append(f"{view['matched'] - view['shown']} further matches")
+
+    view["truncated"] = bool(omitted)
+    if omitted:
+        view["omitted"] = omitted
+        view["hint"] = (
+            f"narrow with query=…, roles=…, fields={'/'.join(keep[:2])}, "
+            f"or raise limit= (matched {view.get('matched', 0)})"
+        )
+    view["tokens_estimate"] = max(
+        1, len(json.dumps(view, separators=(",", ":"), default=str)) // 4,
+    )
+    return view
 
 
 # ---------------------------------------------------------------------------

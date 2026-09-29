@@ -145,7 +145,7 @@ and optional vision description over screenshots (pixel diff fallback).
   testing verbs (`browser_task`, `browser_test_flow`, `browser_test_plan`,
   `browser_test_matrix`, `browser_session_run`, `browser_export_playwright`,
   `browser_import_playwright`, `check_engine_health`); `curated` drops
-  `execute_tool`. MCP surface: **42 tools**.
+  `execute_tool`. MCP surface: **45 tools**.
 
 ### 1.9 Dev-server awareness
 `GET /browser/dev-servers` scans common ports and identifies frameworks

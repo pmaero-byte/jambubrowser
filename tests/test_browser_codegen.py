@@ -37,6 +37,62 @@ class TestCodegen:
         code = flow_to_playwright(FLOW)
         assert "page.screenshot({ path: 'shot.png'" in code
 
+    def test_dialog_upload_download_render(self):
+        code = flow_to_playwright([
+            {"action": "upload", "target": "Docs", "files": ["a.png", "b.pdf"]},
+            {"action": "upload", "target": "Picker", "files": ["x.csv"],
+             "chooser": True},
+            {"action": "dialog", "dialog": "accept:typed answer"},
+            {"action": "click", "target": "Delete", "dialog": "dismiss"},
+            {"action": "download", "target": "Export CSV", "match": "*.csv"},
+            {"action": "wait", "js": "window.ready === true", "approve": True},
+            {"action": "assert", "kind": "dialog", "type": "confirm",
+             "value": "Delete?"},
+        ], name="files")
+        # A dialog is answered by staging the answer before the acting step.
+        assert "dialogAnswer = { accept: true, text: 'typed answer' };" in code
+        assert "dialogAnswer = { accept: false };" in code
+        assert code.index("dialogAnswer = { accept: false };") < code.index(
+            "page.getByText('Delete'")
+        assert "setInputFiles(['a.png', 'b.pdf'])" in code
+        assert "page.waitForEvent('filechooser')" in code
+        assert "await chooser.setFiles(['x.csv']);" in code
+        assert "page.waitForEvent('download')" in code
+        assert "expect(download.suggestedFilename()).toContain('*.csv');" in code
+        assert "page.waitForFunction('window.ready === true');" in code
+        # The recorder both answers staged dialogs and feeds the dialog asserts.
+        assert "page.on('dialog', async d => {" in code
+        assert "expect(dialogs.at(-1) || '').toContain('confirm:Delete?');" in code
+
+    def test_round_trip_files_dialogs_and_js_wait(self):
+        steps = [
+            {"action": "upload", "target": "Docs", "files": ["a.png", "b.pdf"]},
+            {"action": "upload", "target": "Picker", "files": ["x.csv"],
+             "chooser": True},
+            {"action": "dialog", "dialog": "accept:typed answer"},
+            {"action": "click", "target": "Delete", "dialog": "dismiss"},
+            {"action": "download", "target": "Export CSV", "match": "*.csv"},
+            {"action": "wait", "js": "window.ready === true", "approve": True},
+            {"action": "assert", "kind": "dialog", "type": "confirm",
+             "value": "Delete?"},
+        ]
+        back = playwright_to_flow(flow_to_playwright(steps, name="files"))
+        assert back["unparsed"] == []
+        assert [s["action"] for s in back["steps"]] == [
+            "upload", "upload", "dialog", "dialog", "click", "download", "wait",
+            "assert",
+        ]
+        assert back["steps"][0]["files"] == ["a.png", "b.pdf"]
+        assert back["steps"][1]["chooser"] is True
+        assert back["steps"][2] == {"action": "dialog", "accept": True,
+                                    "text": "typed answer"}
+        assert back["steps"][3] == {"action": "dialog", "accept": False}
+        assert back["steps"][5]["match"] == "*.csv"
+        assert back["steps"][6] == {"action": "wait",
+                                    "js": "window.ready === true", "approve": True}
+        assert back["steps"][7] == {"action": "assert", "kind": "dialog",
+                                    "type": "confirm", "value": "Delete?"}
+
     def test_accepts_json_string_and_wrapper(self):
         import json
         assert "page.goto" in flow_to_playwright(json.dumps(FLOW))
@@ -115,12 +171,98 @@ class TestImport:
           await page.goto('http://x');
           await page.locator('.fancy > div').click();
           await page.getByTestId('avatar').setInputFiles('a.png');
+          await page.getByRole('button').dblclick();
         """)
         assert doc["steps"][0]["action"] == "navigate"
-        # CSS locators now import as selector steps; only setInputFiles is lost.
+        # CSS locators import as selector steps and uploads as upload steps;
+        # only genuinely unknown actions are reported.
         assert doc["steps"][1] == {"action": "click", "selector": ".fancy > div"}
+        assert doc["steps"][2]["action"] == "upload"
+        assert doc["steps"][2]["files"] == ["a.png"]
         assert len(doc["unparsed"]) == 1
         assert doc["unparsed"][0]["reason"] == "unsupported-action"
+
+    def test_upload_dialog_download_import(self):
+        doc = playwright_to_flow("""
+          await page.getByLabel('Docs').setInputFiles(['a.png', 'b.pdf']);
+          const [chooser] = await Promise.all([
+            page.waitForEvent('filechooser'),
+            page.getByText('Pick file').first().click(),
+          ]);
+          await chooser.setFiles(['x.csv']);
+          dialogAnswer = { accept: true, text: 'typed answer' };
+          dialogAnswer = { accept: false };
+          const [download] = await Promise.all([
+            page.waitForEvent('download'),
+            page.getByText('Export CSV').first().click(),
+          ]);
+          expect(download.suggestedFilename()).toContain('csv');
+          await download.saveAs(`downloads/${download.suggestedFilename()}`);
+          await page.waitForFunction('window.ready === true');
+        """)
+        assert doc["steps"][0] == {"action": "upload", "target": "Docs",
+                                   "files": ["a.png", "b.pdf"]}
+        assert doc["steps"][1] == {"action": "upload", "chooser": True,
+                                   "target": "Pick file", "files": ["x.csv"]}
+        assert doc["steps"][2] == {"action": "dialog", "accept": True,
+                                   "text": "typed answer"}
+        assert doc["steps"][3] == {"action": "dialog", "accept": False}
+        assert doc["steps"][4] == {"action": "download", "target": "Export CSV",
+                                   "match": "csv"}
+        assert doc["steps"][5] == {"action": "wait", "js": "window.ready === true",
+                                   "approve": True}
+        assert doc["unparsed"] == []
+
+    def test_recorder_removal_keeps_line_numbers(self):
+        doc = playwright_to_flow("""
+          let dialogAnswer: { accept: boolean } | null = null;
+          const dialogs: string[] = [];
+          page.on('dialog', async d => {
+            dialogs.push(`head:${d.message()}`);
+            if (dialogAnswer?.accept) await d.accept(dialogAnswer.text);
+            else await d.dismiss();
+            dialogAnswer = null;
+          });
+          await page.getByRole('button').dragTo(page.locator('#dropzone'));
+        """)
+        # The recorder is scaffolding, but the unsupported line after it must
+        # still be reported at the line the reader actually sees.
+        assert len(doc["unparsed"]) == 1
+        assert doc["unparsed"][0]["line"] == 10
+        assert "dragTo" in doc["unparsed"][0]["text"]
+
+    def test_hand_written_dialog_handler_is_not_swallowed(self):
+        doc = playwright_to_flow("""
+          page.on('dialog', async d => { seen.push(d.message()); await d.dismiss(); });
+        """)
+        assert doc["steps"] == []
+        assert len(doc["unparsed"]) == 1
+        assert doc["unparsed"][0]["line"] == 2
+        assert doc["unparsed"][0]["reason"] == "dialog-listener"
+
+        multi = playwright_to_flow("""
+          page.on('dialog', async d => {
+            if (d.message().includes('Sure')) await d.accept();
+          });
+        """)
+        assert multi["unparsed"][0]["line"] == 2
+        assert multi["unparsed"][0]["reason"] == "dialog-listener"
+
+    def test_export_todo_survives_reimport_as_reported_gap(self):
+        code = flow_to_playwright([
+            {"action": "navigate", "url": "https://shop.test/files"},
+            {"action": "drag", "target": "Box"},
+        ], name="gap")
+        doc = playwright_to_flow(code)
+        assert [s["action"] for s in doc["steps"]] == ["navigate"]
+        gaps = [u for u in doc["unparsed"]
+                if str(u.get("reason", "")).startswith("export-gap")]
+        assert len(gaps) == 1
+        assert gaps[0]["reason"] == "export-gap-action"
+        assert "drag" in gaps[0]["text"]
+        todo_line = next(n for n, line in enumerate(code.splitlines(), 1)
+                         if "TODO unsupported action" in line)
+        assert gaps[0]["line"] == todo_line
 
     def test_round_trip(self):
         exported = flow_to_playwright(FLOW, name="login flow")

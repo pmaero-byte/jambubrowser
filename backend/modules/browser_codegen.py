@@ -34,6 +34,50 @@ def _type_locator(target: str) -> str:
     return f"page.getByLabel({_s(target)}).or(page.getByPlaceholder({_s(target)})).first()"
 
 
+# Steps whose interaction can raise a native dialog, whose answer therefore has
+# to be staged before the action runs (see the collector in flow_to_playwright).
+_DIALOG_ARMED_ACTIONS = ("click", "type", "press", "check", "uncheck",
+                         "hover", "select", "upload")
+
+_DIALOG_ASSERT_KINDS = ("dialog", "last_dialog", "dialog_type", "no_dialog",
+                        "dialog_dismissed", "dialog_absent")
+
+
+def _dialog_answer_ts(spec) -> str:
+    """A staged answer for the next native dialog."""
+    accept, text = _dialog_spec(spec)
+    if not accept:
+        return "{ accept: false }"
+    return "{ accept: true%s }" % (f", text: {_s(text)}" if text else "")
+
+
+def _dialog_spec(spec):
+    """Parse a flow dialog spec.
+
+    Lives as a lazy import so this module stays dependency-free (and cycle-free)
+    while the single canonical parser sits next to the act path in browser_agent.
+    """
+    from .browser_agent import parse_dialog_spec
+
+    return parse_dialog_spec(spec)
+
+
+def _dialog_arm_lines(step: dict) -> list[str]:
+    """Stage the answer to the dialog this step's interaction is expected to raise."""
+    if not step.get("dialog"):
+        return []
+    return [f"  dialogAnswer = {_dialog_answer_ts(step['dialog'])};"]
+
+
+def _file_list(step: dict) -> list:
+    files = step.get("files")
+    if isinstance(files, str):
+        files = [f.strip() for f in files.split(",") if f.strip()]
+    if not files and step.get("file"):
+        files = [step["file"]]
+    return [str(f) for f in (files or [])]
+
+
 def _step_to_ts(step: dict, state: Optional[dict] = None) -> list[str]:
     state = state if state is not None else {}
     action = (step.get("action") or "").strip().lower()
@@ -50,10 +94,40 @@ def _step_to_ts(step: dict, state: Optional[dict] = None) -> list[str]:
         lines.append("  await page.goBack();")
     elif action == "forward":
         lines.append("  await page.goForward();")
+    elif action == "dialog":
+        spec = step.get("dialog") or {"accept": step.get("accept", True),
+                                     "text": step.get("text", "")}
+        lines.append(f"  dialogAnswer = {_dialog_answer_ts(spec)};  "
+                     "// answers the dialog raised by the NEXT action")
     elif action == "click":
-        lines.append(f"  await {_locator(target)}.click();  // {approve}".rstrip())
+        click_line = f"  await {_locator(target)}.click();"
+        lines.append(f"{click_line}  // {approve}" if approve else click_line)
     elif action == "type":
         lines.append(f"  await {_type_locator(target)}.fill({_s(value)});")
+    elif action in ("upload", "attach_file", "set_input_files"):
+        paths = ", ".join(_s(f) for f in _file_list(step)) or "'path/to/file'"
+        selector = (step.get("selector") or "").strip()
+        loc = f"page.locator({_s(selector)})" if selector else _type_locator(target)
+        if step.get("chooser"):
+            # A button that opens the OS picker: race the event against the click.
+            lines.append("  const [chooser] = await Promise.all([")
+            lines.append("    page.waitForEvent('filechooser'),")
+            lines.append(f"    {loc}.click(),")
+            lines.append("  ]);")
+            lines.append(f"  await chooser.setFiles([{paths}]);")
+        else:
+            lines.append(f"  await {loc}.setInputFiles([{paths}]);")
+    elif action == "download":
+        locator = (f"page.locator({_s(step['selector'])})"
+                   if (step.get("selector") or "").strip() else _locator(target))
+        lines.append("  const [download] = await Promise.all([")
+        lines.append("    page.waitForEvent('download'),")
+        lines.append(f"    {locator}.click(),")
+        lines.append("  ]);")
+        if step.get("match"):
+            lines.append(f"  expect(download.suggestedFilename()).toContain({_s(step['match'])});")
+        lines.append("  await download.saveAs("
+                     "`downloads/${download.suggestedFilename()}`);")
     elif action == "press":
         if target:
             lines.append(f"  await {_locator(target)}.press({_s(step.get('key', 'Enter'))});")
@@ -67,7 +141,9 @@ def _step_to_ts(step: dict, state: Optional[dict] = None) -> list[str]:
         fn = "check" if action == "check" else "uncheck"
         lines.append(f"  await page.getByLabel({_s(target)}).{fn}();")
     elif action in ("wait", "wait_for"):
-        if step.get("selector"):
+        if step.get("js"):
+            lines.append(f"  await page.waitForFunction({_s(step['js'])});")
+        elif step.get("selector"):
             lines.append(f"  await page.waitForSelector({_s(step['selector'])});")
         elif step.get("text"):
             lines.append(f"  await page.getByText({_s(step['text'])}).first().waitFor();")
@@ -111,6 +187,9 @@ def _step_to_ts(step: dict, state: Optional[dict] = None) -> list[str]:
             lines.extend(_assert_to_ts(kind, target, value, step))
     else:
         lines.append(f"  // TODO unsupported action: {action} {json.dumps(step)}")
+    # A dialog is raised *by* the interaction, so its answer must be armed first.
+    if action in _DIALOG_ARMED_ACTIONS:
+        lines = _dialog_arm_lines(step) + lines
     return lines
 
 
@@ -188,6 +267,17 @@ def _assert_to_ts(kind: str, target: str, value: str,
         return [f"  await expect({_locator(target)}).toBeEnabled();"]
     if kind == "disabled":
         return [f"  await expect({_locator(target)}).toBeDisabled();"]
+    if kind in ("dialog", "last_dialog", "dialog_type"):
+        dtype = str((step or {}).get("type", "") or target or "").strip()
+        bits = ":".join(part for part in (dtype, str(value or "")) if part)
+        if not bits:
+            return ["  expect(dialogs.length).toBeGreaterThan(0);"]
+        return [f"  expect(dialogs.at(-1) || '').toContain({_s(bits)});"]
+    if kind in ("no_dialog", "dialog_absent"):
+        return ["  expect(dialogs.length).toBe(0);"]
+    if kind == "dialog_dismissed":
+        return ["  // The engine records dismissal in telemetry; Playwright already "
+                "answered via dialogAnswer."]
     if kind in ("console_clean", "no_console_errors"):
         return ["  // NOTE: console cleanliness is asserted by the Jambubrowser telemetry collector."]
     if kind in ("no_failed_requests", "network_clean"):
@@ -207,6 +297,18 @@ def _assert_to_ts(kind: str, target: str, value: str,
     return [f"  // TODO unsupported assertion: {kind}"]
 
 
+def _assert_kind_in(step: dict, kinds) -> bool:
+    """True when a flow step asserts one of `kinds` (both action forms)."""
+    action = (step.get("action") or "").strip().lower()
+    if action == "assert":
+        kind = (step.get("kind") or "").strip().lower()
+    elif action.startswith("assert_"):
+        kind = action[len("assert_"):].strip().lower()
+    else:
+        return False
+    return kind in kinds
+
+
 def flow_to_playwright(steps, *, name: str = "jambubrowser flow",
                        url: str = "", base_url: str = "") -> str:
     """Render a flow to a Playwright Test TypeScript file."""
@@ -218,9 +320,23 @@ def flow_to_playwright(steps, *, name: str = "jambubrowser flow",
     state: dict = {}
     for step in steps:
         body.extend(_step_to_ts(step, state))
-    prelude = []
+    prelude: list[str] = []
+    if (any(s.get("dialog") or (s.get("action") or "").strip().lower() == "dialog"
+           or _assert_kind_in(s, _DIALOG_ASSERT_KINDS) for s in steps)):
+        # One handler for the whole test: it records every dialog for assertions
+        # and answers with the answer staged by the preceding step.
+        prelude += [
+            "  let dialogAnswer: { accept: boolean; text?: string } | null = null;",
+            "  const dialogs: string[] = [];",
+            "  page.on('dialog', async d => {",
+            "    dialogs.push(`${d.type()}: ${d.message()}`);",
+            "    if (dialogAnswer?.accept) await d.accept(dialogAnswer.text);",
+            "    else await d.dismiss();",
+            "    dialogAnswer = null;",
+            "  });",
+        ]
     if url:
-        prelude = [f"  // Original entry point: {url}"]
+        prelude += [f"  // Original entry point: {url}"]
     header = (
         "import { test, expect } from '@playwright/test';\n\n"
         f"test({_s(name)}, async ({{ page, request }}) => {{\n"
@@ -396,7 +512,10 @@ def _parse_line(line: str, symbols: dict):
 
     if (not stripped or stripped.startswith(("import ", "//", "/*", "*", "test(", "test.use(",
             "});", "})", "});", "{", "}", "await test.step(",
-            "await page.route(", "await route.", "route."))):
+            "await page.route(", "await route.", "route.",
+            "])",  # closer of a Promise.all race
+            "dialogs.push(", "if (dialogAnswer", "dialogAnswer = null",
+            "else await d.dismiss(", "let dialogAnswer", "const dialogs"))):
         return _SKIP
 
     # Locator declarations: const save = page.getByRole(...); / page.locator(...)
@@ -441,6 +560,60 @@ def _parse_line(line: str, symbols: dict):
     wait_resp = re.search(r"page\.waitFor(?:Response|Request)\((.+)\)", stripped)
     if wait_resp and (pattern := _quoted(wait_resp.group(1), 0)):
         return {"action": "assert_made_request", "value": pattern}
+    wait_fn = re.search(r"page\.waitForFunction\((.+)\)", stripped)
+    if wait_fn and (expr := _quoted(wait_fn.group(1), 0)):
+        return {"action": "wait", "js": expr, "approve": True}
+
+    # Dialog/file-transfer primitives exported from Jambubrowser flows.
+    if "download.saveAs(" in stripped:
+        return _SKIP  # Jambubrowser stores downloads in the session artifacts dir
+    staged = re.match(r"dialogAnswer\s*=\s*(\{.*\})", stripped)
+    if staged:
+        body = staged.group(1)
+        step: dict = {"action": "dialog",
+                      "accept": not re.search(r"accept\s*:\s*false", body)}
+        answer = re.search(r"text\s*:\s*(['\"])(.*?)\1", body)
+        if answer:
+            step["text"] = answer.group(2)
+        return step
+    if stripped.startswith("expect(") and "suggestedFilename" in stripped:
+        pending = symbols.get("__download_step")
+        name = _quoted(stripped, 0)
+        if isinstance(pending, dict) and name:
+            pending["match"] = name
+        return _SKIP
+    if stripped.startswith("expect(dialogs"):
+        if ".length" in stripped:
+            return {"action": "assert",
+                    "kind": "no_dialog" if "toBe(0)" in stripped else "dialog"}
+        called = re.search(r"\.to\w+\((.*)\)\s*$", stripped)
+        bits = (_quoted(called.group(1), 0) if called else "") or ""
+        step = {"action": "assert", "kind": "dialog"}
+        dtype, sep, rest = bits.partition(":")
+        if sep:
+            step["type"], step["value"] = dtype, rest
+        elif bits:
+            step["value"] = bits
+        return step
+    race = re.search(r"waitForEvent\(\s*['\"]([\w-]+)['\"]", stripped)
+    if race and "Promise.all(" in stripped:
+        event = race.group(1).lower()
+        if event in ("filechooser", "download"):
+            step = {"action": "upload" if event == "filechooser" else "download"}
+            if event == "filechooser":
+                step["chooser"] = True
+            step.update(_race_target(stripped))
+            symbols["__chooser_upload_step" if event == "filechooser"
+                    else "__download_step"] = step
+            return step
+    chooser_files = re.search(r"(\w+)\.setFiles\((.+)\)", stripped)
+    if chooser_files:
+        files = [f[1] for f in re.findall(r"(['\"])(.*?)\1", chooser_files.group(2))]
+        pending = symbols.get("__chooser_upload_step")
+        if isinstance(pending, dict):
+            pending["files"] = files
+            return _SKIP
+        return {"action": "upload", "files": files, "chooser": True}
 
     evaluated = _parse_evaluate(stripped)
     if evaluated is not None:
@@ -467,14 +640,15 @@ def _parse_line(line: str, symbols: dict):
         calls = re.findall(r"\.(\w+)\(([^)]*)\)", chain.group(3))
         if not calls:
             return None
-        method, call_args = calls[-1]
-        value = _quoted(call_args, 0) or ""
+        method, raw_args = calls[-1]
+        value = _quoted(raw_args, 0) or ""
     elif symbol_chain and symbol_chain.group(1) in symbols:
         form, address = _symbol_address(symbol_chain.group(1), symbols)
         if not form:
             return None
         method = symbol_chain.group(2)
-        value = _quoted(symbol_chain.group(3), 0) or ""
+        raw_args = symbol_chain.group(3)
+        value = _quoted(raw_args, 0) or ""
     else:
         return None
     key = "target" if form == "target" else "selector"
@@ -492,13 +666,30 @@ def _parse_line(line: str, symbols: dict):
         return {"action": "uncheck", key: address}
     if method == "selectOption":
         return {"action": "select", key: address, "value": value}
+    if method in ("setInputFiles", "setFiles"):
+        files = [found[1] for found in re.findall(r"(['\"])(.*?)\1", raw_args)]
+        step = {"action": "upload", key: address}
+        if files:
+            step["files"] = files
+        return step
     if method == "waitFor":
         if form == "selector":
             return {"action": "wait", "selector": address}
         return {"action": "wait", "text": address}
     return None
 
-    return None
+
+def _race_target(statement: str) -> dict:
+    """The intent behind the locator raced against a dialog/download event."""
+    kind = re.search(r"page\.(getBy\w+|locator)\(", statement)
+    if not kind:
+        return {}
+    args = statement[kind.end():]
+    name = _getby_target(kind.group(1), args)
+    if name:
+        return {"target": name}
+    selector = _getby_selector(kind.group(1), args)
+    return {"selector": selector} if selector else {}
 
 
 def _expect_to_assert(inner: str, negated: bool, assertion: str,
@@ -559,7 +750,7 @@ def playwright_to_flow(source: str) -> dict:
     declares them via ``test.use()``. A ``beforeEach`` hook body is parsed
     first and its steps prepended as shared setup.
     """
-    text = str(source or "")
+    text = _strip_dialog_collector(str(source or ""))
     use = _extract_test_use(text)
     each_blocks, without_each = _extract_each_blocks(text)
     setup_src, main_src = _extract_before_each(without_each)
@@ -588,6 +779,9 @@ def playwright_to_flow(source: str) -> dict:
     main_steps, main_unparsed = _parse_fragment(main_src, symbols)
     steps.extend(main_steps)
     unparsed.extend(main_unparsed)
+    # TODOs the exporter itself wrote (a step it could not render) are comments,
+    # so they would vanish on re-import; report them with their file line.
+    unparsed.extend(_export_gaps(text))
     network = _extract_route_policies(text)
     doc: dict = {"steps": steps, "network": network,
                  "unparsed": unparsed, "count": len(steps)}
@@ -790,6 +984,84 @@ def _is_block_opener(line: str) -> bool:
     return bool(re.search(r"(=>|\)|\belse)\s*\{\s*$", stripped))
 
 
+_DIALOG_HANDLER_RE = re.compile(
+    r"[ \t]*page\.on\(\s*['\"]dialog['\"][^\n]*\{.*?\n[ \t]*\}[^;]*;\n",
+    re.DOTALL,
+)
+_DIALOG_DECLARE_RE = re.compile(
+    r"[ \t]*(?:let dialogAnswer|const dialogs)\b[^\n]*\n")
+
+
+def _strip_dialog_collector(source: str) -> str:
+    """Blank out the dialog recorder that ``flow_to_playwright`` generates.
+
+    It is scaffolding rather than flow content: left in, every exported file
+    that touches a dialog would report a dozen "unparsed" lines. Only the
+    recorder we emit (identified by its ``dialogAnswer`` marker) is dropped — a
+    hand-written handler stays visible so the parser still reports it honestly.
+    Newlines are preserved to keep reported line numbers accurate.
+    """
+    text = source or ""
+    if "dialogAnswer" not in text:
+        return text
+
+    def drop(match: re.Match) -> str:
+        block = match.group(0)
+        if "dialogAnswer" not in block:
+            return block
+        return "\n" * block.count("\n")
+
+    text = _DIALOG_HANDLER_RE.sub(drop, text)
+    return _DIALOG_DECLARE_RE.sub("\n", text)
+
+
+_EXPORT_GAP_RE = re.compile(
+    r"//\s*TODO unsupported (action|api assertion|assertion):(.*)$")
+
+
+def _export_gaps(text: str) -> list[dict]:
+    """Report the ``// TODO unsupported …`` comments our own exporter writes.
+
+    A step the exporter cannot render is turned into a comment so the spec still
+    compiles. Left alone, re-importing that spec would drop the step without a
+    word; surfacing the marker keeps the round trip honest about what is missing.
+    """
+    gaps: list[dict] = []
+    for lineno, line in enumerate(str(text or "").splitlines(), 1):
+        match = _EXPORT_GAP_RE.search(line)
+        if match:
+            kind = match.group(1).replace(" ", "-")
+            gaps.append({
+                "line": lineno,
+                "text": f"// TODO unsupported {kind}: {match.group(2).strip()}"[:160],
+                "reason": f"export-gap-{kind}",
+            })
+    return gaps
+
+
+def _bracket_depth(text: str) -> int:
+    """Unclosed ( ) [ ] { } depth of a statement, ignoring strings/comments."""
+    depth, i, quote = 0, 0, ""
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == quote:
+                quote = ""
+        elif ch in "'\"`":
+            quote = ch
+        elif text.startswith("//", i):
+            break
+        elif ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        i += 1
+    return depth
+
+
 def _join_statements(source: str) -> list[tuple[int, str]]:
     """Join continuation lines (chains, open brackets) into statements."""
     out: list[tuple[int, str]] = []
@@ -809,8 +1081,8 @@ def _join_statements(source: str) -> list[tuple[int, str]]:
             out.append((start, buf))
             buf, start = line, lineno
             continue
-        if re.match(r"^[\]\}\)]+\s*;?\s*$", line.strip()):
-            # Pure closers (});) never continue a statement — flush first.
+        if re.match(r"^[\]\}\)]+\s*;?\s*$", line.strip()) and _bracket_depth(buf) == 0:
+            # Pure closers (});) never continue a *balanced* statement — flush.
             out.append((start, buf))
             out.append((lineno, line.strip()))
             buf, start = "", 0
@@ -912,6 +1184,10 @@ def _unparsed_reason(text: str) -> Optional[str]:
         return "control-flow"
     if re.search(r"\.(dblclick|setInputFiles|dragTo|selectText|tap|upload)\s*\(", stripped):
         return "unsupported-action"
+    if re.search(r"page\.(on|once)\(\s*['\"]dialog['\"]", stripped):
+        # The recorder our own export emits is stripped before parsing; anything
+        # left is a hand-written handler whose logic has no flow equivalent.
+        return "dialog-listener"
     if re.search(r"\bnew\s+[A-Z]\w*", stripped) or re.search(r"\b\w+Page\b", stripped):
         return "page-object/fixture"
     if re.match(r"await\s+(?!page\.|expect\()", stripped):

@@ -82,7 +82,10 @@ returns the (PII-scrubbed, truncated) result. Requires `approve=true`.
 | `press` | `key`, optional `target`/`ref` | e.g. `Enter` |
 | `hover` / `select` / `check` / `uncheck` | `target`/`ref`, `value` | |
 | `reload` / `back` / `forward` | — | |
-| `wait` | `selector` \| `text` \| `url_contains` | otherwise waits network idle |
+| `wait` | `selector` \| `text` \| `url_contains` \| `js` | `js` is a page predicate (`approve=true`); otherwise waits network idle |
+| `dialog` | `dialog` | answers the dialog raised by the **next** action — see below |
+| `upload` | `target`/`ref`/`selector`, `files`, `approve: true`, `chooser?` | file input vs. the OS picker |
+| `download` | `target`/`ref`/`selector`, `match?` | saved under `JAMBU_DOWNLOAD_DIR` |
 | `screenshot` | `full_page?` | base64 returned (stripped from agent reports) |
 | `evaluate` | `script`, `approve: true` | run JS in the page; returns scrubbed result |
 | `assert_visible` | `target` | interactive element **or** rendered text |
@@ -95,6 +98,38 @@ returns the (PII-scrubbed, truncated) result. Requires `approve=true`.
 | `assert_enabled` / `assert_disabled` | `target` | |
 | `assert_console_clean` | — | no console/page errors so far |
 | `assert_no_failed_requests` | — | no failed network requests |
+| `assert_dialog` | `type?`, `value?`, `accepted?` | last dialog raised (`alert`/`confirm`/`prompt`/`beforeunload`) |
+| `assert_no_dialog` | — | nothing raised a dialog so far |
+
+**Dialogs, files and JS waits.** A native dialog is answered by *staging* the
+answer before the action that raises it, because the listener has to exist when
+the page calls `alert()`. Either send a `dialog` step first, or put the same
+spec on the acting step:
+
+```json
+[
+  {"action": "dialog", "dialog": "accept:blue"},
+  {"action": "click", "target": "Rename", "approve": true},
+  {"action": "click", "target": "Delete account", "dialog": "dismiss"},
+  {"action": "assert_dialog", "type": "confirm", "value": "Delete", "accepted": false},
+  {"action": "upload", "target": "Avatar upload", "files": ["tmp/avatar.png"],
+   "approve": true},
+  {"action": "upload", "target": "Attach file", "files": ["tmp/a.csv"],
+   "chooser": true, "approve": true},
+  {"action": "download", "target": "Export CSV", "match": "*.csv"},
+  {"action": "wait", "js": "window.ready === true", "approve": true}
+]
+```
+
+`dialog` accepts `"accept"`, `"dismiss"`, `"accept:<text>"` for `prompt()`, or
+`{"accept": false, "text": "…"}`; the policy is one-shot and every dialog — even
+one nobody asked about — lands in telemetry (`browser_session_telemetry`, and
+the `dialog` diagnostics in the report). Uploads read files from the engine's
+own disk, so they need `approve=true` **and** a path inside `JAMBU_UPLOAD_ROOTS`
+(default: the working directory); `chooser: true` is for a button that opens the
+OS picker instead of a visible `<input type=file>`. Downloads are saved under
+`JAMBU_DOWNLOAD_DIR` and a `match` glob that the filename fails is a step
+failure (`download_mismatch`), not a silent save.
 
 Flow-level options: `approve` (approve risky/input actions for every step),
 `stop_on_failure`, `observe` (internal re-observe; leave on).
@@ -228,6 +263,12 @@ returns a per-variant digest. Variants set `name` plus `viewport`, `locale`,
 CLI: `jambu export flow.json --out app.spec.ts`) renders a flow as
 `.spec.ts` so teams can move it into their own CI.
 
+Dialog steps become a single `page.on('dialog', …)` listener plus a staged
+`dialogAnswer` before the action that raises the dialog (Playwright only answers
+a dialog whose listener was installed first). File picks and downloads become
+`Promise.all([page.waitForEvent(…), click()])` races so the event is never
+missed, and `wait` with a `js` predicate becomes `page.waitForFunction`.
+
 ### Import from Playwright
 `POST /browser/sessions/import` (MCP: `browser_import_playwright`,
 builtin tool, CLI: `jambu import app.spec.ts --out flow.json`) converts the
@@ -236,12 +277,25 @@ cannot translate is reported with its line number — nothing is silently
 dropped.
 
 Coverage: `getBy*` (text/label/role/testid/placeholder/alt/title),
-`locator()` (CSS/XPath), keyboard, waits (`waitForSelector/URL/Response`),
-`expect` (+`not.`, counts, URL/title incl. regex literals), locator
-declarations, multi-line chains, single-line `test.step`, `page.evaluate`
-(becomes an `evaluate` step), and `page.route()` fulfill/abort (becomes the
-flow's `network` policy). Reported, not guessed: control flow, fixtures,
-page objects, and actions like `dblclick`/`setInputFiles`/`dragTo`.
+`locator()` (CSS/XPath), keyboard, waits (`waitForSelector/URL/Response` and
+`waitForFunction` → a `js` wait), `expect` (+`not.`, counts, URL/title incl.
+regex literals), locator declarations, multi-line chains, single-line
+`test.step`, `page.evaluate` (becomes an `evaluate` step), `setInputFiles` and
+`waitForEvent('filechooser')` races (become `upload` steps, `chooser: true` for
+the picker form), `waitForEvent('download')` races plus
+`expect(download.suggestedFilename())` (become `download` steps with `match`),
+`dialogAnswer` staging and `expect(dialogs…)` (become `dialog` steps and
+`assert_dialog`), and `page.route()` fulfill/abort (becomes the flow's `network`
+policy). The dialog listener exported by `flow_to_playwright` is recognised and
+dropped on import, so a spec round-trips without its scaffolding showing up as
+junk. Reported, not guessed: control flow, fixtures, page objects, actions like
+`dblclick`/`dragTo`, a hand-written `page.on('dialog')` handler (its logic
+has no flow equivalent, so it is reported as `dialog-listener`), and any step
+the exporter had to leave behind as a `// TODO unsupported …` comment (reported
+as `export-gap-action`). Import also never re-grants `approve` from a comment —
+uploads and gated clicks come back un-approved so whoever imports the spec
+decides the gate again; only a `js` wait keeps its flag, because the
+`waitForFunction` in the code is itself the opt-in.
 
 ### CLI
 ```bash
@@ -327,4 +381,4 @@ to the same response.
 ## Related
 
 - `docs/BROWSER_SESSIONS.md` — the hardened session loop and its rails.
-- `docs/MCP_TOOLS.md` — generated MCP tool reference (37 tools).
+- `docs/MCP_TOOLS.md` — generated MCP tool reference (45 tools).

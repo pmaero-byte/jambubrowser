@@ -852,7 +852,8 @@ async def browser_session_snapshot(session_id: str) -> str:
 
 @mcp.tool()
 async def browser_session_act(session_id: str, action: str, ref: str,
-                              text: str = "", approve: bool = False) -> str:
+                              text: str = "", approve: bool = False,
+                              files: str = "", dialog: str = "") -> str:
     """
     Deterministic dispatch by catalog ref. Refusals are explicit: blocked
     domains, unknown refs, and actions needing approval (risky elements such
@@ -860,17 +861,127 @@ async def browser_session_act(session_id: str, action: str, ref: str,
 
     Args:
         session_id: Session id
-        action: "click" or "type"
+        action: "click", "type" or "upload"
         ref: Element ref from the last snapshot (e.g. @e3)
         text: Text to type (for action="type")
         approve: Explicit approval for input/risky actions
+        files: Comma-separated local file paths (for action="upload"); must sit inside JAMBU_UPLOAD_ROOTS
+        dialog: Answer the dialog this action raises: "accept", "dismiss", or "accept:<text>" for prompt()
     """
-    result = await _call_engine("POST", f"/browser/sessions/{session_id}/act", {
+    payload: dict = {
         "action": action, "ref": ref, "text": text, "approve": approve,
-    }, timeout=60.0)
+    }
+    if files.strip():
+        payload["files"] = [f.strip() for f in files.split(",") if f.strip()]
+    if dialog.strip():
+        payload["dialog"] = dialog.strip()
+    result = await _call_engine(
+        "POST", f"/browser/sessions/{session_id}/act", payload, timeout=60.0,
+    )
     if "error" in result:
         return f"Action refused/failed: {result['error']}"
+    if result.get("uploaded"):
+        return (f"ok — uploaded {', '.join(result['uploaded'])} "
+                f"via {result.get('mode')} (step {result.get('step', {}).get('seq')})")
     return f"ok — {result.get('outcome')} at {result.get('url')} (step {result.get('step', {}).get('seq')})"
+
+
+@mcp.tool()
+async def browser_session_act_batch(session_id: str, actions: str,
+                                    approve: bool = False,
+                                    stop_on_error: bool = True) -> str:
+    """
+    Run several primitives in ONE call — the cheap way to fill a form or walk a
+    wizard. Every act still gets its own receipt and refusal; only the round
+    trips (and therefore the tokens) are shared, and no re-snapshot happens
+    between acts while refs stay valid.
+
+    Args:
+        session_id: Session id
+        actions: JSON array of acts, e.g. [{"action":"type","ref":"@e3","text":"a@b.com"},{"action":"check","ref":"@e7"},{"action":"press","ref":"@e9","text":"Enter"},{"action":"assert_visible","target":"Welcome"}]. Any flow step works: click/type/upload/press/select/check/hover/wait/assert_*/dialog/download
+        approve: Explicit approval applied to acts that do not set their own
+        stop_on_error: Stop at the first refusal (default) or run all acts and report each
+    """
+    import json as _json
+
+    try:
+        parsed = _json.loads(actions) if isinstance(actions, str) else actions
+    except _json.JSONDecodeError as exc:
+        return f"actions is not valid JSON: {exc}"
+    if not isinstance(parsed, list) or not parsed:
+        return "actions must be a non-empty JSON array of act objects."
+    result = await _call_engine(
+        "POST", f"/browser/sessions/{session_id}/act_batch",
+        {"actions": parsed, "approve": approve,
+         "stop_on_error": stop_on_error},
+        timeout=180.0,
+    )
+    if "error" in result:
+        return f"Batch refused/failed: {result['error']}"
+    lines = [f"# Batch — {result.get('passed')}/{result.get('count')} acts ok "
+             f"at {result.get('url', '')}"]
+    for entry in (result.get("results") or []):
+        mark = "✓" if entry.get("ok") else "✗"
+        detail = entry.get("detail") or entry.get("error") or ""
+        lines.append(f"- {mark} #{entry['i']} {entry['action']} {str(detail)[:80]}")
+    if result.get("stopped_at") is not None:
+        lines.append(f"- stopped at act #{result['stopped_at']}")
+    if result.get("reobserve"):
+        lines.append("- page navigated: call browser_session_snapshot before further acts")
+    if result.get("telemetry"):
+        lines.append(f"- telemetry: {result['telemetry']}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def browser_session_telemetry(session_id: str, drain: bool = False) -> str:
+    """
+    Ask "did anything break?" without paying for a snapshot: collected console
+    errors, failed/4xx-5xx requests and native dialogs since the session opened.
+
+    Args:
+        session_id: Session id
+        drain: Clear the buffers after reading, so the next call is a fresh delta
+    """
+    result = await _call_engine(
+        "GET", f"/browser/sessions/{session_id}/telemetry?drain={'true' if drain else 'false'}",
+        timeout=30.0,
+    )
+    if "error" in result:
+        return f"Telemetry failed: {result['error']}"
+    lines = [f"# Telemetry — {result.get('url', '')}"]
+    for key in ("console_errors", "console_warnings", "failed_requests",
+                "bad_responses", "dialogs"):
+        items = result.get(key) or []
+        if items:
+            lines.append(f"- {key}: {len(items)}")
+            for item in items[:5]:
+                lines.append(f"    · {str(item)[:120]}")
+    if len(lines) == 1:
+        lines.append("- clean: no console errors, failed requests or dialogs")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def browser_token_savings() -> str:
+    """
+    What the flow/batch verbs saved versus driving the browser one primitive per
+    tool call: calls avoided and estimated tokens, counted for this engine.
+
+    (no args)
+    """
+    result = await _call_engine("GET", "/browser/sessions/savings", timeout=30.0)
+    if "error" in result:
+        return f"Savings lookup failed: {result['error']}"
+    return (
+        f"Flows run: {result.get('runs', 0)} ({result.get('steps', 0)} steps)\n"
+        f"- as flows:     ~{result.get('flow_tokens', 0)} tokens, "
+        f"{result.get('runs', 0)} call(s)\n"
+        f"- as primitives: ~{result.get('primitive_tokens', 0)} tokens, "
+        f"{(result.get('runs', 0) or 0) + result.get('calls_avoided', 0)} call(s)\n"
+        f"- saved: ~{result.get('saved_tokens', 0)} tokens, "
+        f"{result.get('calls_avoided', 0)} round trip(s)"
+    )
 
 
 @mcp.tool()
