@@ -11,7 +11,7 @@ import os
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from backend.modules.a2a import agent_card, handle_rpc
+from backend.decentralized.a2a import agent_card, handle_rpc
 
 router = APIRouter(tags=["a2a"])
 
@@ -71,11 +71,11 @@ async def a2a_rpc(request: Request):
     try:
         payload = await request.json()
     except Exception:
-        from backend.modules.a2a import A2AError, PARSE_ERROR
+        from backend.decentralized.a2a import A2AError, PARSE_ERROR
 
         return JSONResponse(A2AError(PARSE_ERROR, "invalid JSON").to_jsonrpc(None))
     if not isinstance(payload, dict):
-        from backend.modules.a2a import A2AError, INVALID_REQUEST
+        from backend.decentralized.a2a import A2AError, INVALID_REQUEST
 
         return JSONResponse(A2AError(INVALID_REQUEST, "request must be an object").to_jsonrpc(None))
     return JSONResponse(await handle_rpc(payload))

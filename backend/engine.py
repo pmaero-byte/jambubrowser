@@ -267,7 +267,7 @@ app.add_middleware(AccessLogMiddleware)
 
 # x402 paywall: charges configured routes (audits, mesh inference) per call
 # when JAMBU_X402_ENABLED=1. Disabled by default; API-key callers bypass it.
-from backend.modules.x402 import X402Middleware, DEFAULT_PAID_ROUTES
+from backend.decentralized.x402 import X402Middleware, DEFAULT_PAID_ROUTES
 app.add_middleware(X402Middleware, routes=DEFAULT_PAID_ROUTES)
 
 
@@ -286,9 +286,7 @@ from backend.routes.local import router as local_router
 from backend.routes.missions import router as missions_router
 from backend.routes.tools import router as tools_router
 from backend.routes.models import router as models_router
-from backend.routes.p2p import router as p2p_router
 from backend.routes.goals import router as goals_router
-from backend.routes.consensus import router as consensus_router
 from backend.routes.harness import router as harness_router
 from backend.routes.v1 import router as v1_router
 from backend.routes.v2 import router as v2_router
@@ -297,17 +295,24 @@ from backend.routes.fingerprint import router as fingerprint_router
 from backend.routes.media import router as media_router
 from backend.routes.audit import router as audit_router
 from backend.routes.audit_monitors import router as audit_monitors_router
-from backend.routes.dcm import router as dcm_router
-from backend.routes.meshpay import router as meshpay_router
-from backend.routes.x402 import router as x402_router
-from backend.routes.evidence import router as evidence_router
 from backend.routes.browser_sessions import router as browser_sessions_router
 from backend.routes.flow_monitors import router as flow_monitors_router
 from backend.routes.dev_servers import router as dev_servers_router
 from backend.routes.eval_cert import router as eval_cert_router
-from backend.routes.a2a import router as a2a_router
-from backend.routes.verification import router as verification_router
 from backend.routes.qa import router as qa_router
+
+# Decentralized / crypto layer — gated behind JAMBU_ENABLE_DECENTRALIZED=1
+from backend.decentralized.gate import is_enabled as _decentralized_enabled
+
+if _decentralized_enabled():
+    from backend.routes.decentralized.p2p import router as p2p_router
+    from backend.routes.decentralized.consensus import router as consensus_router
+    from backend.routes.decentralized.dcm import router as dcm_router
+    from backend.routes.decentralized.meshpay import router as meshpay_router
+    from backend.routes.decentralized.x402 import router as x402_router
+    from backend.routes.decentralized.evidence import router as evidence_router
+    from backend.routes.decentralized.a2a import router as a2a_router
+    from backend.routes.decentralized.verification import router as verification_router
 from backend.mcp_http import (
     card_routes as mcp_card_routes,
     mcp_asgi_app,
@@ -330,9 +335,7 @@ app.include_router(local_router)
 app.include_router(missions_router)
 app.include_router(tools_router)
 app.include_router(models_router)
-app.include_router(p2p_router)
 app.include_router(goals_router)
-app.include_router(consensus_router)
 app.include_router(harness_router)
 app.include_router(v1_router)
 app.include_router(v2_router)
@@ -341,17 +344,22 @@ app.include_router(fingerprint_router)
 app.include_router(media_router)
 app.include_router(audit_router)
 app.include_router(audit_monitors_router)
-app.include_router(dcm_router)
-app.include_router(meshpay_router)
-app.include_router(x402_router)
-app.include_router(evidence_router)
 app.include_router(browser_sessions_router)
 app.include_router(flow_monitors_router)
 app.include_router(dev_servers_router)
 app.include_router(eval_cert_router)
-app.include_router(a2a_router)
-app.include_router(verification_router)
 app.include_router(qa_router)
+
+# Decentralized / crypto layer — only registered when enabled
+if _decentralized_enabled():
+    app.include_router(p2p_router)
+    app.include_router(consensus_router)
+    app.include_router(dcm_router)
+    app.include_router(meshpay_router)
+    app.include_router(x402_router)
+    app.include_router(evidence_router)
+    app.include_router(a2a_router)
+    app.include_router(verification_router)
 
 # Remote MCP (Streamable HTTP) + public Server Card. The sub-app carries
 # its own token auth; the engine's middleware stack still applies to it.

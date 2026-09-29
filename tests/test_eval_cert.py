@@ -16,7 +16,7 @@ from types import SimpleNamespace
 import pytest
 
 from backend.modules import eval_cert
-from backend.modules.evidence import verify_bundle
+from backend.decentralized.evidence import verify_bundle
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 VERIFIER = REPO_ROOT / "scripts" / "verify_evidence_bundle.py"
@@ -191,7 +191,7 @@ class TestCertificates:
             "smoke", task_ids=["smoke.1.a"], runner=make_runner(results),
         ))
         # Sign a new bundle that lies about the verdict.
-        from backend.modules.evidence import build_bundle
+        from backend.decentralized.evidence import build_bundle
 
         lying_payload = json.loads(json.dumps(cert["payload"]))
         lying_payload["verdict"]["verdict"] = "PASS"
@@ -252,7 +252,7 @@ class TestRoutes:
                 },
             }
             cert["payload"]["spec_hash"] = eval_cert.spec_hash(cert["payload"]["spec"])
-            from backend.modules.evidence import build_bundle
+            from backend.decentralized.evidence import build_bundle
 
             return build_bundle("agent_eval", cert["subject"], cert["payload"])
 

@@ -6,8 +6,8 @@ from __future__ import annotations
 
 import pytest
 
-from backend.modules.meshpay import hash_receipt
-from backend.modules.meshpay import payouts
+from backend.decentralized.meshpay import hash_receipt
+from backend.decentralized.meshpay import payouts
 
 
 ADMIN_KEY = "test-admin-key"
@@ -141,7 +141,7 @@ class TestBatchBuilding:
 
 class TestApproval:
     def _planned_batch(self, client) -> int:
-        from backend.modules.meshpay import payouts as store
+        from backend.decentralized.meshpay import payouts as store
 
         addr = wallet()
         batch = store.build_payout_batch(
@@ -195,7 +195,7 @@ class TestApproval:
 
 class TestExecution:
     def _approved_batch(self, client) -> int:
-        from backend.modules.meshpay import payouts as store
+        from backend.decentralized.meshpay import payouts as store
 
         batch = store.build_payout_batch(
             usage_chain([("peer-a", 0.05), ("peer-b", 0.02)]), epoch_size=50,
@@ -222,7 +222,7 @@ class TestExecution:
         assert body["treasury_is_placeholder"] is True
 
     def test_execute_requires_approval(self, client):
-        from backend.modules.meshpay import payouts as store
+        from backend.decentralized.meshpay import payouts as store
 
         batch = store.build_payout_batch(
             usage_chain([("peer-a", 0.05)]), epoch_size=50,
@@ -245,7 +245,7 @@ class TestExecution:
         raw = base64.b64decode(body["serialized_transaction"])
         assert len(raw) > 200
         # Both provider wallets appear in the compiled account keys.
-        from backend.modules.meshpay import payouts as store
+        from backend.decentralized.meshpay import payouts as store
 
         batch = store.get_batch(batch_id)
         keys = Message.from_bytes(raw[0:0] or bytes(raw)) if False else None
@@ -262,8 +262,8 @@ class TestExecution:
 
 class TestReconciliation:
     def test_batch_reconciles_against_the_window(self, client, monkeypatch):
-        from backend.modules.meshpay import payouts as store
-        from backend.routes import meshpay as routes
+        from backend.decentralized.meshpay import payouts as store
+        from backend.routes.decentralized import meshpay as routes
 
         entries = usage_chain([("peer-a", 0.05), ("peer-b", 0.02)])
         batch = store.build_payout_batch(
@@ -298,7 +298,7 @@ class TestReconciliation:
         assert "amount drifted" in bad["mismatches"][0]["reason"]
 
     def test_reconcile_missing_batch_is_404(self, client, monkeypatch):
-        from backend.routes import meshpay as routes
+        from backend.routes.decentralized import meshpay as routes
 
         class FakeDcm:
             async def settlement_log(self, limit=200):
@@ -314,7 +314,7 @@ class TestReconciliation:
 
 class TestRouteFlow:
     def test_plan_approve_execute_via_routes(self, client, monkeypatch):
-        from backend.routes import meshpay as routes
+        from backend.routes.decentralized import meshpay as routes
 
         entries = usage_chain([("peer-a", 0.05), ("peer-b", 0.03)])
         addr_a, addr_b = wallet(), wallet()

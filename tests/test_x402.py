@@ -306,7 +306,7 @@ class TestPaywallFlow:
         import time as _time
 
         from backend.core.database import get_db
-        from backend.modules.x402 import _claim_nonce, _release_nonce
+        from backend.decentralized.x402 import _claim_nonce, _release_nonce
 
         assert _claim_nonce("mock-claim-1", "http://t/paid") is True
         assert _claim_nonce("mock-claim-1", "http://t/paid") is False
@@ -449,7 +449,7 @@ class TestPaywallFlow:
         assert all(r["facilitator"] == "mock" for r in receipts[:2])
 
         root = x402.receipts_root()
-        from backend.modules.meshpay import merkle_root
+        from backend.decentralized.meshpay import merkle_root
         hashes = [r["receipt_hash"] for r in reversed(receipts)]  # oldest first
         assert root["root"] == merkle_root(hashes)
 

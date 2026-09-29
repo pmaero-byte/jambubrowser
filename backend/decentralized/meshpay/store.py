@@ -91,7 +91,7 @@ def re_verify_anchor(anchor: dict, entries: list[dict], *, epoch_size: int) -> d
     - ``mismatch``  — receipts changed (tamper or a different window)
     - ``unavailable`` — the epoch window isn't in this fetch (truncated)
     """
-    from backend.modules.meshpay.plan import group_epochs
+    from backend.decentralized.meshpay.plan import group_epochs
 
     size = int(anchor.get("epoch_size") or epoch_size or 50)
     epochs = group_epochs(entries, epoch_size=size)

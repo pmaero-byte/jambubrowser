@@ -32,8 +32,8 @@ import logging
 import time
 from typing import Any, Callable, Optional
 
-from backend.modules.evidence import build_bundle, save_bundle, verify_bundle
-from backend.modules.meshpay import js_dumps
+from backend.decentralized.evidence import build_bundle, save_bundle, verify_bundle
+from backend.decentralized.meshpay import js_dumps
 
 log = logging.getLogger("jambu.eval_cert")
 
@@ -267,13 +267,13 @@ def verify_certificate(bundle: dict) -> dict:
 
 
 def list_certificates(limit: int = 50) -> list[dict]:
-    from backend.modules.evidence import list_bundles
+    from backend.decentralized.evidence import list_bundles
 
     return [b for b in list_bundles(limit) if b.get("kind") == "agent_eval"]
 
 
 def get_certificate(bundle_id: int) -> Optional[dict]:
-    from backend.modules.evidence import get_bundle
+    from backend.decentralized.evidence import get_bundle
 
     bundle = get_bundle(bundle_id)
     if bundle is None or bundle.get("kind") != "agent_eval":

@@ -28,7 +28,7 @@ from backend.llm.base import (
     Role,
 )
 from backend.llm.config import get_config
-from backend.modules.dcm_client import DcmClient, DcmError
+from backend.decentralized.dcm_client import DcmClient, DcmError
 
 router = APIRouter(prefix="/dcm", tags=["dcm"])
 

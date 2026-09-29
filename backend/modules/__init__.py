@@ -48,7 +48,7 @@ from backend.modules.local_connector import (
 from backend.modules.knowledge_graph import (
     KnowledgeGraph, Entity, Relation, EntityExtractor, get_knowledge_graph,
 )
-from backend.modules.p2p_discovery import (
+from backend.decentralized.p2p_discovery import (
     P2PDiscovery, Peer, get_p2p,
 )
 from backend.modules.multimodal_input import (
@@ -60,7 +60,7 @@ from backend.modules.skill_synthesizer import (
 from backend.modules.fingerprint_rotator import (
     FingerprintRotator, BrowserFingerprint, get_rotator,
 )
-from backend.modules.federated_rag import (
+from backend.decentralized.federated_rag import (
     FederatedRAG, FederatedQuery, FederatedResult, get_federated_rag,
 )
 from backend.modules.youtube import (

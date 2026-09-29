@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from backend.modules.meshpay import hash_receipt
-from backend.modules.meshpay.merkle import verify_proof
+from backend.decentralized.meshpay import hash_receipt
+from backend.decentralized.meshpay.merkle import verify_proof
 
 
 @pytest.fixture
@@ -67,7 +67,7 @@ class FakeDcmClient:
 
 
 def install_client(monkeypatch, fake: FakeDcmClient):
-    import backend.routes.meshpay as meshpay_routes
+    import backend.routes.decentralized.meshpay as meshpay_routes
     monkeypatch.setattr(meshpay_routes, "_client", lambda: fake)
 
 
@@ -114,7 +114,7 @@ class TestMeshPayAudit:
         assert body["verification"]["window_truncated"] is True
 
     def test_unreachable_node_502(self, client, monkeypatch):
-        from backend.modules.dcm_client import DcmError
+        from backend.decentralized.dcm_client import DcmError
         install_client(monkeypatch, FakeDcmClient([], error=DcmError(0, "down")))
         resp = client.get("/meshpay/audit")
         assert resp.status_code == 502

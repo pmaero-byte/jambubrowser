@@ -13,8 +13,8 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from backend.modules.dcm_client import DcmError
-from backend.modules.evidence import (
+from backend.decentralized.dcm_client import DcmError
+from backend.decentralized.evidence import (
     audit_report_bundle,
     dcm_settlement_bundle,
     get_bundle,
@@ -127,7 +127,7 @@ async def evidence_anchor(req: AnchorRequest):
             detail="bundle already anchored",
         )
 
-    from backend.modules.meshpay import MeshPayConfig, anchor_root, explorer_url
+    from backend.decentralized.meshpay import MeshPayConfig, anchor_root, explorer_url
 
     cfg = MeshPayConfig.from_env()
     try:

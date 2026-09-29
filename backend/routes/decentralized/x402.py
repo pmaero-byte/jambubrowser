@@ -1,7 +1,7 @@
 """
 x402 routes — paywall configuration, receipts, and the anchored root.
 
-The paywall itself lives in ``backend/modules/x402.py`` and is applied as a
+The paywall itself lives in ``backend/decentralized/x402.py`` and is applied as a
 dependency on the paid endpoints (``/audit/run``, ``/audit/quick``,
 ``/dcm/infer``). These routes expose its state so agents and operators can
 inspect prices, receipts, and the Merkle root that feeds MeshPay-style
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
-from backend.modules.x402 import (
+from backend.decentralized.x402 import (
     X402Config,
     list_receipts,
     receipts_root,

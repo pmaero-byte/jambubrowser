@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from backend.modules import evidence
-from backend.modules.evidence import (
+from backend.decentralized.evidence import (
     build_bundle,
     load_or_create_key,
     verify_bundle,
@@ -224,7 +224,7 @@ class TestEvidenceRoutes:
         assert verify_bundle(bundle)["valid"] is True
 
     def test_dcm_settlement_bundle_signs_the_verdict(self, client, monkeypatch):
-        from backend.modules.meshpay import hash_receipt
+        from backend.decentralized.meshpay import hash_receipt
 
         def make_entry(kind, prev, **fields):
             entry = {"kind": kind, "timestamp": 1700000000000, "prevInvoiceHash": prev}
@@ -241,7 +241,7 @@ class TestEvidenceRoutes:
             return {"count": 1, "entries": [e1],
                     "verification": {"valid": True, "entries": 1, "brokenAt": None}}
 
-        from backend.modules.dcm_client import DcmClient
+        from backend.decentralized.dcm_client import DcmClient
         monkeypatch.setattr(DcmClient, "settlement_log", fake_log)
 
         resp = client.post("/evidence/dcm-settlement?limit=50")

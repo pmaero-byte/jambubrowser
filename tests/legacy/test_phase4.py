@@ -118,7 +118,7 @@ class TestP2PDiscovery:
     """Tests for P2P discovery module."""
 
     def test_node_info(self):
-        from backend.modules.p2p_discovery import get_p2p
+        from backend.decentralized.p2p_discovery import get_p2p
         p2p = get_p2p()
         info = p2p.get_node_info()
         assert "node_id" in info
@@ -127,20 +127,20 @@ class TestP2PDiscovery:
         assert "research" in info["capabilities"]
 
     def test_get_peers_empty(self):
-        from backend.modules.p2p_discovery import get_p2p
+        from backend.decentralized.p2p_discovery import get_p2p
         p2p = get_p2p()
         peers = p2p.get_peers()
         assert isinstance(peers, list)
 
     def test_p2p_stats(self):
-        from backend.modules.p2p_discovery import get_p2p
+        from backend.decentralized.p2p_discovery import get_p2p
         stats = get_p2p().get_stats()
         assert "node_id" in stats
         assert "total_peers" in stats
         assert "online_peers" in stats
 
     def test_peer_dataclass(self):
-        from backend.modules.p2p_discovery import Peer
+        from backend.decentralized.p2p_discovery import Peer
         peer = Peer(node_id="test1", hostname="test-host",
                      ip_address="192.168.1.100", port=8001,
                      capabilities=["research", "scrape"])

@@ -9,7 +9,7 @@ import asyncio
 import pytest
 
 from backend.modules import verification
-from backend.modules.evidence import verify_bundle
+from backend.decentralized.evidence import verify_bundle
 
 
 def run(coro):

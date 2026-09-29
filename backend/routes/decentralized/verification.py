@@ -1,7 +1,7 @@
 """
 Verification routes — policy, redundant execution, canaries, scorecards.
 
-See ``backend/modules/verification.py`` for the tier model. The evidence
+See ``backend/decentralized/verification.py`` for the tier model. The evidence
 endpoint signs the verdict window into a ``compute_verification`` bundle
 (verifiable with ``scripts/verify_evidence_bundle.py``).
 """
@@ -89,6 +89,6 @@ async def verification_evidence(limit: int = 200):
     """Sign the verdict window into an evidence bundle."""
     if limit < 1 or limit > 1000:
         raise HTTPException(status_code=422, detail="limit must be 1..1000")
-    from backend.modules.evidence import save_bundle
+    from backend.decentralized.evidence import save_bundle
 
     return save_bundle(verification.verification_bundle(limit=limit))

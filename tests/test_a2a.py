@@ -185,11 +185,11 @@ class TestTaskLifecycle:
 
     def test_orphaned_working_task_is_failed_on_read(self, client, monkeypatch):
         """A task left WORKING by an engine restart must not hang forever."""
-        from backend.modules.a2a import _insert_task
+        from backend.decentralized.a2a import _insert_task
 
         _insert_task("orphan-1", "ctx-1", "audit_web_app",
                      user_message("x", skill="audit_web_app"))
-        from backend.modules.a2a import _update_task
+        from backend.decentralized.a2a import _update_task
 
         _update_task("orphan-1", state="TASK_STATE_WORKING")
         body = rpc(client, "GetTask", {"id": "orphan-1"}).json()["result"]["task"]

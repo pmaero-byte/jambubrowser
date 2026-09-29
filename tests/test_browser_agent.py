@@ -19,7 +19,7 @@ from backend.modules.browser_agent import (
     classify_risk,
     host_allowed,
 )
-from backend.modules.evidence import verify_bundle
+from backend.decentralized.evidence import verify_bundle
 
 
 def run(coro):
@@ -261,7 +261,7 @@ class TestReceipts:
         assert all(hashes)
         assert receipts["chain_head"] == hashes[-1]
 
-        from backend.modules.meshpay import js_dumps, merkle_root
+        from backend.decentralized.meshpay import js_dumps, merkle_root
         from backend.modules.browser_agent import Step
         import hashlib
 
@@ -283,7 +283,7 @@ class TestReceipts:
         run(session.navigate("https://example.com/"))
         run(session.snapshot())
 
-        from backend.modules.evidence import build_bundle
+        from backend.decentralized.evidence import build_bundle
         bundle = build_bundle(
             "browser_session",
             {"session_id": session.id, "allow_domains": session.allow_domains},

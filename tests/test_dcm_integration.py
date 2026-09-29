@@ -29,7 +29,7 @@ import httpx
 from backend.llm.base import ChatMessage, Role
 from backend.llm.config import LLMConfig
 from backend.llm.providers.dcm import DCMProvider
-from backend.modules.dcm_client import DcmClient, DcmError
+from backend.decentralized.dcm_client import DcmClient, DcmError
 
 BASE_URL = os.environ.get("JAMBU_TEST_DCM_URL", "http://127.0.0.1:3001").rstrip("/")
 

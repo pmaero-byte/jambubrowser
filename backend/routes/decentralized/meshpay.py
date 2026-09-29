@@ -18,8 +18,8 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from backend.modules.dcm_client import DcmClient, DcmError
-from backend.modules.meshpay import (
+from backend.decentralized.dcm_client import DcmClient, DcmError
+from backend.decentralized.meshpay import (
     MeshPayConfig,
     anchor_root,
     explorer_url,
@@ -27,8 +27,8 @@ from backend.modules.meshpay import (
     receipt_proof,
     verify_chain,
 )
-from backend.modules.meshpay.plan import group_epochs
-from backend.modules.meshpay.store import re_verify_anchor, save_anchor, list_anchors
+from backend.decentralized.meshpay.plan import group_epochs
+from backend.decentralized.meshpay.store import re_verify_anchor, save_anchor, list_anchors
 from backend.llm.config import get_config as get_llm_config
 
 router = APIRouter(prefix="/meshpay", tags=["meshpay"])
@@ -253,7 +253,7 @@ class PayoutRequest(BaseModel):
 @router.get("/wallets")
 async def meshpay_wallets():
     """Bound provider wallets (nodeId → Solana address)."""
-    from backend.modules.meshpay import payouts
+    from backend.decentralized.meshpay import payouts
 
     wallets = payouts.list_wallets()
     return {"wallets": wallets, "count": len(wallets)}
@@ -262,7 +262,7 @@ async def meshpay_wallets():
 @router.post("/wallets")
 async def meshpay_bind_wallet(req: WalletRequest):
     """Bind a provider nodeId to a payout wallet (address is validated)."""
-    from backend.modules.meshpay import payouts
+    from backend.decentralized.meshpay import payouts
 
     try:
         return payouts.bind_wallet(req.node_id, req.wallet_address, req.source)
@@ -272,7 +272,7 @@ async def meshpay_bind_wallet(req: WalletRequest):
 
 @router.delete("/wallets/{node_id}")
 async def meshpay_unbind_wallet(node_id: str):
-    from backend.modules.meshpay import payouts
+    from backend.decentralized.meshpay import payouts
 
     if not payouts.unbind_wallet(node_id):
         raise HTTPException(status_code=404, detail="wallet binding not found")
@@ -283,7 +283,7 @@ async def meshpay_unbind_wallet(node_id: str):
 async def meshpay_create_payout(req: PayoutRequest):
     """Plan an epoch's payout: instructions for bound wallets, unbound reported."""
     _window(req.limit)
-    from backend.modules.meshpay import payouts
+    from backend.decentralized.meshpay import payouts
 
     cfg = _config()
     size = req.epoch_size or cfg.epoch_size
@@ -304,7 +304,7 @@ async def meshpay_create_payout(req: PayoutRequest):
 async def meshpay_list_payouts(limit: int = 50):
     if limit < 1 or limit > 200:
         raise HTTPException(status_code=422, detail="limit must be 1..200")
-    from backend.modules.meshpay import payouts
+    from backend.decentralized.meshpay import payouts
 
     batches = payouts.list_batches(limit)
     return {"payouts": batches, "count": len(batches)}
@@ -312,7 +312,7 @@ async def meshpay_list_payouts(limit: int = 50):
 
 @router.get("/payouts/{batch_id}")
 async def meshpay_get_payout(batch_id: int):
-    from backend.modules.meshpay import payouts
+    from backend.decentralized.meshpay import payouts
 
     batch = payouts.get_batch(batch_id)
     if batch is None:
@@ -323,7 +323,7 @@ async def meshpay_get_payout(batch_id: int):
 @router.post("/payouts/{batch_id}/approve")
 async def meshpay_approve_payout(batch_id: int, request: Request):
     """Operator approval — requires JAMBU_ADMIN_API_KEY (fail closed)."""
-    from backend.modules.meshpay import payouts
+    from backend.decentralized.meshpay import payouts
 
     admin_key = request.headers.get("x-admin-api-key")
     try:
@@ -339,7 +339,7 @@ async def meshpay_approve_payout(batch_id: int, request: Request):
 @router.post("/payouts/{batch_id}/execute")
 async def meshpay_execute_payout(batch_id: int):
     """Prepare (mock/no keypair) or broadcast (real cluster + treasury key)."""
-    from backend.modules.meshpay import payouts
+    from backend.decentralized.meshpay import payouts
 
     try:
         return payouts.execute_batch(batch_id)
@@ -354,7 +354,7 @@ async def meshpay_execute_payout(batch_id: int):
 @router.get("/payouts/{batch_id}/reconcile")
 async def meshpay_reconcile_payout(batch_id: int):
     """Re-check a batch against the live receipt window + anchor log."""
-    from backend.modules.meshpay import payouts
+    from backend.decentralized.meshpay import payouts
 
     entries = (await _fetch_log(MAX_WINDOW)).get("entries") or []
     try:

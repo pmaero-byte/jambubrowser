@@ -326,7 +326,7 @@ class TestRegistryIntegration:
 
 class TestDcmClient:
     def _client(self, handler, **kw):
-        from backend.modules.dcm_client import DcmClient
+        from backend.decentralized.dcm_client import DcmClient
         return DcmClient(base_url=BASE, transport=httpx.MockTransport(handler), **kw)
 
     def test_models_list(self):
@@ -358,7 +358,7 @@ class TestDcmClient:
         assert seen == ["/api/billing/earnings/did:dcm:x", "/api/billing/settlement-log"]
 
     def test_http_error_becomes_dcm_error(self):
-        from backend.modules.dcm_client import DcmError
+        from backend.decentralized.dcm_client import DcmError
 
         def handler(request):
             return httpx.Response(500, text="boom")
@@ -368,7 +368,7 @@ class TestDcmClient:
         assert e.value.status_code == 500
 
     def test_unreachable_is_reported(self):
-        from backend.modules.dcm_client import DcmError
+        from backend.decentralized.dcm_client import DcmError
 
         def handler(request):
             raise httpx.ConnectError("refused", request=request)

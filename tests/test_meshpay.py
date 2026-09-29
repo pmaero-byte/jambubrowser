@@ -13,7 +13,7 @@ import json
 
 import pytest
 
-from backend.modules.meshpay import (
+from backend.decentralized.meshpay import (
     MeshPayConfig,
     anchor_root,
     js_dumps,
@@ -23,8 +23,8 @@ from backend.modules.meshpay import (
     receipt_proof,
     verify_chain,
 )
-from backend.modules.meshpay.merkle import merkle_proof, verify_proof
-from backend.modules.meshpay.anchor import (
+from backend.decentralized.meshpay.merkle import merkle_proof, verify_proof
+from backend.decentralized.meshpay.anchor import (
     AnchorUnavailable,
     MockAnchorTransport,
     build_memo,
@@ -37,7 +37,7 @@ def run(coro):
 
 
 def _hash_payload(payload: dict) -> str:
-    from backend.modules.meshpay import hash_receipt
+    from backend.decentralized.meshpay import hash_receipt
     return hash_receipt(payload)
 
 
@@ -329,7 +329,7 @@ class TestAnchoring:
         except ImportError:  # pragma: no cover - optional dep
             pytest.skip("solders not installed")
 
-        from backend.modules.meshpay.anchor import MEMO_PROGRAM_ID
+        from backend.decentralized.meshpay.anchor import MEMO_PROGRAM_ID
 
         keypair = Keypair()
         memo = build_memo("ab" * 32, 0, 1)

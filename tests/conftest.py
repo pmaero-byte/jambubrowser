@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # Set test environment
 os.environ["JAMBU_DB_PATH"] = ":memory:"  # Use in-memory DB for tests
 os.environ["JAMBU_VAULT_KEY"] = "test-key-do-not-use-in-production-32bytes!"  # 32-byte test key
+os.environ["JAMBU_ENABLE_DECENTRALIZED"] = "1"  # Enable crypto/decentralized layer for tests
 
 # Default-skip network-dependent tests. test_search_integration.py boots a
 # subprocess and hits a live SearXNG — if SearXNG isn't running locally the

@@ -195,7 +195,7 @@ class TestConsensusModule:
     """Tests for consensus module."""
     
     def test_consensus_engine_exists(self):
-        from backend.modules.consensus_engine import ConsensusEngine
+        from backend.decentralized.consensus_engine import ConsensusEngine
         # Just test that the class exists
         assert ConsensusEngine is not None
 

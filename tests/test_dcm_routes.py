@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from backend.modules.dcm_client import DcmError
+from backend.decentralized.dcm_client import DcmError
 
 
 @pytest.fixture
@@ -66,7 +66,7 @@ class FakeDcmClient:
 
 
 def _install_client(monkeypatch, fake: FakeDcmClient):
-    import backend.routes.dcm as dcm_routes
+    import backend.routes.decentralized.dcm as dcm_routes
     monkeypatch.setattr(dcm_routes, "_client", lambda: fake)
 
 

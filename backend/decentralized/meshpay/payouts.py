@@ -38,8 +38,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from backend.modules.meshpay import MeshPayConfig
-from backend.modules.meshpay.plan import payout_plan
+from backend.decentralized.meshpay import MeshPayConfig
+from backend.decentralized.meshpay.plan import payout_plan
 
 log = logging.getLogger("jambu.meshpay.payouts")
 
@@ -140,7 +140,7 @@ def build_payout_batch(
     wallets: Optional[dict[str, str]] = None,
 ) -> dict:
     """Turn an epoch's payout plan into payable instructions."""
-    from backend.modules.meshpay.plan import group_epochs
+    from backend.decentralized.meshpay.plan import group_epochs
 
     wallets = wallets if wallets is not None else get_wallets_map()
     epochs = group_epochs(entries, epoch_size=epoch_size)
