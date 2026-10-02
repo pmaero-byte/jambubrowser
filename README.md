@@ -204,7 +204,8 @@ python3 -m pytest tests/test_e2e.py -v
   policies (failover / round-robin / random / least-latency), automatic
   failover with quarantine, per-session stickiness so a test flow keeps one IP,
   and **fail-closed** by default so a broken VPN never silently leaks your real
-  address. Off unless `JAMBU_VPN_ENABLED=1`.
+  address. Surfaces: `/vpn/*`, `jambu vpn status|up|down`, MCP
+  `vpn_status|vpn_select|vpn_probe`. Off unless `JAMBU_VPN_ENABLED=1`.
 - **Browser Fingerprint Rotation**: Unique profiles per session
 - **SSRF Protection**: `is_safe_url()` blocks private IPs, DNS rebinding, and
   unsafe schemes on every URL-accepting endpoint
@@ -322,6 +323,10 @@ python3 -m pytest tests/test_e2e.py -v
 | MeshPay | `/meshpay/payouts/{id}/approve` | POST | Operator approval (fail-closed, admin key) |
 | MeshPay | `/meshpay/payouts/{id}/execute` | POST | Prepare or broadcast the USDC payout transaction |
 | MeshPay | `/meshpay/payouts/{id}/reconcile` | GET | Re-check batch vs receipts + anchor root |
+| VPN | `/vpn/status` | GET | Tunnel state + per-endpoint pool health (redacted) |
+| VPN | `/vpn/config` | GET | Resolved VPN configuration, credentials redacted |
+| VPN | `/vpn/select` | POST | Which endpoint a session would be pinned to |
+| VPN | `/vpn/probe` | POST | Run one pool health sweep now |
 | Simulation | `/simulation/config` | GET | Pricing, tolerances, and the registered compute nodes |
 | Simulation | `/simulation/nodes` | GET | Fleet health (quarantine) + reputation, in dispatch order |
 | Simulation | `/simulation/quote` | POST | Price a job and name its verification tier (dispatches nothing) |
@@ -441,7 +446,7 @@ cd browser-app && npm run build && npm run typecheck && npm run lint && npm test
 
 The CI workflow (`.github/workflows/test.yml`) runs all passing test categories on every push:
 core backend, LLM layer, memory, agent loop, security middleware stack (9 files),
-engine runtime, MCP server (stdio + remote Streamable HTTP, 49 tools), eval, CLI, AI employees (6 specialist auditors),
+engine runtime, MCP server (stdio + remote Streamable HTTP, 52 tools), eval, CLI, AI employees (6 specialist auditors),
 and more. Tests requiring live services (E2E, real LLM, SearXNG, SOCKS proxy)
 are excluded from CI — run those manually when the corresponding service is up.
 

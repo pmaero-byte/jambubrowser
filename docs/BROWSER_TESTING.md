@@ -381,4 +381,4 @@ to the same response.
 ## Related
 
 - `docs/BROWSER_SESSIONS.md` — the hardened session loop and its rails.
-- `docs/MCP_TOOLS.md` — generated MCP tool reference (49 tools).
+- `docs/MCP_TOOLS.md` — generated MCP tool reference (52 tools).

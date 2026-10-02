@@ -2,7 +2,7 @@
 
 Auto-generated from `backend/mcp_server.py` by `tools/mcp/generate_docs.py`. Do not edit by hand — re-run the generator after adding or renaming a tool.
 
-**Total tools:** 49
+**Total tools:** 52
 
 ## Table of contents
 
@@ -55,6 +55,9 @@ Auto-generated from `backend/mcp_server.py` by `tools/mcp/generate_docs.py`. Do 
 - [`take_screenshot`](#take_screenshot)
 - [`type_text`](#type_text)
 - [`visual_grounding`](#visual_grounding)
+- [`vpn_probe`](#vpn_probe)
+- [`vpn_select`](#vpn_select)
+- [`vpn_status`](#vpn_status)
 
 ## Tools
 
@@ -893,3 +896,41 @@ Analyze a webpage visually and identify interactive elements
 
 Args:
     url: The page URL to analyze visually
+
+### `vpn_probe`
+
+**Description**
+
+Run one health sweep across the proxy pool right now.
+
+Endpoints that fail consecutive probes are quarantined for a bounded,
+self-healing window. Returns how many endpoints probed clean.
+
+### `vpn_select`
+
+**Signature**
+
+```python
+vpn_select(session_key: str = '', exclude: str = '')
+```
+
+**Description**
+
+Resolve which egress endpoint a session would be pinned to.
+
+Does not open a connection — it answers "which proxy would this session
+use right now", which is what you want before launching a browser or CI
+job. Pass exclude as a comma-separated list of endpoints to skip.
+
+Args:
+    session_key: Pin this key to one endpoint for the sticky TTL
+    exclude: Comma-separated endpoint URLs/aliases to skip
+
+### `vpn_status`
+
+**Description**
+
+Show the dynamic VPN state: tunnel, pool size, and per-endpoint health.
+
+Credentials are redacted in every output. When VPN is disabled the pool
+is empty and resolution falls through to a direct connection.

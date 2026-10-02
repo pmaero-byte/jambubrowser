@@ -222,7 +222,8 @@ federation — the information-access surface a normal browser can't offer.
   default; credentials redacted in every output. Reached through
   `make_async_client()` (so all outbound HTTP inherits it) and
   `BrowserSession` (sticky endpoint at launch). Surfaces:
-  `/vpn/status|config`, `/vpn/select`, `/vpn/probe`, `jambu vpn status|up|down`.
+  `/vpn/status|config`, `/vpn/select`, `/vpn/probe`, `jambu vpn status|up|down`,
+  MCP `vpn_status|vpn_select|vpn_probe`.
   Inert unless `JAMBU_VPN_ENABLED=1`; `JAMBU_VPN_DRY_RUN=1` for rootless/CI.
   Tests: `tests/test_vpn.py` (84).
 - **Knowledge graph** (`backend/modules/knowledge_graph.py`) — entity
@@ -367,7 +368,7 @@ service, or agent — via CLI, MCP, eval framework, or plugins.
 ### What exists today
 - **CLI tool** (`cli/`) — `jambu` command-line client + GitHub Action
   for CI/CD (`dd61dd7 feat(cli): jambu CLI tool + GitHub Action`).
-- **MCP server** (`tools/mcp/`) — 49 tools exposed over Model Context
+- **MCP server** (`tools/mcp/`) — 52 tools exposed over Model Context
   Protocol, so Claude / Cursor / other MCP clients can drive Jambubrowser.
   Tests: `tests/test_mcp_server.py` (stdio smoke).
 - **Eval framework** (`backend/eval/`, ~1.5k LOC) — harness, metrics,
