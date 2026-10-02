@@ -1650,6 +1650,11 @@ def main():
         prog="jambu",
         description="Jambubrowser CLI — AI-powered webapp auditing",
     )
+    try:
+        from backend import __version__ as _v
+    except Exception:
+        _v = "unknown"
+    parser.add_argument("--version", action="version", version=f"%(prog)s {_v}")
     subparsers = parser.add_subparsers(dest="command")
 
     p_auth = subparsers.add_parser("auth", help="Set API key")
