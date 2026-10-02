@@ -98,6 +98,8 @@ class BrowserSession:
     ):
         self.session_id = session_id
         self.name = name
+        # An explicitly supplied proxy always wins; otherwise we consult the
+        # dynamic VPN manager at launch time (see _resolve_proxy()).
         self.proxy = proxy
         self.mode = mode
         self.privacy_level = privacy_level
@@ -112,6 +114,59 @@ class BrowserSession:
         self._created_at = time.time()
         self._pages_visited = 0
         self._sanitize_log = []
+        # Which endpoint the VPN layer picked for this session (redacted for
+        # logs; the real URL stays in self.proxy).
+        self._vpn_endpoint: Optional[str] = None
+
+    def _resolve_proxy(self) -> Optional[str]:
+        """Decide the egress for this session.
+
+        Order: explicit ``proxy`` -> Tor default -> dynamic VPN pool. The
+        dynamic pool is keyed by session id so a flow keeps one egress IP for
+        its lifetime (switching mid-flow would break cookies and logins).
+        """
+        if self.mode == SessionMode.TOR_ISOLATED:
+            return self.proxy or "socks5://127.0.0.1:9050"
+        if self.proxy:
+            return self.proxy
+        try:
+            from backend.core.vpn import get_vpn_manager, redact_proxy_url
+            manager = get_vpn_manager()
+            if not manager.active:
+                return None
+            endpoint = manager.resolve_proxy(
+                session_key=self.session_id, sticky=True
+            )
+            if endpoint:
+                self._vpn_endpoint = redact_proxy_url(endpoint)
+            return endpoint
+        except Exception:
+            # A VPN problem must not block a browser launch; the pool's
+            # fail-closed behaviour is enforced for callers that ask for a
+            # proxy explicitly via resolve_proxy().
+            return None
+
+    def describe_proxy(self) -> dict:
+        """Redacted egress view for session info.
+
+        Before :meth:`start` runs, the pool has not been consulted yet, so the
+        source is reported as ``unresolved`` rather than ``direct`` — the
+        session may well be pinned to an endpoint once it launches.
+        """
+        if self._vpn_endpoint:
+            source = "vpn_pool"
+        elif self.proxy:
+            source = "explicit"
+        elif self.mode == SessionMode.TOR_ISOLATED:
+            source = "tor"
+        elif self._browser is None:
+            source = "unresolved"
+        else:
+            source = "direct"
+        return {
+            "proxy": self._vpn_endpoint or self.proxy,
+            "source": source,
+        }
 
     async def start(self):
         """Launch the browser session with privacy-first configuration."""
@@ -134,8 +189,14 @@ class BrowserSession:
                 "--proxy-server=" + self.proxy,
                 "--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1",
             ])
-        elif self.proxy:
-            launch_args.append(f"--proxy-server={self.proxy}")
+        else:
+            # Resolve egress once, at launch: explicit proxy or the dynamic
+            # VPN pool. Resolving here (not per request) is what keeps a
+            # session's IP stable for the whole flow.
+            resolved = self._resolve_proxy()
+            if resolved:
+                self.proxy = resolved
+                launch_args.append(f"--proxy-server={resolved}")
 
         # Privacy: Disable telemetry and tracking
         launch_args.extend([
@@ -380,6 +441,7 @@ class BrowserSession:
             "anti_fingerprint": True,
             "pages_visited": self._pages_visited,
             "created_at": self._created_at,
+            "egress": self.describe_proxy(),
         }
 
 

@@ -90,6 +90,24 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from backend.modules.flow_monitor import get_flow_monitor_scheduler
     get_flow_monitor_scheduler().start()
 
+    # Dynamic VPN: bring the base tunnel up and start the pool health
+    # sweeper. Entirely inert unless JAMBU_VPN_ENABLED is set. A misconfigured
+    # tunnel must not take the whole engine down, so failures are logged and
+    # surfaced via GET /vpn/status rather than raised here.
+    try:
+        from backend.core.vpn import get_vpn_manager
+        vpn_manager = get_vpn_manager()
+        if vpn_manager.active:
+            await vpn_manager.start()
+            log.info(
+                "Dynamic VPN active (tunnel=%s, pool=%s endpoints)",
+                vpn_manager.config.tunnel_kind.value,
+                vpn_manager.pool.size,
+            )
+    except Exception:
+        log.warning("Dynamic VPN failed to start; continuing without it",
+                    exc_info=True)
+
     # Mission scheduler: register a research handler so missions can
     # actually execute when the loop is started (POST
     # /mission/start-scheduler). Without this every due mission failed
@@ -131,6 +149,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     try:
         from backend.modules.flow_monitor import get_flow_monitor_scheduler
         await get_flow_monitor_scheduler().stop()
+    except Exception:
+        pass
+    # Dynamic VPN: stop the health sweeper and drop the tunnel interface so
+    # a restart does not leave a stale one behind.
+    try:
+        from backend.core.vpn import get_vpn_manager
+        vpn_manager = get_vpn_manager()
+        if vpn_manager.active:
+            await vpn_manager.stop()
     except Exception:
         pass
     for mod_name in ["browser", "missions", "shadow_browser", "risk_shield"]:
@@ -322,6 +349,7 @@ from backend.routes.api_keys import router as api_keys_router
 from backend.routes.billing import router as billing_router
 from backend.routes.teams import router as teams_router
 from backend.routes.proxy import router as proxy_router
+from backend.routes.vpn import router as vpn_router
 from backend.routes.mcp import router as mcp_router
 
 app.include_router(system_router)
@@ -369,6 +397,7 @@ app.include_router(api_keys_router)
 app.include_router(billing_router)
 app.include_router(teams_router)
 app.include_router(proxy_router)
+app.include_router(vpn_router)
 app.include_router(mcp_router)
 
 

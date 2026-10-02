@@ -603,6 +603,72 @@ def _section(title: str):
     print(f"  {'─' * max(0, 60 - len(title))}")
 
 
+def cmd_vpn(args):
+    """Dynamic VPN control: status, tunnel up/down, pool health."""
+    action = getattr(args, "vpn_command", None) or "status"
+
+    # `up`/`down` need root + a vendor binary, so they drive the local
+    # subsystem directly instead of going through the engine's HTTP API.
+    if action in ("up", "down"):
+        import asyncio
+
+        from backend.core.vpn import get_vpn_manager, load_config
+
+        config = load_config()
+        if not config.tunnel_enabled:
+            print("✗ No tunnel configured.")
+            print("  Set JAMBU_VPN_TUNNEL (wireguard|openvpn) plus")
+            print("  JAMBU_VPN_TUNNEL_INTERFACE and JAMBU_VPN_TUNNEL_ENDPOINT.")
+            return EXIT_ENGINE_ERROR
+        manager = get_vpn_manager(config)
+        runner = manager.start if action == "up" else manager.stop
+        # start()/stop() return the full status dict; the tunnel sub-object
+        # carries the per-backend state we want to print.
+        tunnel = asyncio.run(runner()).get("tunnel", {})
+        if tunnel.get("state") == "up":
+            print(f"✓ Tunnel {tunnel.get('kind')} is up "
+                  f"({tunnel.get('interface') or 'no interface'})")
+            return EXIT_OK
+        print(f"✗ Tunnel {tunnel.get('kind')} {tunnel.get('state')}: "
+              f"{tunnel.get('last_error') or 'unknown error'}")
+        return EXIT_ENGINE_ERROR
+
+    resp = api_request("GET", "/vpn/status")
+    if not resp:
+        return EXIT_ENGINE_ERROR
+
+    if not resp.get("enabled"):
+        print("\n  Dynamic VPN is disabled.")
+        print("  Set JAMBU_VPN_ENABLED=1 and configure a pool or tunnel.")
+        return EXIT_OK
+
+    tunnel = resp.get("tunnel", {})
+    _section("Tunnel")
+    print(f"  kind      {tunnel.get('kind', 'none')}")
+    print(f"  state     {tunnel.get('state', 'down')}")
+    if tunnel.get("interface"):
+        print(f"  interface {tunnel['interface']}")
+    if tunnel.get("last_error"):
+        print(f"  error     {tunnel['last_error']}")
+
+    pool = resp.get("pool", {})
+    _section(f"Pool ({pool.get('healthy', 0)}/{pool.get('size', 0)} healthy)")
+    print(f"  rotation  {pool.get('rotation', '?')}")
+    for ep in pool.get("endpoints", []):
+        icon = "✓" if ep["available"] else "✗"
+        latency = f"{ep['latency_ms']}ms" if ep.get("latency_ms") else "—"
+        print(f"  {icon} {ep['url']}  {latency}  "
+              f"({ep['successes']}ok/{ep['failures']}fail)")
+
+    problems = resp.get("problems") or []
+    if problems:
+        _section("Configuration problems")
+        for problem in problems:
+            print(f"  ✗ {problem}")
+        return EXIT_ENGINE_ERROR
+    return EXIT_OK
+
+
 def _ok_icon(ok: bool) -> str:
     return "✓" if ok else "✗"
 
@@ -1586,6 +1652,14 @@ def main():
     p_watch.add_argument("--once", action="store_true",
                          help="Run once and exit (no watching)")
 
+    p_vpn = subparsers.add_parser(
+        "vpn", help="Dynamic VPN status and tunnel control"
+    )
+    vpn_sub = p_vpn.add_subparsers(dest="vpn_command")
+    vpn_sub.add_parser("status", help="Show tunnel + pool health")
+    vpn_sub.add_parser("up", help="Bring the VPN tunnel up")
+    vpn_sub.add_parser("down", help="Take the VPN tunnel down")
+
     p_devs = subparsers.add_parser(
         "dev-servers", help="Scan for a running local dev server",
     )
@@ -1777,6 +1851,10 @@ def main():
         code = cmd_monitor(args)
     elif args.command == "dcm":
         code = cmd_dcm(args)
+    elif args.command == "sim":
+        code = cmd_sim(args)
+    elif args.command == "vpn":
+        code = cmd_vpn(args)
     else:
         parser.print_help()
     return code

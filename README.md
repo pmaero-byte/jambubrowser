@@ -187,6 +187,12 @@ python3 -m pytest tests/test_e2e.py -v
 - **Tamper-Evident Audit Log**: SHA-256 hash chain of all actions
 - **Supply Chain Verification**: Hash verification for all Python dependencies
 - **Tor Routing**: SOCKS5 proxy support for anonymous research
+- **Dynamic VPN** (optional, `docs/VPN.md`): a WireGuard/OpenVPN **tunnel** as
+  base egress plus a rotating, health-checked **proxy pool** on top. Rotation
+  policies (failover / round-robin / random / least-latency), automatic
+  failover with quarantine, per-session stickiness so a test flow keeps one IP,
+  and **fail-closed** by default so a broken VPN never silently leaks your real
+  address. Off unless `JAMBU_VPN_ENABLED=1`.
 - **Browser Fingerprint Rotation**: Unique profiles per session
 - **SSRF Protection**: `is_safe_url()` blocks private IPs, DNS rebinding, and
   unsafe schemes on every URL-accepting endpoint

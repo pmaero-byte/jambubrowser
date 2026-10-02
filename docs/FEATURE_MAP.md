@@ -212,8 +212,19 @@ federation — the information-access surface a normal browser can't offer.
   SOCKS-aware for Tor.
 - **SearXNG fork** (`searxng/`, 142 MB vendored) — full source tree of
   the metasearch engine; config at `searxng-config/`.
-- **SOCKS5 / Tor transport** (`backend/core/socks.py`, 94 LOC) — drop-in
+- **SOCKS5 / Tor transport** (`backend/core/socks.py`) — drop-in
   `make_async_client()` wrapper, lazy-imports `httpx-socks`.
+- **Dynamic VPN** (`backend/core/vpn/`, ~1.3k LOC; `docs/VPN.md`) — layered
+  egress: a **tunnel** (WireGuard/OpenVPN) forms the base, a **pool** of proxy
+  endpoints sits on top with rotation (failover/round_robin/random/
+  least_latency), per-session stickiness, consecutive-failure quarantine,
+  EWMA latency, and an optional background health probe. Fail-closed by
+  default; credentials redacted in every output. Reached through
+  `make_async_client()` (so all outbound HTTP inherits it) and
+  `BrowserSession` (sticky endpoint at launch). Surfaces:
+  `/vpn/status|config`, `/vpn/select`, `/vpn/probe`, `jambu vpn status|up|down`.
+  Inert unless `JAMBU_VPN_ENABLED=1`; `JAMBU_VPN_DRY_RUN=1` for rootless/CI.
+  Tests: `tests/test_vpn.py` (84).
 - **Knowledge graph** (`backend/modules/knowledge_graph.py`) — entity
   extraction, relationship inference, topic clustering, persistence.
   Exposed via `/knowledge/*` (ingest, graph, search, stats, entity,

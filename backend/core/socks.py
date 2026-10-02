@@ -58,19 +58,57 @@ def _normalize_socks_url(url: str) -> str:
     return url
 
 
+def _resolve_dynamic_proxy(session_key: Optional[str] = None) -> Optional[str]:
+    """Ask the VPN manager for an endpoint; None when dynamic VPN is off.
+
+    Imported lazily so this module keeps working if the vpn package is
+    unavailable, and so a VPN misconfiguration can never break the plain
+    Tor/SOCKS path below.
+    """
+    try:
+        from backend.core.vpn.manager import get_vpn_manager
+    except ImportError:
+        return None
+    try:
+        return get_vpn_manager().resolve_proxy(session_key)
+    except Exception:
+        # A VPN selection failure must not be silently swallowed into a
+        # direct connection when fail-closed is in force — but this helper
+        # only reports whether an endpoint exists. Callers that require a
+        # proxy should use get_vpn_manager().resolve_proxy() directly and
+        # handle VPNUnavailable themselves.
+        import logging
+        logging.getLogger("jambu.socks").warning(
+            "dynamic VPN selection failed; falling back to static SOCKS config",
+            exc_info=True,
+        )
+        return None
+
+
 def make_async_client(
     *,
     timeout: float = 15.0,
     follow_redirects: bool = True,
     headers: Optional[dict[str, str]] = None,
+    proxy_url: Optional[str] = None,
+    session_key: Optional[str] = None,
     **kwargs: Any,
 ) -> httpx.AsyncClient:
     """Build an httpx.AsyncClient, optionally tunneled through SOCKS5/Tor.
 
     Drop-in replacement for `httpx.AsyncClient(...)`:
         await client.get("https://example.com")
+
+    Proxy precedence (first match wins):
+
+    1. ``proxy_url`` — an explicit endpoint, e.g. one chosen by a caller
+       from the VPN pool.
+    2. The dynamic VPN pool (``backend.core.vpn``) when ``JAMBU_VPN_ENABLED``
+       is set — a rotating, health-checked endpoint.
+    3. ``JAMBU_TOR_SOCKS_URL`` / ``AGENT_VPN_PROXY`` — the static config.
+    4. No proxy at all (direct).
     """
-    socks_url = get_socks_url()
+    socks_url = proxy_url or _resolve_dynamic_proxy(session_key) or get_socks_url()
     if socks_url is None:
         return httpx.AsyncClient(
             timeout=timeout,
