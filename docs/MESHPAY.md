@@ -39,7 +39,7 @@ metering (Wasm / tokens / sims)
    MCP clients → meshpay_audit / meshpay_anchor
 ```
 
-### 1. Independent receipt verification (`backend/modules/meshpay/`)
+### 1. Independent receipt verification (`backend/decentralized/meshpay/`)
 
 DCM hashes each receipt with
 `sha256(JSON.stringify(entry without invoiceHash))`. To verify that chain
@@ -50,6 +50,30 @@ DCM hashes each receipt with
   string escaping.
 - `receipts.py` — chain replay + economic aggregation (minted, commission,
   burned, charged, per-account deltas).
+- `plan.py` — epoch grouping, provider entitlement, payout planning, and
+  charge-vs-reward reconciliation (`reconcile_window`).
+
+### Provider entitlement is shape-based, not name-based
+
+Entitlement is derived from **any receipt that names a `nodeId` and carries a
+positive `reward`** (`is_provider_reward`). This used to be keyed on
+`kind == "usage"` alone, which silently paid simulation providers nothing —
+the mesh meters simulation work under its own receipt kinds, so a node that
+only ever ran simulations never appeared in the plan at all while its work
+was billed to the customer. Keying on shape rather than on DCM's naming also
+means a new metering kind cannot silently re-open the hole.
+
+`settlement` (already paid out by DCM) and `dense-receipt` (a proof anchor)
+are explicitly excluded so nothing double-counts. Each provider reports
+`rewardByKind`, so simulation revenue is visible as its own line.
+
+`reconcile_window` splits consumer charges per kind and, when DCM supplies a
+correlation id (`executionHash` / `jobId` / `execHash` / `simulationId`),
+flags charges with no matching provider reward — **work that was billed but
+never paid**. With no correlation id it reports `correlated: false` and only
+the aggregate totals, rather than claiming a per-job match it cannot make.
+
+See `docs/SIMULATION_COMPUTE.md`.
 
 The serializer is pinned against **real Node.js output** in
 `tests/test_meshpay.py::TestJsNumber`, and the whole verifier is
@@ -182,7 +206,8 @@ UI: browser app → **MeshPay** panel. MCP: `meshpay_audit`,
 1. **USDC transfer to providers is not implemented** — anchors prove *what*
    is owed; the actual SPL-token payout (and the treasury/escrow program)
    is the next milestone. Providers still withdraw via DCM's
-   operator-approved flow.
+   operator-approved flow. (Transaction *preparation* and broadcast are
+   implemented — see the live example above.)
 2. **Receipts are not fetched in full** — DCM's API caps at 200 entries per
    fetch; long chains need paging or an export endpoint on the DCM side
    before anchoring very large epochs.
@@ -191,3 +216,7 @@ UI: browser app → **MeshPay** panel. MCP: `meshpay_audit`,
 4. **Provider identity binding** — MeshPay pays `nodeId`s from receipts; a
    node→wallet map (DCM has `wallet_address` on `compute_nodes`) needs to
    be threaded through before payouts execute.
+5. **Charge↔reward correlation depends on DCM** — `reconcile_window` can
+   only flag "billed but unpaid" per job when receipts carry a correlation
+   id. When they don't, it reports `correlated: false` and only aggregate
+   totals; adding that id on the DCM side would close the gap.

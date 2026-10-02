@@ -232,6 +232,27 @@ federation — the information-access surface a normal browser can't offer.
 - **P2P discovery** (`backend/modules/p2p_discovery.py`) — mDNS/UDP
   peer discovery for a multi-node research mesh. Single-node in practice:
   finds nothing unless other Jambubrowser nodes run on the same LAN.
+- **Simulation compute** (`backend/decentralized/simulation.py`,
+  `docs/SIMULATION_COMPUTE.md`) — decentralised job execution: the spec is
+  canonicalised and `sha256`-hashed *before* dispatch (optional
+  `module_digest` pins the artefact), the job is priced in DCT and its USD
+  value selects the verification tier, replicas run concurrently across
+  registered nodes and are compared with the `numeric` comparator, and the
+  job settles **only** if they agreed. Disagreement or an unmet tier means
+  `QUARANTINED` with `charged_dct = 0`. Replicas are judged against the
+  per-path **median**, so a strict majority settles and the outlier is named
+  (`MATCH_CONSENSUS`) instead of the first responder being trusted; an even
+  split is `disputed` and blames nobody. Failing nodes are quarantined for a
+  self-healing window and disagreeing nodes are deprioritised from the
+  `verification` scorecards the mesh already records. `idempotency_key`
+  makes retries free; `/simulation/jobs/{id}/evidence` signs a
+  `compute_simulation` bundle. Surfaces: `/simulation/*`, `jambu sim`, MCP ×4.
+- **Numeric verification comparator**
+  (`backend/decentralized/verification.py`) — solver output is compared as
+  numbers under absolute/relative tolerances with the deviation's JSON path
+  reported. Replaces difflib, which scores `100.0` vs `1000.0` at 0.909
+  and would certify a 10× error as a MATCH. A replica that drops a numeric
+  field is a MISMATCH; anything unparseable is `ERROR`, never a pass.
 - **Federated RAG** (`backend/modules/federated_rag.py`) — query trusted
   peers for answers; routes at `/p2p/*`. Returns empty results with no
   peers on the LAN.
@@ -346,7 +367,7 @@ service, or agent — via CLI, MCP, eval framework, or plugins.
 ### What exists today
 - **CLI tool** (`cli/`) — `jambu` command-line client + GitHub Action
   for CI/CD (`dd61dd7 feat(cli): jambu CLI tool + GitHub Action`).
-- **MCP server** (`tools/mcp/`) — 45 tools exposed over Model Context
+- **MCP server** (`tools/mcp/`) — 49 tools exposed over Model Context
   Protocol, so Claude / Cursor / other MCP clients can drive Jambubrowser.
   Tests: `tests/test_mcp_server.py` (stdio smoke).
 - **Eval framework** (`backend/eval/`, ~1.5k LOC) — harness, metrics,

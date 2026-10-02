@@ -54,6 +54,10 @@ PRICE_DEFAULTS = {
     "audit_full": "100000",   # $0.10
     "dcm_infer": "1000",      # $0.001
     "a2a_task": "50000",      # $0.05
+    # Simulation dispatch is the metered, verified-compute path, so it is
+    # priced like the other paid routes rather than left free. The amount is
+    # a floor per call; MeshPay/DCT metering remains the settlement record.
+    "simulation_submit": "5000",  # $0.005
 }
 
 PRICE_DESCRIPTIONS = {
@@ -61,6 +65,7 @@ PRICE_DESCRIPTIONS = {
     "audit_full": "Full audit: 6 AI employees with SARIF/HTML report",
     "dcm_infer": "Prompt completion on the local DecentraCode mesh node",
     "a2a_task": "One agent-to-agent task (A2A SendMessage)",
+    "simulation_submit": "Dispatch a replicated simulation job to mesh nodes",
 }
 
 
@@ -450,6 +455,7 @@ DEFAULT_PAID_ROUTES = {
     ("POST", "/audit/run"): "audit_full",
     ("POST", "/audit/quick"): "audit_quick",
     ("POST", "/dcm/infer"): "dcm_infer",
+    ("POST", "/simulation/submit"): "simulation_submit",
     ("POST", "/a2a"): "a2a_task",
 }
 

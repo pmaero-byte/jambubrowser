@@ -179,6 +179,18 @@ python3 -m pytest tests/test_e2e.py -v
 - **ReAct Agent Loop**: Plan → Execute → Verify → Replan, with streaming SSE events. Auto-derived JSON Schema for every tool, 10 built-in tools wrapping existing capabilities (web_search, scrape_url, vault_get, knowledge_query, memory_recall, memory_store, code_exec, goal_set, risk_check, final_answer). Budget-aware (max steps / tokens / seconds).
 - **Memory & Personalization**: 4 sub-stores (user profile, session, semantic with embeddings, procedural with success rates). Hybrid retrieval: 60% vector + 30% recency+importance + 10% FTS, with profile-interest boost. Per-user scoping, full forget support.
 
+### Simulation Compute (decentralised, verified job execution)
+- **Spec frozen before dispatch**: every job's definition is canonicalised and `sha256`-hashed before any node sees it, so "the same job" is provable rather than assumed. An optional `module_digest` pins *which artefact ran*.
+- **Replicated + numerically verified**: jobs run on N mesh nodes concurrently and the replicas are compared as **numbers** under absolute/relative tolerances — difflib over solver output is not verification (`100.0` vs `1000.0` scores 0.909 and would sail past a string gate despite being 10× wrong).
+- **Consensus, not first-responder**: replicas are compared against the per-path **median**, so a strict majority settles and the outlier is named — one bad node no longer blocks a correct answer. An even split is reported as `disputed` and blames nobody, because with n=2 no majority exists.
+- **Health vs reputation**: failing nodes are **quarantined** (bounded window, self-healing, no restart needed) and disagreeing nodes are **deprioritised** via the existing `verification` scorecards — which simulation jobs now feed, so `/verification/workers` stops being a report nobody acts on.
+- **Paywalled**: `POST /simulation/submit` is in `DEFAULT_PAID_ROUTES` like `/dcm/infer`; `/simulation/quote` stays free.
+- **Disagreement is never paid for**: `SETTLED` only when the required tier is satisfied and every replica agreed; otherwise `QUARANTINED` with `charged_dct = 0`, and every attempt (including node failures) is retained.
+- **Policy actually enforced**: job value is priced in DCT, converted to USD, and fed into the verification tier — a `REDUNDANT`-tier job on a single-node mesh is quarantined instead of reporting a `MATCH` it never earned.
+- **Safe retries**: an `idempotency_key` short-circuits before dispatch, so a client that times out and retries cannot be billed twice.
+- **Auditable end to end**: per-result `execution_hash` binds spec + node + output; `GET /simulation/jobs/{id}/evidence` signs a `compute_simulation` bundle verifiable with `scripts/verify_evidence_bundle.py`.
+- Surfaces: `/simulation/*`, `jambu sim {nodes,quote,run,jobs}`, MCP `simulation_quote|submit|jobs`. See `docs/SIMULATION_COMPUTE.md`.
+
 ### Privacy & Security
 - **4 Privacy Modes**: Standard, Enhanced, Maximum, Local-Only
 - **PII Detection**: Auto-redacts emails, phones, SSNs, credit cards, IPs, MACs, passports
@@ -310,6 +322,13 @@ python3 -m pytest tests/test_e2e.py -v
 | MeshPay | `/meshpay/payouts/{id}/approve` | POST | Operator approval (fail-closed, admin key) |
 | MeshPay | `/meshpay/payouts/{id}/execute` | POST | Prepare or broadcast the USDC payout transaction |
 | MeshPay | `/meshpay/payouts/{id}/reconcile` | GET | Re-check batch vs receipts + anchor root |
+| Simulation | `/simulation/config` | GET | Pricing, tolerances, and the registered compute nodes |
+| Simulation | `/simulation/nodes` | GET | Fleet health (quarantine) + reputation, in dispatch order |
+| Simulation | `/simulation/quote` | POST | Price a job and name its verification tier (dispatches nothing) |
+| Simulation | `/simulation/submit` | POST | Dispatch, compare replicas numerically, settle or quarantine |
+| Simulation | `/simulation/jobs` | GET | Job history + spend, with unpaid/quarantined counts |
+| Simulation | `/simulation/jobs/{id}` | GET | One job: attempts, execution hashes, numeric verdict |
+| Simulation | `/simulation/jobs/{id}/evidence` | GET | Sign one job (compute_simulation bundle) |
 | Consensus | `/consensus/vote` | POST | Cast vote |
 | Vision | `/vision/ocr` | POST | Extract text from image |
 | Vision | `/vision/ui-elements` | POST | Detect UI elements |
@@ -394,7 +413,8 @@ All components live in `browser-app/src/` and are shared between the desktop (Ta
 | **Browser Sessions** | `backend/modules/browser_agent.py` | Agent browsing with allowlists, approval gates, PII scrubbing, per-step receipts (snapshot → catalog → dispatch by ref) |
 | **Eval Certificates** | `backend/modules/eval_cert.py` | Frozen-spec, coverage-checked, Ed25519-signed evaluation certificates over the 9 eval suites |
 | **A2A Agent** | `backend/modules/a2a.py` | Agent2Agent v0.3 JSON-RPC (SendMessage/GetTask/CancelTask) with audit, certification, and mesh-inference skills |
-| **Verification Tiers** | `backend/modules/verification.py` | Value-at-risk policy, known-answer canaries, sampled redundant execution with tolerance comparison + worker scorecards |
+| **Verification Tiers** | `backend/modules/verification.py` | Value-at-risk policy, known-answer canaries, sampled redundant execution with tolerance comparison + worker scorecards, and a `numeric` comparator for solver output |
+| **Simulation Compute** | `backend/decentralized/simulation.py` | Decentralised simulation jobs: spec frozen + hashed before dispatch, priced in DCT, replicated across mesh nodes, compared numerically, settled only if replicas agree. `/simulation/*`, `jambu sim`, MCP `simulation_quote`/`simulation_submit`/`simulation_jobs`/`simulation_nodes`. `docs/SIMULATION_COMPUTE.md` |
 | **MeshPay** | `backend/modules/meshpay/` | Independent DCM receipt-chain verification (JS-faithful serializer), epoch Merkle roots, USDC payout plans, Solana memo anchoring |
 | **DCM Client** | `backend/decentralized/dcm_client.py` | DecentraCode Mesh REST: status, models, join-info, earnings, settlement log |
 | **Remote MCP** | `backend/mcp_http.py` | Streamable-HTTP MCP transport with token auth + Server Card (stdio lives in `mcp_server.py`) |
@@ -421,7 +441,7 @@ cd browser-app && npm run build && npm run typecheck && npm run lint && npm test
 
 The CI workflow (`.github/workflows/test.yml`) runs all passing test categories on every push:
 core backend, LLM layer, memory, agent loop, security middleware stack (9 files),
-engine runtime, MCP server (stdio + remote Streamable HTTP, 45 tools), eval, CLI, AI employees (6 specialist auditors),
+engine runtime, MCP server (stdio + remote Streamable HTTP, 49 tools), eval, CLI, AI employees (6 specialist auditors),
 and more. Tests requiring live services (E2E, real LLM, SearXNG, SOCKS proxy)
 are excluded from CI — run those manually when the corresponding service is up.
 

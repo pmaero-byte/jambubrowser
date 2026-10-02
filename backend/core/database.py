@@ -897,6 +897,41 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
         "CREATE INDEX IF NOT EXISTS idx_meshpay_payouts ON meshpay_payouts(created_at DESC)"
     )
 
+    # ── Decentralised simulation compute jobs ─────────────────────────
+    # spec_hash is the frozen job definition (frozen before dispatch);
+    # idempotency_key makes a retried submit return the original job
+    # instead of charging for the same work twice.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS simulation_jobs (
+            id TEXT PRIMARY KEY,
+            idempotency_key TEXT,
+            spec_hash TEXT NOT NULL,
+            spec_json TEXT NOT NULL,
+            status TEXT NOT NULL,
+            tier TEXT,
+            replicas INTEGER DEFAULT 1,
+            quote_json TEXT,
+            result_json TEXT,
+            charged_dct REAL DEFAULT 0,
+            error TEXT,
+            created_at REAL DEFAULT (CAST(strftime('%s','now') AS REAL)),
+            updated_at REAL DEFAULT (CAST(strftime('%s','now') AS REAL))
+        )
+    """)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_simulation_jobs_created "
+        "ON simulation_jobs(created_at DESC)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_simulation_jobs_spec_hash "
+        "ON simulation_jobs(spec_hash)"
+    )
+    # Partial unique index: only submitted (keyed) jobs are deduplicated.
+    cursor.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_simulation_jobs_idempotency
+        ON simulation_jobs(idempotency_key) WHERE idempotency_key IS NOT NULL
+    """)
+
     conn.commit()
     return conn
 

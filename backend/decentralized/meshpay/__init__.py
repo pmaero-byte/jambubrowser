@@ -25,7 +25,14 @@ from .config import MeshPayConfig
 from .jsjson import js_dumps, js_number
 from .receipts import hash_receipt, invoice_payload, verify_chain
 from .merkle import merkle_root, leaf_hash
-from .plan import build_epoch, payout_plan, group_epochs, receipt_proof
+from .plan import (
+    build_epoch,
+    payout_plan,
+    group_epochs,
+    receipt_proof,
+    reconcile_window,
+    is_provider_reward,
+)
 from .anchor import (
     AnchorRecord,
     MockAnchorTransport,
@@ -49,6 +56,8 @@ __all__ = [
     "payout_plan",
     "group_epochs",
     "receipt_proof",
+    "reconcile_window",
+    "is_provider_reward",
     "AnchorRecord",
     "MockAnchorTransport",
     "SolanaMemoAnchor",

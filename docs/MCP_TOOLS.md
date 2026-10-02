@@ -2,7 +2,7 @@
 
 Auto-generated from `backend/mcp_server.py` by `tools/mcp/generate_docs.py`. Do not edit by hand — re-run the generator after adding or renaming a tool.
 
-**Total tools:** 45
+**Total tools:** 49
 
 ## Table of contents
 
@@ -46,6 +46,10 @@ Auto-generated from `backend/mcp_server.py` by `tools/mcp/generate_docs.py`. Do 
 - [`search_academic`](#search_academic)
 - [`search_code`](#search_code)
 - [`search_multi_engine`](#search_multi_engine)
+- [`simulation_jobs`](#simulation_jobs)
+- [`simulation_nodes`](#simulation_nodes)
+- [`simulation_quote`](#simulation_quote)
+- [`simulation_submit`](#simulation_submit)
 - [`start_mission`](#start_mission)
 - [`stop_mission`](#stop_mission)
 - [`take_screenshot`](#take_screenshot)
@@ -733,6 +737,79 @@ Returns raw search results with URLs and snippets.
 Args:
     query: Search query
     engines: Comma-separated engine list (default: google,bing,duckduckgo)
+
+### `simulation_jobs`
+
+**Signature**
+
+```python
+simulation_jobs(limit: int = 20, status: str = '')
+```
+
+**Description**
+
+List simulation jobs with outcomes and spend.
+
+Args:
+    limit: Jobs to return (1-500)
+    status: Filter by outcome: SETTLED, FAILED, or QUARANTINED
+
+### `simulation_nodes`
+
+**Description**
+
+Fleet health and reputation for the simulation mesh.
+
+Health = can the node run right now (quarantined nodes recover on their
+own). Reputation = does it agree with the rest of the mesh. Nodes are
+listed in the order dispatch will actually use them.
+
+### `simulation_quote`
+
+**Signature**
+
+```python
+simulation_quote(module: str, kind: str = 'native', steps: int = 0, seed: int = 0, replicates: int = 1)
+```
+
+**Description**
+
+Price a simulation job and show the verification tier its value implies.
+
+Nothing is dispatched — this is the pre-flight check. Use it to learn
+what a job costs and whether it will be replicated before paying for it.
+
+Args:
+    module: Simulation module to run (e.g. 'heat', 'fluid', 'solve')
+    kind: Workload kind: 'wasm', 'inference', or 'native' (default native)
+    steps: Simulation steps (0 = configured default)
+    seed: Deterministic seed for reproducible runs
+    replicates: How many independent nodes should run it (1-32)
+
+### `simulation_submit`
+
+**Signature**
+
+```python
+simulation_submit(module: str, kind: str = 'native', steps: int = 0, seed: int = 0, replicates: int = 1, idempotency_key: str = '')
+```
+
+**Description**
+
+Run a simulation across mesh nodes, verify the replicas agree, and settle.
+
+The spec is frozen and hashed before dispatch. Replicas are compared
+numerically; if they disagree the job is QUARANTINED and nothing is
+charged. Reusing an idempotency_key returns the original job instead of
+billing you twice.
+
+Args:
+    module: Simulation module to run (e.g. 'heat', 'fluid', 'solve')
+    kind: Workload kind: 'wasm', 'inference', or 'native' (default native)
+    steps: Simulation steps (0 = configured default)
+    seed: Deterministic seed for reproducible runs
+    replicates: Independent nodes to run it on (1-32)
+    idempotency_key: Reuse to make retries safe (never double-charges)
 
 ### `start_mission`
 
