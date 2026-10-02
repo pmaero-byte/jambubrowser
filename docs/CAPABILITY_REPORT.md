@@ -30,20 +30,38 @@ Exports SARIF/JSON/MD/HTML, shared `_audit_event_stream`, monitors (new/resolved
 ### DeepNet
 SearXNG 90+ engines, swarm `deep_research`, ArXiv/GitHub/YouTube, knowledge-graph + KnowledgeMini, missions + `jambu diff`, Tor/SOCKS, 4 privacy modes, AES-256-GCM vault, SSRF `is_safe_url`, risk-shield.
 
+### Dynamic VPN (`docs/VPN.md`)
+Layered egress: a **tunnel** (WireGuard/OpenVPN) as base + a rotating **proxy pool** on top, behind `VPNManager.resolve_proxy()`. Rotation (`failover`/`round_robin`/`random`/`least_latency`), per-session stickiness independent of policy, consecutive-failure quarantine with self-healing, EWMA latency, optional background health probe. Fail-closed by default (`JAMBU_VPN_FAIL_OPEN=1` opts out); credentials redacted everywhere. Wired into `make_async_client()` (all outbound HTTP) and `BrowserSession` (sticky endpoint at launch). `GET /vpn/status|config`, `POST /vpn/select|probe`, CLI `jambu vpn status|up|down`. Inert unless `JAMBU_VPN_ENABLED=1`; `JAMBU_VPN_DRY_RUN=1` for rootless/CI. 84 tests.
+
 ### Decentralized / Agent-platform
-DCM provider + `/dcm/*` + 5 MCP + `jambu dcm`; MeshPay epochs/Merkle/memo-anchor + payouts prepared/broadcast + 12 routes; x402 paywall + atomic nonce-claim fix; eval certs frozen spec_hash; verification SIGNED<CANARY<REDUNDANT<ATTESTED-no>; A2A card + SendMessage/GetTask/CancelTask; Ed25519 evidence + standalone verifier; Remote MCP `/mcp/` 45 tools, profiles full/curated/developer(8).
+DCM provider + `/dcm/*` + 5 MCP + `jambu dcm`; MeshPay epochs/Merkle/memo-anchor + payouts prepared/broadcast + 12 routes; x402 paywall + atomic nonce-claim fix; eval certs frozen spec_hash; verification SIGNED<CANARY<REDUNDANT<ATTESTED-no>; A2A card + SendMessage/GetTask/CancelTask; Ed25519 evidence + standalone verifier; Remote MCP `/mcp/` 49 tools, profiles full/curated/developer(8); **simulation compute** — verified replicated jobs on the mesh, settled only on numeric agreement (`docs/SIMULATION_COMPUTE.md`).
 
 ### Developer + Desktop
-Factory `engine.py ~250 lines`, 20+8 routers, 340 handlers, 9 middlewares, WS, `/v1` OpenAI-compat, `/v2`; CLI 19 groups (~1700 lines) + PyPI/Homebrew packaging; eval/council, plugins, supply-chain, API-keys, teams; Tauri CDP Chromium + screencast 30-60FPS + takeover + dual-mode stream|native; AppShell 20+ panels + zustand; iOS 2949 LOC.
+Factory `engine.py ~250 lines`, 20+9 routers, 340+ handlers, 9 middlewares, WS, `/v1` OpenAI-compat, `/v2`; CLI 20 groups (~1750 lines) + PyPI/Homebrew packaging; eval/council, plugins, supply-chain, API-keys, teams; Tauri CDP Chromium + screencast 30-60FPS + takeover + dual-mode stream|native; AppShell 20+ panels + zustand; iOS 2949 LOC.
 
 ## 2. Gaps (explicit, tracked)
 1. Native tabs: Phase-3 shims missing (downloads/find/copy disabled in native), no crash fallback, no privacy-script review — see `docs/MULTIWEBVIEW_PLAN.md:86-92`.
 2. Importer: fixtures/page-objects/control-flow not translated (reported with reasons by design).
 3. Publishing: PyPI/Homebrew runbook ready (`docs/PUBLISHING.md`) but not published; version-sync test exists.
-4. MoA not in auto-discovery; no plan-library cache; goals no UI; AEGIS ~1.8k LOC library-only.
+4. MoA not in auto-discovery; no plan-library cache; AEGIS ~1.8k LOC library-only.
 5. P2P/federated single-node inert; knowledge no neighborhood explorer; missions results browser thin.
 6. Billing Stripe stub; sidecar python3 assumption; deep-link handler + updater UX TODO; ATTESTED no hardware; MeshPay paging/forward-markets/auto wallet-binding open.
-7. Env drift in this shell: system python3.14 lacks `sqlite-vec`, `.venv` lacks `dotenv/httpx/pytest` — use README venv + `pip install -r requirements.txt`.
+7. VPN: no real-tunnel integration test (needs root + a vendor binary, so CI only covers dry-run); pool state is in-memory and lost across restarts; no MCP tool for VPN yet.
+8. Env drift in this shell: system python3.14 lacks `sqlite-vec`, `.venv` contains only pip; `/tmp/jambu_stubs` holds offline shims (sqlite_vec, psutil, markdownify, mcp) that must be superseded by a real `pip install -r requirements.txt`. **Correction:** an earlier draft of this report claimed no network access; PyPI/npm/GitHub are in fact reachable (all HTTP 200), so a real install, not more shims, is the path forward. Suite verified under shims: 1671 passed / 5 skipped / 0 failed, excluding `test_socks.py`, `test_mcp_*`, `test_meshpay_payouts.py`, `test_eval_cli.py` (subprocess tests drop the shims), and the live-service tests.
+
+### Corrections to v3.3.0
+Three items previously listed as open next increments were **already shipped**:
+- *Coverage flag evaluate-steps* — `forbid_evaluate` is wired end-to-end
+  (`browser_agent.py`, `routes/browser_sessions.py`, `mcp_server.py`,
+  `builtin_tools.py`, CLI `--forbid-evaluate`), landed in `9eaf7ea`.
+- *Importer `test.step`/`storageState`/`test.each`* — `_extract_each_blocks`,
+  `storage_state_path`, and `test.step` unwrap are in `browser_codegen.py`
+  (`9eaf7ea`), tested at `test_browser_codegen.py:360-428`.
+- *Goals UI* — `GoalsPanel.tsx` plus tests, wired into `App.tsx`/`Sidebar.tsx`
+  (`d44fcb9`).
+
+Scale figures were also understated: backend is **57,755** LOC across 196 files
+(not ~53.9k); frontend 21,971 (as stated).
 
 ## 3. Next finishable increments
-Coverage flag evaluate-steps → importer test.step/storageState/test.each → publish jambu → native parity + hardening → Jira/Linear export + per-step SARIF + goals UI.
+Real VPN integration test on a rooted host → pool persistence across restarts + a VPN MCP tool → publish jambu → native parity + hardening → Jira/Linear export + per-step SARIF.

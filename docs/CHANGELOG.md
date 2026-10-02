@@ -4,6 +4,79 @@ All notable changes to Jambubrowser.
 
 ## [Unreleased]
 
+### Added — dynamic VPN (tunnel + rotating proxy pool)
+
+The browser's egress is now a configurable, layered subsystem rather than a
+single static `JAMBU_TOR_SOCKS_URL`. See `docs/VPN.md`.
+
+- **Two layers, one façade** (`backend/core/vpn/`) — a **tunnel**
+  (WireGuard/OpenVPN) forms the base egress; a **pool** of proxy endpoints sits
+  on top and decides which one a given request uses. `VPNManager.resolve_proxy()`
+  is the single call callers need.
+- **Dynamic selection** — `failover` / `round_robin` / `random` /
+  `least_latency`, with per-session stickiness independent of the policy.
+- **Health and auto-failover** — consecutive-failure quarantine (so one blip
+  never kills a good proxy), time-boxed and self-healing, EWMA latency, and an
+  optional background probe sweep (`JAMBU_VPN_HEALTH_PROBE_URL`).
+- **Fail closed by default** — if VPN is required and no path exists, callers
+  get `VPNUnavailable` instead of a silent direct connection. `JAMBU_VPN_FAIL_OPEN=1`
+  opts out.
+- **Credentials never leak** — proxy URLs are redacted everywhere they surface
+  (config, health, error messages, HTTP).
+- **Wired into the engine** — `make_async_client()` accepts `proxy_url=` /
+  `session_key=` and consults the pool, so every outbound HTTP call inherits it;
+  `BrowserSession` resolves a sticky endpoint at launch; the engine lifespan
+  starts/stops the tunnel and sweeper.
+- **Surfaces** — `GET /vpn/status`, `GET /vpn/config`, `POST /vpn/select`,
+  `POST /vpn/probe`; CLI `jambu vpn status|up|down`.
+- **Safe to test** — `JAMBU_VPN_DRY_RUN=1` exercises the whole path without
+  root or a real tunnel; `tests/test_vpn.py` adds 84 tests.
+
+Inert unless `JAMBU_VPN_ENABLED=1`: with no VPN env set, behaviour is
+byte-for-byte what it was.
+
+### Fixed — rate limiter crashed on ASGI scopes with `client: None`
+
+`RateLimitMiddleware` read `scope.get("client", ("unknown", 0))[0]`. A scope
+may legitimately carry `client: None` (in-process and unix-socket transports),
+where `.get()` returns `None` and the indexing raised `TypeError`, 500-ing
+every request through the middleware. It now uses the shared
+`extract_client_ip()` helper that the other middlewares already use.
+Found while verifying the suite; 210 tests depended on it.
+
+### Added — decentralised simulation compute
+
+Verified, priced, replicated job execution on the mesh (`backend/decentralized/simulation.py`,
+`docs/SIMULATION_COMPUTE.md`). `POST /simulation/submit` is metered like
+`/dcm/infer`; `/simulation/quote` stays free. Settles only when replicas agree.
+
+- **Spec frozen before dispatch** — the job definition is canonicalised and
+  `sha256`-hashed before any node sees it; optional `module_digest` pins the
+  exact artefact.
+- **Numeric verification** — replicas are compared as numbers under
+  absolute/relative tolerances (`backend/decentralized/verification.py`), not
+  difflib (which scores `100.0` vs `1000.0` at 0.909 and would certify a 10×
+  error). Failing nodes are quarantined; diverging nodes are deprioritised via
+  the existing `verification` worker scorecards.
+- **Consensus, not first-responder** — replicas judged against the per-path
+  median; a strict majority settles and the outlier is named; an even split is
+  `disputed` and blames nobody.
+- **Disagreement is never paid for** — anything but full agreement at the
+  required tier is `QUARANTINED` with `charged_dct = 0`; every attempt is
+  retained.
+- **Policy enforced** — job value priced in DCT, converted to USD, fed into the
+  verification tier. A `REDUNDANT`-tier job on a single-node mesh is quarantined
+  instead of reporting a MATCH it never earned.
+- **Idempotent retries** — `idempotency_key` short-circuits before dispatch, so
+  a timed-out client cannot be billed twice.
+- **Auditable** — per-result `execution_hash`; `GET /simulation/jobs/{id}/evidence`
+  signs a `compute_simulation` bundle.
+- **Surfaces** — `/simulation/{config,nodes,quote,submit,jobs,jobs/{id},jobs/{id}/evidence}`,
+  `jambu sim {nodes,quote,run,jobs}`, MCP `simulation_quote|submit|jobs|nodes`.
+  Requires `JAMBU_ENABLE_DECENTRALIZED=1`. Pricing is configuration, not an
+  oracle; `DeterministicExecutor` is a seedable numeric kernel, not a physics
+  solver. Tests: `tests/test_simulation.py` (108).
+
 ### Added — one-call browser testing, debug loop, dual-mode tabs
 
 The developer-facing build-out: give an AI agent everything it needs to test a
