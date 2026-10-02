@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from fastapi import Request, HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
-from backend.core.security_events import log_security_event
+from backend.core.security_events import log_security_event, extract_client_ip
 
 
 @dataclass
@@ -171,7 +171,11 @@ class RateLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
-        client_ip = scope.get("client", ("unknown", 0))[0]
+        # A scope may legitimately carry ``client: None`` (unix-socket and
+        # in-process transports), so ``scope.get("client", default)`` returns
+        # None here and indexing it raises. extract_client_ip is the shared,
+        # already defensive helper used by the other middlewares.
+        client_ip = extract_client_ip(scope)
         method = scope.get("method", "GET")
         allowed, remaining, reset_time = await self.limiter.is_allowed(client_ip, path, method)
 
