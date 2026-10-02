@@ -794,7 +794,7 @@ Args:
 **Signature**
 
 ```python
-simulation_submit(module: str, kind: str = 'native', steps: int = 0, seed: int = 0, replicates: int = 1, idempotency_key: str = '')
+simulation_submit(module: str, kind: str = 'native', steps: int = 0, seed: int = 0, replicates: int = 1, idempotency_key: str = '', queued: bool = False)
 ```
 
 **Description**
@@ -813,6 +813,8 @@ Args:
     seed: Deterministic seed for reproducible runs
     replicates: Independent nodes to run it on (1-32)
     idempotency_key: Reuse to make retries safe (never double-charges)
+    queued: Enqueue and let the durable worker settle it later; the job
+        comes back QUEUED and can be polled with simulation_jobs
 
 ### `start_mission`
 
