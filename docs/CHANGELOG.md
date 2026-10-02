@@ -90,6 +90,19 @@ Verified, priced, replicated job execution on the mesh (`backend/decentralized/s
   oracle; `DeterministicExecutor` is a seedable numeric kernel, not a physics
   solver. Tests: `tests/test_simulation.py` (108).
 
+### Added — Jira/Linear defect export + per-step browser-flow SARIF
+
+- `findings_to_jira_issues()` / `findings_to_linear_issues()` in
+  `backend/employees/export.py` — issue-create payloads with a stable
+  content-fingerprint label so re-audits upsert rather than duplicate.
+  Surfaces: `GET /audit/export/jira`, `GET /audit/export/linear`,
+  `jambu audit --jira out.json --linear out.json` (also on `jambu quick`).
+- `flow_report_to_sarif()` in `backend/employees/flow_sarif.py` maps every
+  failed/blocked/inconclusive browser-test step (plus failed requests and
+  bad HTTP responses) to one SARIF 2.1.0 result, so a UI probe failure
+  shows up in GitHub code scanning next to static-analysis findings.
+  Surface: `jambu test flow.json --sarif out.sarif`.
+
 ### Added — one-call browser testing, debug loop, dual-mode tabs
 
 The developer-facing build-out: give an AI agent everything it needs to test a

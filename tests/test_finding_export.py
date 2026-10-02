@@ -878,3 +878,63 @@ class TestLiveExport:
         )
         # Pydantic validator rejects → 422
         assert resp.status_code in (400, 422)
+
+
+class TestJiraLinearExport:
+    def test_jira_payload_shape(self, sample_findings):
+        from backend.employees.export import findings_to_jira_issues
+
+        issues = findings_to_jira_issues(sample_findings, audited_url="https://x.test")
+        assert len(issues) == len(sample_findings)
+        first = issues[0]["fields"]
+        assert first["project"]["key"] == "JAMBU"
+        assert first["priority"]["name"] == "Highest"  # critical maps up
+        assert first["issuetype"]["name"] == "Bug"
+        assert any(l.startswith("fingerprint-") for l in first["labels"])
+        assert "Add a strict CSP header." in first["description"]
+
+    def test_linear_payload_shape(self, sample_findings):
+        from backend.employees.export import findings_to_linear_issues
+
+        issues = findings_to_linear_issues(sample_findings, audited_url="https://x.test", team_id="T1")
+        assert len(issues) == len(sample_findings)
+        first = issues[0]["input"]
+        assert first["teamId"] == "T1"
+        assert first["priority"] == 1
+        assert "Missing CSP header" in first["title"]
+        assert "Preload the hero image." in issues[1]["input"]["description"]
+
+
+class TestFlowSarif:
+    def test_failed_step_becomes_result(self):
+        from backend.employees.flow_sarif import flow_report_to_sarif
+
+        report = {
+            "status": "FAIL", "ok": False, "passed": 1, "failed": 1, "total": 2,
+            "final_url": "https://app.test/login",
+            "steps": [
+                {"i": 0, "action": "navigate", "status": "passed"},
+                {"i": 1, "action": "click", "status": "failed",
+                 "reason": "element_not_found", "error": "no button named Submit"},
+            ],
+            "failed_requests": [{"method": "GET", "url": "https://app.test/api/x", "failure": "net::ERR_FAILED"}],
+            "bad_responses": [{"status": 500, "url": "https://app.test/api/y"}],
+        }
+        sarif = flow_report_to_sarif(report)
+        results = sarif["runs"][0]["results"]
+        assert len(results) == 3
+        assert results[0]["ruleId"] == "BROWSER_STEP_CLICK"
+        assert results[0]["level"] == "error"
+        assert "element_not_found" in results[0]["message"]["text"]
+        rule_ids = {r["id"] for r in sarif["runs"][0]["tool"]["driver"]["rules"]}
+        assert {"BROWSER_STEP_CLICK", "BROWSER_REQUEST_FAILED", "BROWSER_BAD_RESPONSE"} <= rule_ids
+
+    def test_passing_flow_has_no_results(self):
+        from backend.employees.flow_sarif import flow_report_to_sarif
+
+        report = {"status": "PASS", "ok": True, "passed": 2, "failed": 0, "total": 2,
+                  "final_url": "https://app.test", "steps": [
+                      {"i": 0, "action": "navigate", "status": "passed"},
+                      {"i": 1, "action": "click", "status": "passed"},
+                  ]}
+        assert flow_report_to_sarif(report)["runs"][0]["results"] == []

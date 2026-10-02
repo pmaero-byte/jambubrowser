@@ -357,8 +357,12 @@ the daily loop of a manual + automation QA team, run by AI.
   single run, visible per-variant, without the CLI (dashboard panel).
 
 ### What still hurts (improvement targets)
-1. No Jira/Linear defect export (findings already have teams/assignments).
-2. SARIF severity is per-case (no per-step severity weighting yet).
+1. Jira/Linear export shipped (`findings_to_jira_issues`,
+   `findings_to_linear_issues`, `/audit/export/jira|linear`, `jambu audit
+   --jira/--linear`) — teams still need two-way sync server-side.
+2. SARIF severity is per-case (no per-step severity weighting yet); per-step
+   browser-flow SARIF shipped separately (`flow_report_to_sarif`,
+   `jambu test --sarif`) so CI can attribute failures to individual steps.
 
 ---
 

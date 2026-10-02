@@ -269,6 +269,89 @@ def sarif_to_json(sarif: Mapping[str, Any]) -> str:
     return json.dumps(sarif, indent=2, sort_keys=False, default=str)
 
 
+# Severity → Jira priority name / Linear priority number.
+_JIRA_PRIORITY = {
+    "critical": "Highest", "high": "High", "medium": "Medium",
+    "low": "Low", "info": "Lowest",
+}
+_LINEAR_PRIORITY = {"critical": 1, "high": 2, "medium": 3, "low": 4, "info": 0}
+
+
+def findings_to_jira_issues(
+    findings: Iterable[Finding],
+    *,
+    audited_url: str,
+    project_key: str = "JAMBU",
+) -> list[dict[str, Any]]:
+    """Render findings as Jira issue-create payloads (REST v3 core shape).
+
+    Import with ``POST /rest/api/3/issue`` per item or bulk-import as a CSV
+    via the Jira importer. Labels carry the stable content fingerprint so a
+    re-audit of the same finding upserts instead of duplicating.
+    """
+    issues: list[dict[str, Any]] = []
+    for f in findings:
+        sev = _sev(f)
+        description = f.description or f.title or "Jambubrowser finding."
+        if f.fix_suggestion:
+            description += f"\n\n*Fix:* {f.fix_suggestion}"
+        if f.evidence_snippet:
+            description += f"\n\n```\n{f.evidence_snippet}\n```"
+        issues.append({
+            "fields": {
+                "project": {"key": project_key},
+                "summary": f"[{f.employee or 'audit'}] {f.title or f.category}"[:255],
+                "description": (
+                    f"{description}\n\nAudited: {audited_url}\n"
+                    f"Fingerprint: {content_fingerprint(f)}"
+                ),
+                "issuetype": {"name": "Bug"},
+                "priority": {"name": _JIRA_PRIORITY.get(sev, "Medium")},
+                "labels": [
+                    "jambubrowser",
+                    f"severity-{sev}",
+                    f"fingerprint-{content_fingerprint(f)}",
+                ],
+            }
+        })
+    return issues
+
+
+def findings_to_linear_issues(
+    findings: Iterable[Finding],
+    *,
+    audited_url: str,
+    team_id: str = "",
+) -> list[dict[str, Any]]:
+    """Render findings as Linear issue-create inputs (GraphQL shape).
+
+    Suitable for the Linear API ``issueCreate`` mutation; ``teamId`` is left
+    empty for the caller to fill — Linear requires it and does not expose a
+    default over the wire.
+    """
+    issues: list[dict[str, Any]] = []
+    for f in findings:
+        sev = _sev(f)
+        description = f.description or f.title or "Jambubrowser finding."
+        if f.fix_suggestion:
+            description += f"\n\n**Fix:** {f.fix_suggestion}"
+        if f.evidence_snippet:
+            description += f"\n\n```\n{f.evidence_snippet}\n```"
+        issues.append({
+            "input": {
+                "teamId": team_id,
+                "title": (f"[{f.employee or 'audit'}] {f.title or f.category}")[:255],
+                "description": (
+                    f"{description}\n\nAudited: {audited_url}\n\n"
+                    f"Fingerprint: `{content_fingerprint(f)}`"
+                ),
+                "priority": _LINEAR_PRIORITY.get(sev, 3),
+                "labelIds": [],
+            }
+        })
+    return issues
+
+
 def findings_to_markdown(
     findings: Sequence[Finding],
     *,

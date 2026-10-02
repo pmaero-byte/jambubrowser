@@ -64,5 +64,5 @@ Scale figures were also understated: backend is **57,755** LOC across 196 files
 (not ~53.9k); frontend 21,971 (as stated).
 
 ## 3. Next finishable increments
-Real VPN integration test on a rooted host → VPN pool persistence across restarts → durable simulation queue → publish jambu → native parity + hardening → Jira/Linear export + per-step SARIF.
-(VPN MCP tools `vpn_status|vpn_select|vpn_probe` landed 2026-10-03; MCP surface now 52 tools.)
+Real VPN integration test on a rooted host → native parity + hardening (downloads/find/copy/crash-fallback/privacy review) → live publish of the verified wheel to PyPI/TestPyPI → two-way Jira/Linear sync.
+(VPN MCP tools + pool persistence, durable simulation queue, Jira/Linear export, and per-step SARIF landed 2026-10-03; MCP surface now 52 tools.)

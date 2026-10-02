@@ -31,6 +31,8 @@ from backend.employees.export import (
     content_fingerprint,
     findings_to_canonical_json,
     findings_to_html,
+    findings_to_jira_issues,
+    findings_to_linear_issues,
     findings_to_markdown,
     findings_to_sarif,
     sarif_to_json,
@@ -945,6 +947,32 @@ async def audit_export_json(audit_id: int):
         iter([payload]),
         media_type="application/json",
         headers={"Content-Disposition": f'attachment; filename="jambu-audit-{audit_id}.json"'},
+    )
+
+
+@router.get("/export/jira")
+async def audit_export_jira(audit_id: int, project_key: str = "JAMBU"):
+    """Download a saved audit as Jira issue-create payloads (JSON)."""
+    audited_url, findings, summary = _load_findings_for_audit(audit_id)
+    issues = findings_to_jira_issues(findings, audited_url=audited_url, project_key=project_key)
+    payload = json.dumps(issues, indent=2, default=str)
+    return StreamingResponse(
+        iter([payload]),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="jambu-audit-{audit_id}-jira.json"'},
+    )
+
+
+@router.get("/export/linear")
+async def audit_export_linear(audit_id: int, team_id: str = ""):
+    """Download a saved audit as Linear issue-create payloads (JSON)."""
+    audited_url, findings, summary = _load_findings_for_audit(audit_id)
+    issues = findings_to_linear_issues(findings, audited_url=audited_url, team_id=team_id)
+    payload = json.dumps(issues, indent=2, default=str)
+    return StreamingResponse(
+        iter([payload]),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="jambu-audit-{audit_id}-linear.json"'},
     )
 
 

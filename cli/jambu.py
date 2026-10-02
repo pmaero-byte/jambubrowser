@@ -199,13 +199,15 @@ def _export_findings(
     event when available (older engines only send per-employee lists, so
     fall back to those). Returns an exit code (EXIT_OK or EXIT_ENGINE_ERROR).
     """
-    if not (args.sarif or args.json_out or args.markdown):
+    if not (args.sarif or args.json_out or args.markdown or args.jira or args.linear):
         return EXIT_OK
 
     try:
         from backend.employees.base import Finding
         from backend.employees.export import (
             findings_to_canonical_json,
+            findings_to_jira_issues,
+            findings_to_linear_issues,
             findings_to_markdown,
             findings_to_sarif,
             sarif_to_json,
@@ -235,6 +237,12 @@ def _export_findings(
     if args.markdown:
         md = findings_to_markdown(findings, audited_url=url, summary=summary)
         _write_export(args.markdown, md, "Markdown")
+    if getattr(args, "jira", None):
+        issues = findings_to_jira_issues(findings, audited_url=url)
+        _write_export(args.jira, json.dumps(issues, indent=2, default=str), "Jira")
+    if getattr(args, "linear", None):
+        issues = findings_to_linear_issues(findings, audited_url=url)
+        _write_export(args.linear, json.dumps(issues, indent=2, default=str), "Linear")
     return EXIT_OK
 
 
@@ -1499,6 +1507,15 @@ def cmd_test(args) -> int:
         print("  artifacts: " + ", ".join(f"{k}={v}" for k, v in artifacts.items()))
     if args.json:
         print(json.dumps(result, indent=2))
+    sarif_path = getattr(args, "sarif", None)
+    if sarif_path:
+        from backend.employees.flow_sarif import flow_report_to_sarif, flow_sarif_to_json
+
+        _write_export(
+            sarif_path,
+            flow_sarif_to_json(flow_report_to_sarif(result)),
+            "SARIF",
+        )
     return EXIT_OK if result.get("ok") else EXIT_GATE_FAILED
 
 
@@ -1637,6 +1654,14 @@ def _add_audit_options(p: argparse.ArgumentParser) -> None:
         help="Write a human-readable Markdown report ('-' = stdout)",
     )
     p.add_argument(
+        "--jira", metavar="FILE",
+        help="Write Jira issue-create payloads ('-' = stdout)",
+    )
+    p.add_argument(
+        "--linear", metavar="FILE",
+        help="Write Linear issue-create payloads ('-' = stdout)",
+    )
+    p.add_argument(
         "--fail-on", dest="fail_on",
         choices=["critical", "high", "medium", "low", "none"],
         default="none",
@@ -1721,6 +1746,8 @@ def main():
                         action="store_true",
                         help="Refuse JS-dependent evaluate steps")
     p_test.add_argument("--json", action="store_true", help="Print the full report JSON")
+    p_test.add_argument("--sarif", metavar="FILE",
+                        help="Write a per-step SARIF 2.1.0 report (use '-' for stdout)")
 
     p_export = subparsers.add_parser(
         "export", help="Export a flow to Playwright Test (.spec.ts)",
