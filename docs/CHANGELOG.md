@@ -4,6 +4,8 @@ All notable changes to Jambubrowser.
 
 ## [Unreleased]
 
+## [3.4.0] - 2026-10-03
+
 ### Added — dynamic VPN (tunnel + rotating proxy pool)
 
 The browser's egress is now a configurable, layered subsystem rather than a

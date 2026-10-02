@@ -1,6 +1,6 @@
-# Jambubrowser v3.3.0 — Capability Report + Gaps
+# Jambubrowser v3.4.0 — Capability Report + Gaps
 
-Date: 2026-09-30 | Commit: `279e5c4` | Branch: `main` clean | Version sync: `3.3.0` (pyproject + backend + browser-app + tauri)
+Date: 2026-10-03 | Commit: `f81d35b` | Branch: `main` | Version sync: `3.4.0` (pyproject + backend + browser-app + tauri)
 
 > Source of truth: README, docs/FEATURE_MAP.md, docs/CHANGELOG.md, docs/IMPROVEMENT_PLAN.md, docs/BROWSER_TESTING.md, docs/BROWSER_SESSIONS.md, docs/MCP_REMOTE.md, docs/EVAL_CERTIFICATES.md, docs/EVIDENCE.md, docs/VERIFICATION.md, docs/MESHPAY.md, docs/X402.md, docs/A2A.md, docs/CI.md, docs/MULTIWEBVIEW_PLAN.md + live CLI `jambu --help`.
 
