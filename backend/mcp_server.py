@@ -763,7 +763,7 @@ async def simulation_quote(
 @mcp.tool()
 async def simulation_submit(
     module: str, kind: str = "native", steps: int = 0, seed: int = 0,
-    replicates: int = 1, idempotency_key: str = "",
+    replicates: int = 1, idempotency_key: str = "", queued: bool = False,
 ) -> str:
     """
     Run a simulation across mesh nodes, verify the replicas agree, and settle.
@@ -780,12 +780,16 @@ async def simulation_submit(
         seed: Deterministic seed for reproducible runs
         replicates: Independent nodes to run it on (1-32)
         idempotency_key: Reuse to make retries safe (never double-charges)
+        queued: Enqueue and let the durable worker settle it later; the job
+            comes back QUEUED and can be polled with simulation_jobs
     """
     payload = {"module": module, "kind": kind, "seed": seed, "replicates": replicates}
     if steps:
         payload["steps"] = steps
     if idempotency_key:
         payload["idempotency_key"] = idempotency_key
+    if queued:
+        payload["queued"] = True
     result = await _call_engine("POST", "/simulation/submit", payload, timeout=300.0)
     if "error" in result:
         return f"Simulation failed: {result['error']}"

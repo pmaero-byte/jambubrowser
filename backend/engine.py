@@ -90,6 +90,28 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from backend.modules.flow_monitor import get_flow_monitor_scheduler
     get_flow_monitor_scheduler().start()
 
+    # Durable simulation queue: a FIFO worker that drains QUEUED rows written
+    # by POST /simulation/submit?queued=1. Opt-in via JAMBU_SIM_QUEUE=1 (and
+    # only meaningful when the decentralised routes are mounted). A worker
+    # crash must not take the engine down, so failures are logged only.
+    sim_worker = None
+    try:
+        import os
+
+        if (
+            os.environ.get("JAMBU_SIM_QUEUE") == "1"
+            and os.environ.get("JAMBU_ENABLE_DECENTRALIZED") == "1"
+        ):
+            from backend.decentralized.simulation import SimulationWorker
+
+            sim_worker = SimulationWorker()
+            await sim_worker.start()
+            log.info("Simulation worker started (durable queue)")
+    except Exception:
+        sim_worker = None
+        log.warning("Simulation worker failed to start; continuing without it",
+                    exc_info=True)
+
     # Dynamic VPN: bring the base tunnel up and start the pool health
     # sweeper. Entirely inert unless JAMBU_VPN_ENABLED is set. A misconfigured
     # tunnel must not take the whole engine down, so failures are logged and
@@ -151,6 +173,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await get_flow_monitor_scheduler().stop()
     except Exception:
         pass
+    if sim_worker is not None:
+        try:
+            await sim_worker.stop()
+        except Exception:
+            pass
     # Dynamic VPN: stop the health sweeper and drop the tunnel interface so
     # a restart does not leave a stale one behind.
     try:

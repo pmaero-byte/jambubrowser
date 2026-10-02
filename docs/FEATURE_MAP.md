@@ -248,6 +248,9 @@ federation — the information-access surface a normal browser can't offer.
   `verification` scorecards the mesh already records. `idempotency_key`
   makes retries free; `/simulation/jobs/{id}/evidence` signs a
   `compute_simulation` bundle. Surfaces: `/simulation/*`, `jambu sim`, MCP ×4.
+  A durable queue (`JAMBU_SIM_QUEUE=1`, `POST /simulation/submit?queued=1`,
+  `jambu sim run --queued`) drains QUEUED rows FIFO via `SimulationWorker` and
+  re-queues RUNNING jobs a crashed process left behind.
 - **Numeric verification comparator**
   (`backend/decentralized/verification.py`) — solver output is compared as
   numbers under absolute/relative tolerances with the deviation's JSON path

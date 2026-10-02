@@ -602,6 +602,8 @@ def cmd_sim(args) -> int:
             payload["steps"] = args.steps
         if sub == "run" and getattr(args, "idempotency_key", ""):
             payload["idempotency_key"] = args.idempotency_key
+        if sub == "run" and getattr(args, "queued", False):
+            payload["queued"] = True
         # The CLI verb is "run"; the route that dispatches work is /submit.
         endpoint = "quote" if sub == "quote" else "submit"
         resp = api_request("POST", f"/simulation/{endpoint}", payload)
@@ -620,7 +622,8 @@ def cmd_sim(args) -> int:
             return EXIT_OK
 
         status = resp.get("status", "?")
-        colour = {"SETTLED": "92", "QUARANTINED": "93", "FAILED": "91"}.get(status, "0")
+        colour = {"SETTLED": "92", "QUARANTINED": "93", "FAILED": "91",
+                  "QUEUED": "94", "RUNNING": "94"}.get(status, "0")
         print(f"\n🧮  Simulation — \033[{colour}m{status}\033[0m\n")
         print(f"   Job:       {resp.get('id')}")
         print(f"   Spec hash: {resp.get('spec_hash', '?')[:32]}…")
@@ -1956,6 +1959,8 @@ def main():
     p_sim_r.add_argument("--replicas", type=int, default=1)
     p_sim_r.add_argument("--idempotency-key", default="",
                          help="Retries return the same job (never double-charges)")
+    p_sim_r.add_argument("--queued", action="store_true",
+                         help="Enqueue and let the durable worker settle it")
 
     p_sim_j = sim_sub.add_parser("jobs", help="Job history and spend")
     p_sim_j.add_argument("--limit", type=int, default=20)

@@ -309,6 +309,8 @@ verified-compute path — the same treatment `/dcm/infer` gets.
 | `JAMBU_SIM_FAILURE_THRESHOLD` | `2` | consecutive node failures before quarantine |
 | `JAMBU_SIM_ABS_TOL` | `1e-12` | absolute comparison tolerance |
 | `JAMBU_SIM_REL_TOL` | `1e-9` | relative comparison tolerance |
+| `JAMBU_SIM_QUEUE` | off | set `1` to start the durable queue worker with the engine |
+| `JAMBU_DB_PATH` | `rag_data.db` | SQLite path also used for the job queue |
 
 ## Adding a node
 
@@ -353,15 +355,22 @@ whose echoed `specHash` does not match the job.
    restart forgets every quarantine and reputation record (the durable half
    is `worker_verdicts`, which does persist). The VPN pool has the same
    limitation and is called out in `docs/VPN.md`.
-6. **Dispatch is synchronous** — a job occupies the request until it
-   finishes, so long simulations are bounded by `JAMBU_SIM_TIMEOUT_MS`.
-   A durable queue needs a background worker, which does not exist yet.
+6. **Two dispatch modes** — the synchronous path keeps its request for the
+   whole run (bounded by `JAMBU_SIM_TIMEOUT_MS`); the durable path
+   (`POST /simulation/submit?queued=1` / `jambu sim run --queued` / MCP
+   `simulation_submit(queued=true)`) writes a QUEUED row and a background
+   `SimulationWorker` drains it FIFO, one job at a time. On startup the
+   worker re-queues anything left in RUNNING, so a crash does not strand a
+   job. Queue depth is whatever this one process can field — there is no
+   multi-process fan-out yet, and a restart mid-job re-runs it (jobs are
+   idempotent by `idempotency_key`, so a retried settle does not
+   double-charge).
 7. **DCM paging is still capped at 200 receipts per fetch** (see
    `docs/MESHPAY.md`), so very long chains still need an export endpoint
    before anchoring large epochs.
 
 ## Tests
 
-`tests/test_simulation.py` — 104 tests across the numeric comparator, the
+`tests/test_simulation.py` — 108 tests, `tests/test_simulation_queue.py` — 7 tests across the numeric comparator, the
 payout fix, spec freeze, quoting, dispatch, consensus, node health + quarantine,
 reputation scheduling, the job store, idempotency, evidence, and the routes.

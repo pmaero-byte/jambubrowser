@@ -77,6 +77,11 @@ Verified, priced, replicated job execution on the mesh (`backend/decentralized/s
   instead of reporting a MATCH it never earned.
 - **Idempotent retries** — `idempotency_key` short-circuits before dispatch, so
   a timed-out client cannot be billed twice.
+- **Durable queue** — `POST /simulation/submit?queued=1` (CLI `jambu sim run
+  --queued`, MCP `simulation_submit(queued=true)`) writes a QUEUED row; a
+  `SimulationWorker` started via `JAMBU_SIM_QUEUE=1` drains it FIFO, one job
+  at a time, and re-queues RUNNING rows from any crashed process. Evidence
+  endpoints refuse non-terminal jobs with 409.
 - **Auditable** — per-result `execution_hash`; `GET /simulation/jobs/{id}/evidence`
   signs a `compute_simulation` bundle.
 - **Surfaces** — `/simulation/{config,nodes,quote,submit,jobs,jobs/{id},jobs/{id}/evidence}`,

@@ -1292,6 +1292,195 @@ async def submit(
 
 
 # ---------------------------------------------------------------------------
+# Durable queue: enqueue now, settle later, survive a restart
+# ---------------------------------------------------------------------------
+
+STATUS_QUEUED = "QUEUED"
+STATUS_RUNNING = "RUNNING"
+OPEN_STATUSES = frozenset({STATUS_QUEUED, STATUS_RUNNING})
+
+
+def _insert_job(record: dict, *, idempotency_key: Optional[str]) -> dict:
+    from backend.core.database import get_db
+
+    now = time.time()
+    with get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO simulation_jobs
+                (id, idempotency_key, spec_hash, spec_json, status, tier,
+                 replicas, quote_json, result_json, charged_dct, error,
+                 created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record["id"], idempotency_key, record["spec_hash"],
+                js_dumps(record["spec"]), record["status"], record["tier"],
+                record["replicas"], js_dumps(record["quote"]),
+                js_dumps(record.get("result") or {}),
+                record.get("charged_dct", 0.0), record.get("error"),
+                now, now,
+            ),
+        )
+        conn.commit()
+    return {**record, "created_at": now, "updated_at": now}
+
+
+def enqueue_job(
+    spec: SimulationSpec,
+    *,
+    replicates: int = 1,
+    idempotency_key: Optional[str] = None,
+) -> dict:
+    """Persist a QUEUED job without dispatching it.
+
+    The spec is frozen and validated before anything is written, so a bad
+    request never enters the queue. ``idempotency_key`` deduplicates before
+    insert, exactly like the synchronous path.
+    """
+    if idempotency_key:
+        existing = get_job_by_idempotency_key(idempotency_key)
+        if existing:
+            return {**_public_record(existing), "idempotent_replay": True}
+    pricing = quote(spec, replicates=replicates)  # validates too
+    job_id = uuid.uuid4().hex
+    record = {
+        "id": job_id,
+        "idempotency_key": idempotency_key,
+        "spec_hash": spec.spec_hash(),
+        "spec": spec.canonical(),
+        "status": STATUS_QUEUED,
+        "tier": pricing["tier"],
+        "replicas": replicates,
+        "quote": pricing,
+        "charged_dct": 0.0,
+        "error": None,
+        "result": {},
+    }
+    stored = _insert_job(record, idempotency_key=idempotency_key)
+    return {**_public_record(stored), "idempotent_replay": False}
+
+
+def _claim_next_queued() -> Optional[dict]:
+    """Atomically flip the oldest QUEUED job to RUNNING and return it."""
+    from backend.core.database import get_db
+
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM simulation_jobs WHERE status = ? "
+            "ORDER BY created_at ASC LIMIT 1",
+            (STATUS_QUEUED,),
+        ).fetchone()
+        if row is None:
+            return None
+        cur = conn.execute(
+            "UPDATE simulation_jobs SET status = ?, updated_at = ? "
+            "WHERE id = ? AND status = ?",
+            (STATUS_RUNNING, time.time(), row["id"], STATUS_QUEUED),
+        )
+        conn.commit()
+        if cur.rowcount == 0:
+            return None  # another worker claimed it first
+        return _row_to_job(row)
+
+
+def _finish_job(job_id: str, result: dict) -> None:
+    from backend.core.database import get_db
+
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE simulation_jobs SET status = ?, result_json = ?, "
+            "charged_dct = ?, error = ?, tier = ?, updated_at = ? WHERE id = ?",
+            (
+                result["status"],
+                js_dumps(result),
+                float(result.get("charged_dct") or 0),
+                result.get("error"),
+                (result.get("quote") or {}).get("tier"),
+                time.time(),
+                job_id,
+            ),
+        )
+        conn.commit()
+
+
+def recover_interrupted_jobs() -> int:
+    """Re-queue jobs a dead process left in RUNNING. Returns the count."""
+    from backend.core.database import get_db
+
+    with get_db() as conn:
+        cur = conn.execute(
+            "UPDATE simulation_jobs SET status = ?, updated_at = ? WHERE status = ?",
+            (STATUS_QUEUED, time.time(), STATUS_RUNNING),
+        )
+        conn.commit()
+        return cur.rowcount
+
+
+class SimulationWorker:
+    """FIFO worker that drains the durable queue inside the engine process.
+
+    One job at a time by design: a node that is mid-job is known-busy, and
+    the honesty constraint says we must not pretend to field more capacity
+    than we actually have. Start it with the engine lifespan; without it the
+    synchronous path is the only way jobs run.
+    """
+
+    def __init__(self, *, poll: float = 2.0):
+        self._poll = max(0.1, float(poll))
+        self._task: Optional[asyncio.Task] = None
+
+    async def start(self) -> None:
+        recover_interrupted_jobs()
+        self._task = asyncio.ensure_future(self._loop())
+
+    async def stop(self) -> None:
+        if self._task is None:
+            return
+        self._task.cancel()
+        try:
+            await self._task
+        except asyncio.CancelledError:
+            pass
+        self._task = None
+
+    async def run_one(self) -> bool:
+        row = _claim_next_queued()
+        if row is None:
+            return False
+        try:
+            spec = SimulationSpec.from_dict(row["spec"])
+            result = await run_job(spec, replicates=row.get("replicas") or 1)
+        except Exception as exc:  # noqa: BLE001 - surface, never kill the loop
+            log.warning("queued simulation job %s failed: %s", row["id"], exc)
+            result = {
+                "spec_hash": row["spec_hash"],
+                "spec": row.get("spec") or {},
+                "quote": row.get("quote") or {},
+                "status": STATUS_FAILED,
+                "attempts": [],
+                "verification": None,
+                "error": str(exc),
+                "charged_dct": 0.0,
+                "nodes_used": [],
+                "required_tier_satisfied": False,
+                "excluded_nodes": {},
+            }
+        _finish_job(row["id"], result)
+        return True
+
+    async def _loop(self) -> None:
+        while True:
+            try:
+                did = await self.run_one()
+            except Exception as exc:  # noqa: BLE001 - the loop must not die
+                log.warning("simulation worker loop error: %s", exc)
+                did = False
+            if not did:
+                await asyncio.sleep(self._poll)
+
+
+# ---------------------------------------------------------------------------
 # Evidence
 # ---------------------------------------------------------------------------
 

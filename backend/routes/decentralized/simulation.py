@@ -56,6 +56,10 @@ class SimulationRequest(BaseModel):
     module_digest: str = ""
     replicates: int = 1
     idempotency_key: Optional[str] = None
+    # False (default): dispatch and settle inside this request. True: write a
+    # QUEUED row and let the durable worker settle it later — survives a
+    # restart, returns 202-style shape immediately.
+    queued: bool = False
 
     @validator("module")
     def validate_module(cls, v):
@@ -165,6 +169,11 @@ async def simulation_submit(req: SimulationRequest):
     """Dispatch, verify, and settle (or quarantine) a simulation job."""
     spec = _spec_from_request(req)
     try:
+        if req.queued:
+            return simulation.enqueue_job(
+                spec, replicates=req.replicates,
+                idempotency_key=req.idempotency_key,
+            )
         return await simulation.submit(
             spec, replicates=req.replicates,
             idempotency_key=req.idempotency_key,
@@ -180,10 +189,10 @@ async def simulation_jobs(
     """Job history, newest first."""
     if limit < 1 or limit > 500:
         raise HTTPException(status_code=422, detail="limit must be 1..500")
-    if status and status not in simulation.TERMINAL_STATUSES:
+    if status and status not in (simulation.TERMINAL_STATUSES | simulation.OPEN_STATUSES):
         raise HTTPException(
             status_code=422,
-            detail=f"status must be one of {sorted(simulation.TERMINAL_STATUSES)}",
+            detail=f"status must be one of {sorted(simulation.TERMINAL_STATUSES | simulation.OPEN_STATUSES)}",
         )
     jobs = simulation.list_jobs(limit=limit, status=status, spec_hash=spec_hash)
     return {"jobs": jobs, "count": len(jobs), "totals": simulation.job_totals()}
@@ -203,6 +212,12 @@ async def simulation_job_evidence(job_id: str):
     """Sign one job into an Ed25519 evidence bundle."""
     if simulation.get_job(job_id) is None:
         raise HTTPException(status_code=404, detail=f"no simulation job {job_id}")
+    job = simulation.get_job(job_id)
+    if job["status"] in simulation.OPEN_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"job {job_id} is {job['status']}; evidence is only signable for terminal jobs",
+        )
     try:
         from backend.decentralized.evidence import save_bundle
 

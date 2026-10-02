@@ -189,6 +189,7 @@ python3 -m pytest tests/test_e2e.py -v
 - **Policy actually enforced**: job value is priced in DCT, converted to USD, and fed into the verification tier — a `REDUNDANT`-tier job on a single-node mesh is quarantined instead of reporting a `MATCH` it never earned.
 - **Safe retries**: an `idempotency_key` short-circuits before dispatch, so a client that times out and retries cannot be billed twice.
 - **Auditable end to end**: per-result `execution_hash` binds spec + node + output; `GET /simulation/jobs/{id}/evidence` signs a `compute_simulation` bundle verifiable with `scripts/verify_evidence_bundle.py`.
+- **Durable queue**: `POST /simulation/submit?queued=1` (`jambu sim run --queued`, MCP `queued=true`) enqueues a QUEUED row; a `SimulationWorker` started with `JAMBU_SIM_QUEUE=1` drains it FIFO and re-queues jobs a crash left in RUNNING.
 - Surfaces: `/simulation/*`, `jambu sim {nodes,quote,run,jobs}`, MCP `simulation_quote|submit|jobs`. See `docs/SIMULATION_COMPUTE.md`.
 
 ### Privacy & Security
