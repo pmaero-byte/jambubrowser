@@ -83,6 +83,12 @@ class VPNConfig:
     # -- misc --------------------------------------------------------------
     # Sticky window: how long one session keeps its endpoint.
     sticky_ttl: float = 300.0
+    # Where pool health is persisted so a restart does not wipe what the
+    # mesh learned about a dead endpoint. Empty means in-memory only.
+    state_file: str = ""
+    # Restore entries at most this old; older files are ignored so a week-old
+    # quarantine never pins a recovered endpoint for new sessions.
+    state_max_age: float = 86400.0
 
     @classmethod
     def from_env(cls, env: Optional[Any] = None) -> "VPNConfig":
@@ -105,6 +111,8 @@ class VPNConfig:
         ``JAMBU_VPN_TUNNEL_CONFIG``    path to a .conf
         ``JAMBU_VPN_TUNNEL_DNS``       comma-separated DNS servers
         ``JAMBU_VPN_STICKY_TTL``       seconds a session keeps its endpoint (300)
+        ``JAMBU_VPN_STATE_FILE``       JSON path for pool-health persistence (off)
+        ``JAMBU_VPN_STATE_MAX_AGE``    oldest state to restore, seconds (86400)
         """
         src = os.environ if env is None else env
 
@@ -149,6 +157,10 @@ class VPNConfig:
             tunnel_config_path=get("JAMBU_VPN_TUNNEL_CONFIG"),
             tunnel_dns=get_list("JAMBU_VPN_TUNNEL_DNS"),
             sticky_ttl=_env_float_from(src, "JAMBU_VPN_STICKY_TTL", 300.0),
+            state_file=get("JAMBU_VPN_STATE_FILE"),
+            state_max_age=_env_float_from(
+                src, "JAMBU_VPN_STATE_MAX_AGE", 86400.0, minimum=60.0
+            ),
         )
 
     # -- derived state -----------------------------------------------------
@@ -235,6 +247,8 @@ class VPNConfig:
             "tunnel_config_path": self.tunnel_config_path,
             "tunnel_dns": list(self.tunnel_dns),
             "sticky_ttl": self.sticky_ttl,
+            "state_file": self.state_file,
+            "state_max_age": self.state_max_age,
         }
 
 

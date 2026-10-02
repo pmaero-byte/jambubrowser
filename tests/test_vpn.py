@@ -700,3 +700,48 @@ class TestBrowserEgress:
         # Fail-closed applies to callers that demand a proxy; a browser
         # launch must still proceed rather than crash the session.
         assert BrowserSession("s6")._resolve_proxy() is None
+
+class TestPoolPersistence:
+    def test_report_writes_state_file(self, tmp_path):
+        import json
+
+        state = tmp_path / "vpn.json"
+        pool = make_pool(env={"JAMBU_VPN_STATE_FILE": str(state)})
+        pool.report(pool.urls()[0], ok=True, latency_ms=42.0)
+        data = json.loads(state.read_text())
+        assert data["version"] == 1
+        ep = data["endpoints"][pool.urls()[0]]
+        assert ep["successes"] == 1
+        assert ep["latency_ms"] == 42.0
+
+    def test_restart_restores_health_and_quarantine(self, tmp_path):
+        state = tmp_path / "vpn.json"
+        pool = make_pool(env={"JAMBU_VPN_STATE_FILE": str(state)})
+        dead = pool.urls()[0]
+        for _ in range(3):
+            pool.report(dead, ok=False, error="boom")
+        # A fresh pool over the same state file resurrects the quarantine.
+        pool2 = make_pool(env={"JAMBU_VPN_STATE_FILE": str(state)})
+        ep = pool2._endpoints[dead]
+        assert ep.consecutive_failures == 3
+        assert ep.healthy is False
+        assert ep.available is False
+
+    def test_stale_state_is_ignored(self, tmp_path):
+        import json, time
+
+        state = tmp_path / "vpn.json"
+        state.write_text(json.dumps({
+            "version": 1,
+            "saved_at": time.time() - 10 * 86400,
+            "endpoints": {},
+        }))
+        pool = make_pool(env={"JAMBU_VPN_STATE_FILE": str(state)})
+        # Nothing restored, everything defaults to healthy.
+        assert all(ep.healthy for ep in pool._endpoints.values())
+
+    def test_corrupt_state_file_is_tolerated(self, tmp_path):
+        state = tmp_path / "vpn.json"
+        state.write_text("{ not json !!")
+        pool = make_pool(env={"JAMBU_VPN_STATE_FILE": str(state)})
+        assert pool.size == len(POOL_ENV["JAMBU_VPN_POOL"].split(","))

@@ -119,6 +119,7 @@ class ProxyPool:
         config: Optional[VPNConfig] = None,
         *,
         probe: Optional[Callable[[str], Any]] = None,
+        state_file: Optional[str] = None,
     ):
         self._config = config or VPNConfig()
         self._probe = probe
@@ -129,8 +130,95 @@ class ProxyPool:
         self._endpoints: dict[str, EndpointHealth] = {}
         self._regions: dict[str, str] = {}
         self._sweeper: Optional[asyncio.Task] = None
+        self._state_file = (
+            state_file if state_file is not None else self._config.state_file
+        )
         for url in self._config.pool:
             self._endpoints[url] = EndpointHealth(url=url)
+        if self._state_file:
+            self._restore()
+
+    # -- persistence ---------------------------------------------------------
+
+    def _restore(self) -> None:
+        """Load endpoint health persisted by a previous process.
+
+        Best-effort by design: a missing, corrupt, or stale state file must
+        never stop the engine from serving. Endpoints no longer in the
+        configured pool are dropped, regions are not trusted (they ARE
+        restored only if they still match config tags), and an expired
+        quarantine is left to re-probe naturally.
+        """
+        try:
+            import json
+            from pathlib import Path
+
+            raw = Path(self._state_file).read_text(encoding="utf-8")
+            data = json.loads(raw)
+            saved_at = float(data.get("saved_at", 0) or 0)
+            if saved_at and time.time() - saved_at > self._config.state_max_age:
+                log.info("vpn pool state older than %ss ignored", self._config.state_max_age)
+                return
+            for url, ep_data in (data.get("endpoints") or {}).items():
+                ep = self._endpoints.get(url)
+                if ep is None:
+                    continue  # removed from the configured pool while we were down
+                try:
+                    ep.healthy = bool(ep_data.get("healthy", True))
+                    ep.consecutive_failures = int(ep_data.get("consecutive_failures", 0))
+                    ep.successes = int(ep_data.get("successes", 0))
+                    ep.failures = int(ep_data.get("failures", 0))
+                    latency = ep_data.get("latency_ms")
+                    ep.latency_ms = float(latency) if latency is not None else None
+                    ep.last_checked = float(ep_data.get("last_checked", 0) or 0)
+                    ep.last_error = str(ep_data.get("last_error", ""))[:200]
+                    quarantined_until = float(ep_data.get("quarantined_until", 0) or 0)
+                    ep.quarantined_until = (
+                        quarantined_until if quarantined_until > time.time() else 0.0
+                    )
+                except (TypeError, ValueError):
+                    continue
+            log.info("vpn pool state restored from %s", self._state_file)
+        except (OSError, ValueError, KeyError) as exc:
+            log.warning("vpn pool state not restored: %s", exc)
+
+    def _persist(self) -> None:
+        """Atomically write endpoint health; never raise."""
+        if not self._state_file:
+            return
+        try:
+            import json
+            import os
+            import tempfile
+            from pathlib import Path
+
+            path = Path(self._state_file)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "version": 1,
+                "saved_at": time.time(),
+                "endpoints": {
+                    url: {
+                        "healthy": ep.healthy,
+                        "consecutive_failures": ep.consecutive_failures,
+                        "successes": ep.successes,
+                        "failures": ep.failures,
+                        "latency_ms": ep.latency_ms,
+                        "last_checked": ep.last_checked,
+                        "last_error": ep.last_error,
+                        "quarantined_until": ep.quarantined_until,
+                    }
+                    for url, ep in self._endpoints.items()
+                },
+            }
+            fd, tmp = tempfile.mkstemp(
+                dir=str(path.parent), prefix=".vpn-state-", suffix=".tmp"
+            )
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(payload, fh)
+            os.replace(tmp, path)
+        except OSError as exc:
+            log.warning("vpn pool state not persisted: %s", exc)
 
     # -- membership --------------------------------------------------------
 
@@ -146,6 +234,7 @@ class ProxyPool:
         if url in self._endpoints:
             self._regions[url] = region
             self._endpoints[url].region = region
+            self._persist()
 
     def add(self, url: str, region: str = "") -> None:
         with self._lock:
@@ -154,14 +243,16 @@ class ProxyPool:
             if region:
                 self._regions[url] = region
                 self._endpoints[url].region = region
+        self._persist()
 
     def remove(self, url: str) -> bool:
         with self._lock:
-            existed = self._endpoints.pop(url, None) is not None
-            self._regions.pop(url, None)
             for key, (pinned, _) in list(self._sticky.items()):
                 if pinned == url:
                     self._sticky.pop(key, None)
+            existed = self._endpoints.pop(url, None) is not None
+            self._regions.pop(url, None)
+            self._persist()
             return existed
 
     def _candidates(self) -> list[EndpointHealth]:
@@ -280,6 +371,7 @@ class ProxyPool:
                         ep.consecutive_failures,
                         ep.last_error,
                     )
+        self._persist()
 
     def health(self) -> dict[str, Any]:
         """Full pool health, safe to return over HTTP."""

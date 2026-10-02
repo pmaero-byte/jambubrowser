@@ -30,9 +30,15 @@ single static `JAMBU_TOR_SOCKS_URL`. See `docs/VPN.md`.
 - **Surfaces** — `GET /vpn/status`, `GET /vpn/config`, `POST /vpn/select`,
   `POST /vpn/probe`; CLI `jambu vpn status|up|down`.
 - **Safe to test** — `JAMBU_VPN_DRY_RUN=1` exercises the whole path without
-  root or a real tunnel; `tests/test_vpn.py` adds 84 tests.
+  root or a real tunnel; `tests/test_vpn.py` adds 88 tests.
 - **MCP surface for VPN** — `vpn_status`, `vpn_select`, `vpn_probe` round out
   egress control from agent clients; docs/MCP_TOOLS.md regenerated (52 tools).
+- **Pool state persistence** — `JAMBU_VPN_STATE_FILE` writes per-endpoint
+  health (healthy/consecutive_failures/latency/quarantine) to JSON atomically
+  on every report/add/remove; a new `ProxyPool` restores it so a restart does
+  not wipe what the mesh learned. State older than `JAMBU_VPN_STATE_MAX_AGE`
+  (24h) is ignored, quarantines in the past are dropped, and corrupt/missing
+  files degrade to a fresh pool.
 
 Inert unless `JAMBU_VPN_ENABLED=1`: with no VPN env set, behaviour is
 byte-for-byte what it was.

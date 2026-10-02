@@ -71,6 +71,8 @@ worse than an unproxied one. Callers that genuinely require a proxy
 | `JAMBU_VPN_TUNNEL_CONFIG` | — | Path to a `.conf` |
 | `JAMBU_VPN_TUNNEL_DNS` | — | Comma-separated DNS servers |
 | `JAMBU_VPN_STICKY_TTL` | `300` | Seconds a session keeps its endpoint |
+| `JAMBU_VPN_STATE_FILE` | — | JSON path to persist pool health across restarts |
+| `JAMBU_VPN_STATE_MAX_AGE` | `86400` | Oldest state to restore, seconds |
 
 ### Examples
 
@@ -218,4 +220,4 @@ API, and CLI — without touching the host network. Every test in
 
 - `docs/FEATURE_MAP.md` — the DeepNet / browser pillar overview
 - `docs/CHANGELOG.md` — release notes
-- `tests/test_vpn.py` — 84 tests covering all three layers
+- `tests/test_vpn.py` — 88 tests covering all three layers
