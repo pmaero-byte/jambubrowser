@@ -165,7 +165,7 @@ class TestToolProfile:
             assert "execute_tool" not in names
             assert "meshpay_audit" in names  # everything else stays
             assert "browser_session_open" in names
-            assert len(names) == 49
+            assert len(names) == 48
         finally:
             full = self._reload("full")
             names = {t.name for t in full.mcp._tool_manager.list_tools()}
