@@ -771,6 +771,25 @@ def cmd_vpn(args):
               f"{tunnel.get('last_error') or 'unknown error'}")
         return EXIT_ENGINE_ERROR
 
+    if action == "leak-check":
+        resp = api_request("GET", "/vpn/leak-check")
+        if not resp:
+            return EXIT_ENGINE_ERROR
+        _section("Leak check")
+        print(f"  verdict    {resp.get('verdict')}")
+        print(f"  direct IP  {resp.get('direct_ip') or '—'}")
+        print(f"  tunnel IP  {resp.get('tunnel_ip') or '—'}")
+        ipv6 = resp.get("ipv6") or {}
+        print(f"  IPv6       direct={ipv6.get('direct') or '—'} tunnel={ipv6.get('tunnel') or '—'}")
+        dns = resp.get("dns") or {}
+        print(f"  DNS        verdict={dns.get('verdict')} "
+              f"system={dns.get('system_answer') or '—'} tunnel={dns.get('tunnel_answer') or '—'}")
+        for leak in resp.get("leaks") or []:
+            print(f"  ✗ {leak}")
+        for note in resp.get("notes") or []:
+            print(f"  · {note}")
+        return EXIT_OK if resp.get("verdict") in ("ok", "disabled") else EXIT_GATE_FAILED
+
     resp = api_request("GET", "/vpn/status")
     if not resp:
         return EXIT_ENGINE_ERROR
@@ -1821,6 +1840,7 @@ def main():
     vpn_sub.add_parser("status", help="Show tunnel + pool health")
     vpn_sub.add_parser("up", help="Bring the VPN tunnel up")
     vpn_sub.add_parser("down", help="Take the VPN tunnel down")
+    vpn_sub.add_parser("leak-check", help="Probe whether the egress actually avoids leaks")
 
     p_devs = subparsers.add_parser(
         "dev-servers", help="Scan for a running local dev server",

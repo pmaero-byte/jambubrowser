@@ -76,3 +76,16 @@ async def vpn_probe():
     manager = get_vpn_manager()
     result = await manager.pool.probe_once()
     return {"probe": result, "pool": manager.pool.health()}
+
+
+@router.get("/leak-check")
+async def vpn_leak_check(session_key: Optional[str] = None):
+    """Prove whether the egress actually carries traffic through the tunnel.
+
+    See ``backend.core.vpn.leakcheck``: compares direct vs proxy IP, IPv6
+    routes, and system DNS against the tunnel's resolver.
+    """
+    from backend.core.vpn.leakcheck import run_leak_check
+
+    manager = get_vpn_manager()
+    return await run_leak_check(manager, session_key=session_key)

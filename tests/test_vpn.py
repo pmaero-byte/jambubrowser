@@ -745,3 +745,77 @@ class TestPoolPersistence:
         state.write_text("{ not json !!")
         pool = make_pool(env={"JAMBU_VPN_STATE_FILE": str(state)})
         assert pool.size == len(POOL_ENV["JAMBU_VPN_POOL"].split(","))
+
+
+async def _fake_doh_1_2_3_4(host, proxy, timeout):
+    return "1.2.3.4"
+
+
+async def _fake_doh_9_9_9_9(host, proxy, timeout):
+    return "9.9.9.9"
+
+
+class TestLeakCheck:
+    def _manager(self, proxy="socks5h://eu1:1080"):
+        pool_env = {**POOL_ENV, "JAMBU_VPN_ENABLED": "1"}
+        cfg = VPNConfig.from_env(pool_env)
+        manager = VPNManager(cfg)
+        manager.resolve_proxy = lambda session_key=None, **_: proxy
+        return manager
+
+    def test_no_leak_when_tunnel_ip_differs_from_direct(self):
+        async def fake_get(url, proxy_url, timeout):
+            if proxy_url is None:
+                return "1.2.3.4"
+            return "9.9.9.9" if "ipify" in url and "6" not in url else None
+
+        async def fake_doh(host, proxy_url, timeout):
+            return "9.9.9.9"
+
+        from backend.core.vpn.leakcheck import run_leak_check
+
+        out = run(run_leak_check(self._manager(), get=fake_get, doh=fake_doh,
+                                 resolve=lambda h: "9.9.9.9"))
+        assert out["verdict"] == "ok"
+        assert out["leaks"] == [] or not any("matches the direct" in l for l in out["leaks"])
+
+    def test_leak_detected_when_ip_matches_direct(self):
+        async def fake_get(url, proxy_url, timeout):
+            return "1.2.3.4"  # same regardless of proxy
+
+        from backend.core.vpn.leakcheck import run_leak_check
+
+        out = run(run_leak_check(self._manager(), get=fake_get,
+                                 doh=_fake_doh_1_2_3_4,
+                                 resolve=lambda h: "1.2.3.4"))
+        assert out["verdict"] == "leaking"
+        assert any("matches the direct" in l for l in out["leaks"])
+
+    def test_ipv6_via_tunnel_is_flagged(self):
+        async def fake_get(url, proxy_url, timeout):
+            if "6.ipify" in url or "api6" in url:
+                return "2001:db8::1" if proxy_url else None
+            return "9.9.9.9" if proxy_url else "1.2.3.4"
+
+        from backend.core.vpn.leakcheck import run_leak_check
+
+        out = run(run_leak_check(self._manager(), get=fake_get,
+                                 doh=_fake_doh_9_9_9_9,
+                                 resolve=lambda h: "9.9.9.9"))
+        assert any("IPv6" in l for l in out["leaks"])
+
+    def test_disabled_vpn_is_not_a_leak(self):
+        async def fake_get(url, proxy_url, timeout):
+            return "1.2.3.4"
+
+        from backend.core.vpn.leakcheck import run_leak_check
+
+        class M:
+            config = VPNConfig.from_env({"JAMBU_VPN_ENABLED": "0"})
+            def resolve_proxy(self, session_key=None, **_):
+                return None
+
+        out = run(run_leak_check(M(), get=fake_get, resolve=lambda h: "1.2.3.4",
+                                 doh=_fake_doh_1_2_3_4))
+        assert out["verdict"] == "disabled"
+        assert out["leaks"] == []

@@ -974,9 +974,10 @@ async def vpn_probe() -> str:
     result = await _call_engine("POST", "/vpn/probe", timeout=60.0)
     if "error" in result:
         return f"VPN probe failed: {result['error']}"
-    if result.get("probed") == 0:
-        return f"No probe ran: {result.get('reason', 'no health probe configured')}."
-    return f"Probe complete: {result.get('probed')} endpoint(s) checked; see vpn_status for per-endpoint health."
+    probe = result.get("probe") or result
+    if probe.get("probed") == 0:
+        return f"No probe ran: {probe.get('reason', 'no health probe configured')}."
+    return f"Probe complete: {probe.get('probed')} endpoint(s) checked; see vpn_status for per-endpoint health."
 
 
 # ===================================================================
