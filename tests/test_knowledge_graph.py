@@ -135,3 +135,45 @@ class TestKnowledgeSearchEndpoint:
         with pytest.raises(HTTPException) as exc:
             asyncio.run(knowledge_search(query="x", limit=500))
         assert exc.value.status_code == 400
+
+
+class TestNeighborhood:
+    def _kg(self):
+        from backend.modules.knowledge_graph import KnowledgeGraph
+        from backend.modules.knowledge_graph import Relation
+        kg = KnowledgeGraph()
+        for eid, name in (("a", "Alpha"), ("b", "Beta"), ("c", "Gamma"), ("d", "Delta")):
+            kg._entity_index[eid] = _make_entity(eid, name)
+        # a-b, b-c, c-d chain
+        for src, tgt in (("a", "b"), ("b", "c"), ("c", "d")):
+            kg._relations.append(Relation(source_id=src, target_id=tgt, relation_type="related_to"))
+        return kg
+
+    def test_depth_1_returns_direct_connections(self):
+        kg = self._kg()
+        ego = kg.get_neighborhood("b", depth=1)
+        ids = {n["id"]: n["hop"] for n in ego["nodes"]}
+        assert ids == {"b": 0, "a": 1, "c": 1}
+        assert {e["target"] for e in ego["edges"]} == {"b", "c"}
+
+    def test_depth_2_walks_two_hops(self):
+        kg = self._kg()
+        ego = kg.get_neighborhood("a", depth=2)
+        ids = {n["id"]: n["hop"] for n in ego["nodes"]}
+        assert ids["b"] == 1 and ids["c"] == 2
+        assert "d" not in ids
+
+    def test_depth_is_clamped(self):
+        kg = self._kg()
+        ego = kg.get_neighborhood("a", depth=99)
+        assert ego["depth"] == 3
+
+    def test_unknown_entity_errors(self):
+        kg = self._kg()
+        assert "error" in kg.get_neighborhood("nope")
+
+    def test_get_entity_returns_record(self):
+        kg = self._kg()
+        entity = kg.get_entity("a")
+        assert entity["entity"]["name"] == "Alpha"
+        assert kg.get_entity("nope") is None

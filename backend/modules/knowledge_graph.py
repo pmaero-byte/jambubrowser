@@ -429,6 +429,87 @@ class KnowledgeGraph:
             'connection_count': len(connections),
         }
 
+    def get_entity(self, entity_id: str) -> Optional[dict]:
+        """One entity with its relations, or None when unknown."""
+        entity = self._entity_index.get(entity_id)
+        if entity is None:
+            return None
+        relations = self.get_entity_relations(entity_id)
+        return {
+            'entity': relations['entity'],
+            'connections': relations['connections'],
+            'connection_count': relations['connection_count'],
+        }
+
+    def get_neighborhood(self, entity_id: str, depth: int = 1, max_nodes: int = 50) -> dict:
+        """The ego subgraph around an entity, up to `depth` hops away.
+
+        BFS over the adjacency built from both directions of every
+        relation — `depth=1` is the entity's direct connections (what
+        ``get_entity_relations`` returns), `depth=2` also includes their
+        direct connections. Returns graph-data-shaped nodes/edges plus the
+        per-node hop distance so a UI can lay out rings.
+        """
+        if entity_id not in self._entity_index:
+            return {'error': 'Entity not found'}
+        depth = max(1, min(int(depth), 3))
+
+        # Undirected adjacency for the walk; direction is preserved in the edge.
+        adjacency: Dict[str, List[Relation]] = defaultdict(list)
+        for rel in self._relations:
+            adjacency[rel.source_id].append(rel)
+            adjacency[rel.target_id].append(rel)
+
+        distances = {entity_id: 0}
+        frontier = {entity_id}
+        for hop in range(1, depth + 1):
+            next_frontier = set()
+            for node_id in frontier:
+                for rel in adjacency.get(node_id, []):
+                    other = rel.target_id if rel.source_id == node_id else rel.source_id
+                    if other in self._entity_index and other not in distances:
+                        distances[other] = hop
+                        next_frontier.add(other)
+            frontier = next_frontier
+            if not frontier:
+                break
+
+        # Cap the returned subgraph, keeping the closest nodes first.
+        ordered = sorted(distances, key=lambda nid: (distances[nid], nid))[: max_nodes]
+        keep = set(ordered)
+
+        nodes = []
+        for nid in ordered:
+            e = self._entity_index.get(nid)
+            if e is None:
+                continue
+            nodes.append({
+                'id': e.id,
+                'label': e.name,
+                'type': e.entity_type,
+                'val': min(e.occurrences, 20),
+                'hop': distances[nid],
+            })
+
+        edges = []
+        for rel in self._relations:
+            if rel.source_id in keep and rel.target_id in keep:
+                edges.append({
+                    'source': rel.source_id,
+                    'target': rel.target_id,
+                    'type': rel.relation_type,
+                    'weight': rel.weight,
+                    'evidence': rel.evidence[:100],
+                })
+
+        return {
+            'center': entity_id,
+            'depth': depth,
+            'nodes': nodes,
+            'edges': edges,
+            'truncated': len(distances) > max_nodes,
+        }
+
     def get_topic_clusters(self, max_clusters: int = 10) -> List[dict]:
         """Group entities into topic clusters based on co-occurrence."""
         clusters = defaultdict(list)

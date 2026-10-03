@@ -92,6 +92,16 @@ Verified, priced, replicated job execution on the mesh (`backend/decentralized/s
   oracle; `DeterministicExecutor` is a seedable numeric kernel, not a physics
   solver. Tests: `tests/test_simulation.py` (108).
 
+### Added — knowledge-graph neighborhood explorer
+
+`KnowledgeGraph.get_neighborhood(entity_id, depth=1..3, max_nodes=50)`
+returns the depth-limited ego subgraph (rings of direct connections out to
+`depth` hops), and the routes module gains
+`GET /knowledge/entity/{id}/neighborhood`. Also fixes a latent bug: the
+existing `GET /knowledge/entity/{id}` dereferenced a `get_entity()` method
+that did not exist — added it. Tests cover hop counting for chain graphs,
+depth clamping, truncation, unknown entities.
+
 ### Added — AEGIS read surface
 
 `GET /agent/aegis/configs` and `GET /agent/aegis/configs/latest` expose the

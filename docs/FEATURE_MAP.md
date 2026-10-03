@@ -221,9 +221,10 @@ federation — the information-access surface a normal browser can't offer.
   Inert unless `JAMBU_VPN_ENABLED=1`; `JAMBU_VPN_DRY_RUN=1` for rootless/CI.
   Tests: `tests/test_vpn.py` (88).
 - **Knowledge graph** (`backend/modules/knowledge_graph.py`) — entity
-  extraction, relationship inference, topic clustering, persistence.
+  extraction, relationship inference, topic clustering, persistence,
+  neighborhood explorer (depth-limited ego subgraph).
   Exposed via `/knowledge/*` (ingest, graph, search, stats, entity,
-  clusters).
+  entity/{id}/neighborhood, clusters).
 - **P2P discovery** (`backend/modules/p2p_discovery.py`) — mDNS/UDP
   peer discovery for a multi-node research mesh. Single-node in practice:
   finds nothing unless other Jambubrowser nodes run on the same LAN.
@@ -281,9 +282,8 @@ federation — the information-access surface a normal browser can't offer.
   mission scheduler + knowledge graph.
 
 ### What still hurts (improvement targets)
-1. **Knowledge graph is write-heavy but has no "explore" UI** — there's
-   a `KnowledgeMini.tsx` 2D force graph but no way to dive into an
-   entity's full neighborhood.
+1. ~~Knowledge graph has no neighborhood view~~ — shipped 2026-10-03:
+   `get_neighborhood()` + `GET /knowledge/entity/{id}/neighborhood`.
 2. **Federated RAG has no trust model surfaced to the user** — peers are
    "trusted" but the user can't see or revoke.
 3. **Missions have no results browser** — you can schedule them but

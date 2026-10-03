@@ -92,6 +92,18 @@ async def knowledge_entity(entity_id: str):
     return entity
 
 
+@router.get("/knowledge/entity/{entity_id}/neighborhood")
+async def knowledge_entity_neighborhood(entity_id: str, depth: int = 1, max_nodes: int = 50):
+    """Ego subgraph around an entity up to `depth` hops (1-3)."""
+    from backend.modules.knowledge_graph import get_knowledge_graph
+    kg = get_knowledge_graph()
+    neighborhood = kg.get_neighborhood(entity_id, depth=depth, max_nodes=max_nodes)
+    if 'error' in neighborhood:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail=neighborhood['error'])
+    return neighborhood
+
+
 @router.get("/knowledge/clusters")
 async def knowledge_clusters(max_clusters: int = 10):
     """Get topic clusters from the knowledge graph."""
