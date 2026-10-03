@@ -56,6 +56,8 @@ class EndpointHealth:
     last_checked: float = 0.0
     last_error: str = ""
     quarantined_until: float = 0.0
+    detection_risk: str = "low"  # low | medium | high, informs selection
+    detections: int = 0          # times this endpoint looked fingerprinted
 
     @property
     def redacted_url(self) -> str:
@@ -94,6 +96,22 @@ class EndpointHealth:
                 30.0, 2.0 * self.consecutive_failures
             )
 
+    def record_detection(self, kind: str = "fingerprinted") -> None:
+        """Notice this endpoint tripping a bot/VPN detector.
+
+        One detection bumps to medium, two or more to high; the risk never
+        *excludes* the endpoint, but the least_latency_low_risk policy
+        weights its latency so peers win. Ignored by all other policies.
+        """
+        self.detections += 1
+        self.detection_risk = "high" if self.detections >= 2 else "medium"
+        self.last_checked = time.time()
+        self.last_error = f"detected:{kind}"[:200]
+
+    @staticmethod
+    def risk_multiplier(risk: str) -> float:
+        return {"low": 1.0, "medium": 1.6, "high": 3.0}.get(risk, 1.0)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "url": self.redacted_url,
@@ -108,6 +126,8 @@ class EndpointHealth:
             else None,
             "last_checked": self.last_checked,
             "last_error": self.last_error,
+            "detection_risk": self.detection_risk,
+            "detections": self.detections,
         }
 
 
@@ -176,6 +196,9 @@ class ProxyPool:
                     ep.quarantined_until = (
                         quarantined_until if quarantined_until > time.time() else 0.0
                     )
+                    risk = str(ep_data.get("detection_risk", "low"))
+                    ep.detection_risk = risk if risk in ("low", "medium", "high") else "low"
+                    ep.detections = max(0, int(ep_data.get("detections", 0) or 0))
                 except (TypeError, ValueError):
                     continue
             log.info("vpn pool state restored from %s", self._state_file)
@@ -207,6 +230,8 @@ class ProxyPool:
                         "last_checked": ep.last_checked,
                         "last_error": ep.last_error,
                         "quarantined_until": ep.quarantined_until,
+                        "detection_risk": ep.detection_risk,
+                        "detections": ep.detections,
                     }
                     for url, ep in self._endpoints.items()
                 },
@@ -320,6 +345,15 @@ class ProxyPool:
             if measured:
                 return min(measured, key=lambda e: e.latency_ms or 0.0)
             return random.choice(pool)
+        if policy is RotationPolicy.LEAST_LATENCY_LOW_RISK:
+            measured = [e for e in pool if e.latency_ms is not None]
+            if measured:
+                return min(
+                    measured,
+                    key=lambda e: (e.latency_ms or 0.0)
+                    * EndpointHealth.risk_multiplier(e.detection_risk),
+                )
+            return random.choice(pool)
         if policy is RotationPolicy.ROUND_ROBIN:
             ordered = sorted(pool, key=lambda e: e.url)
             pick = ordered[self._index % len(ordered)]
@@ -351,12 +385,15 @@ class ProxyPool:
         ok: bool,
         latency_ms: Optional[float] = None,
         error: str = "",
+        detection: Optional[str] = None,
     ) -> None:
         """Feed a real request outcome back into the health model."""
         with self._lock:
             ep = self._endpoints.get(url)
             if ep is None:
                 return
+            if detection:
+                ep.record_detection(detection)
             if ok:
                 ep.record_success(latency_ms)
                 self._current = url

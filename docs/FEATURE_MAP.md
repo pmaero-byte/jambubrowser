@@ -219,7 +219,7 @@ federation — the information-access surface a normal browser can't offer.
   `/vpn/status|config`, `/vpn/select`, `/vpn/probe`, `jambu vpn status|up|down`,
   MCP `vpn_status|vpn_select|vpn_probe`.
   Inert unless `JAMBU_VPN_ENABLED=1`; `JAMBU_VPN_DRY_RUN=1` for rootless/CI.
-  Tests: `tests/test_vpn.py` (99).
+  Tests: `tests/test_vpn.py` (103).
 - **Knowledge graph** (`backend/modules/knowledge_graph.py`) — entity
   extraction, relationship inference, topic clustering, persistence,
   neighborhood explorer (depth-limited ego subgraph).

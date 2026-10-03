@@ -35,6 +35,7 @@ class RotationPolicy(str, Enum):
     ROUND_ROBIN = "round_robin"  # rotate on every selection
     RANDOM = "random"            # uniform random pick among healthy
     LEAST_LATENCY = "least_latency"  # lowest observed latency wins
+    LEAST_LATENCY_LOW_RISK = "least_latency_low_risk"  # latency weighted by detection risk
 
 
 class TunnelKind(str, Enum):
@@ -105,7 +106,7 @@ class VPNConfig:
         ``JAMBU_VPN_ENABLED``          master switch (default off)
         ``JAMBU_VPN_FAIL_OPEN``        set to 1 to allow direct fallback
         ``JAMBU_VPN_POOL``             comma-separated proxy URLs
-        ``JAMBU_VPN_ROTATION``         failover|round_robin|random|least_latency
+        ``JAMBU_VPN_ROTATION``         failover|round_robin|random|least_latency|least_latency_low_risk
         ``JAMBU_VPN_REGIONS``          comma-separated allowed regions
         ``JAMBU_VPN_HEALTH_INTERVAL``  seconds between health sweeps (30)
         ``JAMBU_VPN_HEALTH_TIMEOUT``   per-probe timeout in seconds (5)

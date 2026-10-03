@@ -880,3 +880,48 @@ class TestPostQuantumPosture:
         from backend.core.vpn.manager import _pq_status
 
         assert _pq_status(cfg)["state"] == "disabled"
+
+
+class TestDetectionAwareScoring:
+    def test_detection_escalates_risk(self):
+        pool = make_pool()
+        url = pool.urls()[0]
+        ep = pool._endpoints[url]
+        assert ep.detection_risk == "low"
+        pool.report(url, ok=True, detection="challenge_wall")
+        assert pool._endpoints[url].detection_risk == "medium"
+        pool.report(url, ok=True, detection="challenge_wall")
+        assert pool._endpoints[url].detection_risk == "high"
+        assert pool._endpoints[url].detections == 2
+
+    def test_low_risk_policy_prefers_clean_endpoint_over_marginally_faster(self):
+        pool = make_pool(rotation="least_latency_low_risk")
+        a, b = pool.urls()[0], pool.urls()[1]
+        pool.report(a, ok=True, latency_ms=40.0)
+        pool.report(b, ok=True, latency_ms=60.0)
+        pool.report(b, ok=True, detection="captcha")  # b now 60 * 1.6 = 96
+        chosen = pool.select()
+        assert chosen == a
+
+    def test_high_risk_endpoint_loses_unless_more_than_3x_faster(self):
+        pool = make_pool(rotation="least_latency_low_risk")
+        a, b = pool.urls()[0], pool.urls()[1]
+        pool.report(a, ok=True, latency_ms=100.0)
+        pool.report(b, ok=True, latency_ms=20.0)
+        for _ in range(2):
+            pool.report(b, ok=True, detection="blocked")  # b = 20 * 3.0 = 60 < 100 → b wins (>3x faster)
+        # b flagged to high risk ⇒ weight 3.0, so it only beats a clean
+        # endpoint when >3x faster (20*3.0 = 60 < 100):
+        assert pool.select() == b
+        pool._endpoints[a].latency_ms = 50.0  # direct assignment; skip EWMA
+        assert pool._endpoints[b].detection_risk == "high"
+        assert pool.select() == a  # 50*1.0 < 20*3.0
+
+    def test_persistence_roundtrips_risk(self, tmp_path):
+        state = tmp_path / "vpn.json"
+        pool = make_pool(env={"JAMBU_VPN_STATE_FILE": str(state)})
+        url = pool.urls()[0]
+        pool.report(url, ok=True, detection="fingerprinter")
+        pool2 = make_pool(env={"JAMBU_VPN_STATE_FILE": str(state)})
+        assert pool2._endpoints[url].detection_risk == "medium"
+        assert pool2._endpoints[url].detections == 1
