@@ -353,7 +353,7 @@ python3 -m pytest tests/test_e2e.py -v
 | WebSocket | `/ws/{client_id}` | WS | Agent state updates |
 | WebSocket | `/ws/audit` | WS | Live audit log |
 
-See [docs/API.md](docs/API.md) for complete API reference.
+See [docs/API.md](docs/API.md) for complete API reference. A breadth × depth audit of every surface lives in [docs/BREADTH_DEPTH.md](docs/BREADTH_DEPTH.md); current capabilities and gaps are in [docs/CAPABILITY_REPORT.md](docs/CAPABILITY_REPORT.md).
 
 ---
 
