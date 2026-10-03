@@ -401,11 +401,11 @@ service, or agent — via CLI, MCP, eval framework, or plugins.
    point (`audit`, `quick`, `history`, `share`, `tiers`, `health`,
    `status`, `diff`), with 13 tests in `tests/test_cli_jambu.py`.
    Remaining: publish to PyPI/Homebrew and add `jambu watch`.
-2. **MCP docs shipped** — `docs/MCP_TOOLS.md` documents the 21 canonical
+2. **MCP docs shipped** — `docs/MCP_TOOLS.md` documents the 52 canonical
    tools from `backend/mcp_server.py`, with a drift test
-   (`tests/test_mcp_docs_generator.py`). Remaining: the second, 147-tool
-   server in `tools/mcp/server.py` is undocumented and untested — merge
-   or retire it.
+   (`tests/test_mcp_docs_generator.py`). The undocumented second server
+   in `tools/mcp/server.py` was retired — its surface is superseded by
+   `backend/mcp_server.py`.
 3. **Eval tasks live in `backend/eval/tasks/` but there's no benchmark
    dashboard** — results are in `tests/.artifacts/council.json` JSON.
 4. **Supply chain verifier has no "regenerate baseline" workflow** —
