@@ -925,3 +925,22 @@ class TestDetectionAwareScoring:
         pool2 = make_pool(env={"JAMBU_VPN_STATE_FILE": str(state)})
         assert pool2._endpoints[url].detection_risk == "medium"
         assert pool2._endpoints[url].detections == 1
+
+
+class TestMimicryConfig:
+    def test_mimicry_defaults_off_and_validates(self):
+        cfg = VPNConfig.from_env({"JAMBU_VPN_ENABLED": "1"})
+        assert cfg.mimicry == "off"
+        assert not any("MIMICRY" in p for p in cfg.validates())
+
+    def test_mimicry_unknown_value_flagged(self):
+        cfg = VPNConfig.from_env({"JAMBU_VPN_ENABLED": "1", "JAMBU_VPN_MIMICRY": "ftp"})
+        assert any("MIMICRY" in p for p in cfg.validates())
+
+    def test_mimicry_recorded_in_amneziawg_detail(self):
+        cfg = VPNConfig.from_env({
+            "JAMBU_VPN_ENABLED": "1", "JAMBU_VPN_TUNNEL": "amneziawg",
+            "JAMBU_VPN_TUNNEL_INTERFACE": "awg0", "JAMBU_VPN_MIMICRY": "quic",
+        })
+        status = run(TunnelManager(cfg, dry_run=True).start())
+        assert status.detail.get("mimicry") == "quic"

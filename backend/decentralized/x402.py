@@ -58,6 +58,11 @@ PRICE_DEFAULTS = {
     # priced like the other paid routes rather than left free. The amount is
     # a floor per call; MeshPay/DCT metering remains the settlement record.
     "simulation_submit": "5000",  # $0.005
+    # Metering a third-party egress provider (dVPN endpoints). No route
+    # consumes this yet — it reserves the price key for the dVPN-on-MeshPay
+    # design in docs/VPN_RESEARCH_2026.md so pricing configuration stays
+    # stable when that lands.
+    "network_egress": "100",  # $0.001
 }
 
 PRICE_DESCRIPTIONS = {
@@ -66,6 +71,7 @@ PRICE_DESCRIPTIONS = {
     "dcm_infer": "Prompt completion on the local DecentraCode mesh node",
     "a2a_task": "One agent-to-agent task (A2A SendMessage)",
     "simulation_submit": "Dispatch a replicated simulation job to mesh nodes",
+    "network_egress": "Meter a dVPN/mesh-provider egress session (reserved; no route yet)",
 }
 
 

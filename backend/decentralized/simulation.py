@@ -1518,6 +1518,19 @@ def simulation_bundle(job_id: str) -> dict:
         },
         "error": job.get("error"),
     }
+    # Egress provenance: the network environment this job was verified in.
+    try:
+        from backend.core.vpn import get_vpn_manager
+
+        manager = get_vpn_manager()
+        payload["egress"] = {
+            "enabled": manager.enabled,
+            "tunnel_kind": manager.config.tunnel_kind.value,
+            "pq_requested": manager.config.pq or "",
+            "pool_endpoints": manager.pool.size,
+        }
+    except Exception:  # never break evidence for VPN plumbing
+        payload["egress"] = {"enabled": False}
     return build_bundle(
         "compute_simulation",
         {

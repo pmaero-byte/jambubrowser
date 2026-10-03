@@ -142,6 +142,30 @@ clean; the CLI's "engine unreachable" hint now points at the venv too.
   shows up in GitHub code scanning next to static-analysis findings.
   Surface: `jambu test flow.json --sarif out.sarif`.
 
+### Added — VPN research follow-through (P1–P7)
+
+- **P1 leak-check** (`backend/core/vpn/leakcheck.py`): a measurable
+  fail-closed. IP-match, IPv6-route, and system-vs-tunnel DNS probes;
+  `GET /vpn/leak-check`, `jambu vpn leak-check`.
+- **P2 tunnel kinds**: `amneziawg` (DPI-resistant WG) and `masque`
+  (RFC 9484 CONNECT-IP via gost) backend implementations with dry-run
+  parity.
+- **P3 post-quantum posture**: `JAMBU_VPN_PQ=rosenpass` surfaces a
+  `post_quantum` block in `/vpn/status` and a validation problem when
+  requested but missing.
+- **P4 detection-aware scoring**: endpoints accumulate a risk level from
+  detector signals; `least_latency_low_risk` policy weights latency by it.
+- **P6 egress provenance**: signed simulation evidence bundles embed the
+  tunnel kind, PQ posture and pool size of the verifying environment.
+- **P7 mimicry**: `JAMBU_VPN_MIMICRY=quic|dns|sip|off` recorded in tunnel
+  status; AmneziaWG profile intent, honestly documented as raising
+  fingerprinting cost, not hiding the tunnel.
+- **P5 (reserved)**: `network_egress` price key in x402; the dVPN
+  marketplace on MeshPay remains a product decision, not silent code.
+- **Bugfix**: `vpn_probe` MCP tool read the probe result from the wrong
+  place (HTTP route wraps it in `{probe: …}`) and printed hollow verdicts.
+  Now unwraps correctly.
+
 ### Added — one-call browser testing, debug loop, dual-mode tabs
 
 The developer-facing build-out: give an AI agent everything it needs to test a

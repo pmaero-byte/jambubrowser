@@ -352,7 +352,7 @@ class AmneziaWGTunnel(WireGuardTunnel):
             endpoint=self._config.tunnel_endpoint,
             dns=list(self._config.tunnel_dns),
             since=time.time(),
-            detail={"simulated": self._dry_run, "obfuscation": "amneziawg"},
+            detail={"simulated": self._dry_run, "obfuscation": "amneziawg", "mimicry": self._config.mimicry},
         )
         return self._status
 

@@ -137,7 +137,11 @@ caveat in docs: this raises fingerprinting cost, it does not eliminate it
 
 ---
 
-## 6. Suggested order of work
+## 6. Suggested order of work (and where each landed)
+
+Status 2026-10-03: P1, P2, P3, P4, P6, P7 implemented and tested; P5 has
+its price key reserved in x402 without a route, per the explicit note in
+the module — the dVPN marketplace remains the product bet it always was.
 
 1. **P1 leak-check** (highest value-to-risk: pure diagnosis, no new
    protocol surface; becomes the gate for all P2/P3 claims).

@@ -97,6 +97,11 @@ class VPNConfig:
     # sidecar rather than reimplementing protocol code.
     pq: str = ""
 
+    # Handshake mimicry intent, passed through to the tunnel profile when
+    # using the amneziawg backend. "off" by default. Recorded honestly as
+    # intent — we do not claim it hides the tunnel completely.
+    mimicry: str = "off"
+
     @classmethod
     def from_env(cls, env: Optional[Any] = None) -> "VPNConfig":
         """Build a config from an env mapping (defaults to ``os.environ``).
@@ -121,6 +126,7 @@ class VPNConfig:
         ``JAMBU_VPN_STATE_FILE``       JSON path for pool-health persistence (off)
         ``JAMBU_VPN_STATE_MAX_AGE``    oldest state to restore, seconds (86400)
         ``JAMBU_VPN_PQ``               post-quantum sidecar: "" | "rosenpass"
+        ``JAMBU_VPN_MIMICRY``          handshake mimicry: off|quic|dns|sip
         """
         src = os.environ if env is None else env
 
@@ -170,6 +176,7 @@ class VPNConfig:
                 src, "JAMBU_VPN_STATE_MAX_AGE", 86400.0, minimum=60.0
             ),
             pq=get("JAMBU_VPN_PQ").lower(),
+            mimicry=get("JAMBU_VPN_MIMICRY").lower() or "off",
         )
 
     # -- derived state -----------------------------------------------------
@@ -216,6 +223,8 @@ class VPNConfig:
                 problems.append(f"proxy entry has no host: {redact_proxy_url(url)}")
         if self.enabled and self.pq and self.pq not in ("rosenpass",):
             problems.append(f"unknown JAMBU_VPN_PQ value '{self.pq}'")
+        if self.mimicry and self.mimicry not in ("off", "quic", "dns", "sip"):
+            problems.append(f"unknown JAMBU_VPN_MIMICRY value '{self.mimicry}'")
         if self.health_probe_url:
             try:
                 scheme = urlparse(self.health_probe_url).scheme
@@ -269,6 +278,7 @@ class VPNConfig:
             "state_file": self.state_file,
             "state_max_age": self.state_max_age,
             "pq": self.pq,
+            "mimicry": self.mimicry,
         }
 
 
