@@ -92,6 +92,13 @@ Verified, priced, replicated job execution on the mesh (`backend/decentralized/s
   oracle; `DeterministicExecutor` is a seedable numeric kernel, not a physics
   solver. Tests: `tests/test_simulation.py` (108).
 
+### Added — AEGIS read surface
+
+`GET /agent/aegis/configs` and `GET /agent/aegis/configs/latest` expose the
+persisted harness-config store the AEGIS evolution pipeline writes —
+evolution round, parent lineage, tags, success rate. Read-only on purpose:
+mutating what the agent runs is a product decision, not a default.
+
 ### Added — plan library (cached successful plans)
 
 `backend/agent/plan_library.py` stores each successful run's plan as a

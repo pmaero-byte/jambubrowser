@@ -84,3 +84,32 @@ def test_advise_planner_renders_template(lib):
     assert "similar goal succeeded" in advice
     assert "[navigate]" in advice
     assert plan_library.advise_planner("something else entirely") == ""
+
+
+class TestAegisReadSurface:
+    def test_configs_listing(self, tmp_path, monkeypatch):
+        from backend.agent.harness import HarnessConfigStore, HarnessConfig
+        from backend.routes.aegis import aegis_configs
+        import backend.agent.harness as h
+        import asyncio
+
+        store = HarnessConfigStore(base_dir=str(tmp_path))
+        cfg = HarnessConfig()
+        cfg.description = "round-1"
+        store.save(cfg)
+        monkeypatch.setattr(h, "get_config_store", lambda: store)
+
+        out = asyncio.run(aegis_configs(limit=20))
+        assert out["count"] == 1
+        assert out["configs"][0]["description"] == "round-1"
+
+    def test_latest_empty(self, tmp_path, monkeypatch):
+        from backend.agent.harness import HarnessConfigStore
+        from backend.routes.aegis import aegis_latest
+        import backend.agent.harness as h
+        import asyncio
+
+        store = HarnessConfigStore(base_dir=str(tmp_path))
+        monkeypatch.setattr(h, "get_config_store", lambda: store)
+        out = asyncio.run(aegis_latest())
+        assert out == {"config": None}

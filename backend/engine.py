@@ -343,6 +343,7 @@ from backend.routes.models import router as models_router
 from backend.routes.goals import router as goals_router
 from backend.routes.harness import router as harness_router
 from backend.routes.plan_library import router as plan_library_router
+from backend.routes.aegis import router as aegis_router
 from backend.routes.v1 import router as v1_router
 from backend.routes.v2 import router as v2_router
 from backend.routes.multimodal import router as multimodal_router
@@ -395,6 +396,7 @@ app.include_router(models_router)
 app.include_router(goals_router)
 app.include_router(harness_router)
 app.include_router(plan_library_router)
+app.include_router(aegis_router)
 app.include_router(v1_router)
 app.include_router(v2_router)
 app.include_router(multimodal_router)

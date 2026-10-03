@@ -81,11 +81,11 @@ verifier) with shared memory and budgets, instead of trusting a single model.
    `ProviderRegistry` resolves all 8 providers including `moa` on miss.
 2. ~~No shared "plan library"~~ — shipped 2026-10-03: `backend/agent/plan_library.py` caches successful plan templates, advises the planner on near-duplicate goals, tracks per-template success rate, and exposes `/agent/plan-library` for inspection/pruning. `tests/test_plan_library.py` covers matching/scoring/persistence/eviction.
 3. ~~Goal orchestrator UI missing~~ — `GoalsPanel.tsx` landed in `d44fcb9`.
-4. **AEGIS evolution / co-evolution pipeline is experimental and unwired**
-   (`backend/agent/evolution.py`, `backend/agent/coevolution.py`, ~1.8k
-   LOC) — no route, CLI, or MCP surface invokes it; only tests and
-   benchmarks import it. Either wire it in or move it out of the shipped
-   package.
+4. **AEGIS evolution / co-evolution pipeline** (`backend/agent/evolution.py`,
+   `backend/agent/coevolution.py`, ~1.8k LOC) — mutation paths remain
+   library-only by design, but the persisted store now has an operator
+   surface: `GET /agent/aegis/configs`, `GET /agent/aegis/configs/latest`
+   (read-only; evolving via HTTP is an explicit product decision).
 5. **Harness bridge targets infrastructure that isn't shipped**
    (`backend/modules/harness_bridge.py`) — every `/harness/*` endpoint
    delegates to an external "Harness Gateway" at `localhost:9090` that
