@@ -153,7 +153,8 @@ class TestSarif:
         assert run["tool"]["driver"]["name"] == "jambubrowser-qa"
         result = run["results"][0]
         assert result["ruleId"] == "QA001"
-        assert result["level"] == "error"          # high → error
+        # target_not_found is an infra-class failure: downgraded one notch.
+        assert result["level"] == "warning"         # high → case level would be error; weighted to warning
         assert "target_not_found" in result["message"]["text"]
         assert result["partialFingerprints"]["jambubrowserCaseStep"]
 
@@ -191,3 +192,28 @@ class TestSarif:
                  "duration_ms": 1, "error": None},
             ], case_severity=severity)
             assert sarif["runs"][0]["results"][0]["level"] == level
+
+
+class TestPerStepSarifLevel:
+    def test_infra_reasons_downgrade_by_one_notch(self):
+        for reason, base, expected in (
+            ("target_not_found", "error", "warning"),
+            ("wait_timeout", "warning", "note"),
+            ("assertion_failed", "error", "error"),
+            ("blocked_domain", "error", "error"),
+        ):
+            from backend.modules.qa_datasets import step_level
+
+            level = step_level(
+                "high" if base == "error" else ("medium" if base == "warning" else "low"),
+                reason,
+            )
+            assert level == expected, (reason, base, level)
+
+    def test_sarif_assertion_failure_keeps_error_level(self):
+        sarif = qd.runs_to_sarif("s", [
+            {"ok": False, "failed_steps": [
+                {"i": 1, "action": "assert", "reason": "assertion_failed", "error": "x"}
+            ], "console_errors": [], "duration_ms": 1, "error": None},
+        ], case_severity="high")
+        assert sarif["runs"][0]["results"][0]["level"] == "error"

@@ -92,6 +92,16 @@ Verified, priced, replicated job execution on the mesh (`backend/decentralized/s
   oracle; `DeterministicExecutor` is a seedable numeric kernel, not a physics
   solver. Tests: `tests/test_simulation.py` (108).
 
+### Added — per-step SARIF severity weighting
+
+Every QA run used to emit SARIF results at the case's severity for *all*
+steps, so a missed element paged the same as a failed assertion.
+`step_level()` in `backend/modules/qa_datasets.py` downgrades
+infra-class failure reasons (`target_not_found`, `target_ambiguous`,
+`unknown_ref`, `wait_timeout`) by one SARIF notch while assertion/policy
+failures keep the case severity. `tests/test_qa_flake.py` gains the
+weighting table and a regression test for the assert path.
+
 ### Added — knowledge-graph neighborhood explorer
 
 `KnowledgeGraph.get_neighborhood(entity_id, depth=1..3, max_nodes=50)`

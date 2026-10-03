@@ -238,7 +238,7 @@ def runs_to_sarif(case_name: str, runs: list[dict],
                       f"{step.get('action')}|{location}"
         results.append({
             "ruleId": rule_id,
-            "level": _SARIF_LEVEL.get(case_severity, "warning"),
+            "level": step_level(case_severity, reason),
             "message": {"text": message[:1000]},
             "locations": [{
                 "physicalLocation": {
@@ -310,4 +310,23 @@ def _fingerprint(text: str) -> str:
     import hashlib
 
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:32]
+
+
+# Reasons that mean "the app infra wobbled" rather than "the app is broken".
+# Same case severity renders one SARIF notch quieter, so an assert failure
+# and a lost element don't page the same way.
+_INFRA_REASONS = {
+    "target_not_found", "target_ambiguous", "unknown_ref", "wait_timeout",
+}
+
+
+def step_level(case_severity: str, reason: str) -> str:
+    """Per-step SARIF level derived from case severity + failure class."""
+    level = _SARIF_LEVEL.get(case_severity, "warning")
+    if reason in _INFRA_REASONS:
+        if level == "error":
+            return "warning"
+        if level == "warning":
+            return "note"
+    return level
 

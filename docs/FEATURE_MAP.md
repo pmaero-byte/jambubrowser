@@ -354,7 +354,11 @@ the daily loop of a manual + automation QA team, run by AI.
 1. Jira/Linear export shipped (`findings_to_jira_issues`,
    `findings_to_linear_issues`, `/audit/export/jira|linear`, `jambu audit
    --jira/--linear`) — teams still need two-way sync server-side.
-2. SARIF severity is per-case (no per-step severity weighting yet); per-step
+2. ~~SARIF severity is per-case~~ — fixed 2026-10-03: `step_level()` in
+   `qa_datasets.py` downgrades infra-class reasons (target not found, wait
+   timeout, stale ref) by one SARIF notch so assertion failures keep
+   their severity. Per-step
+
    browser-flow SARIF shipped separately (`flow_report_to_sarif`,
    `jambu test --sarif`) so CI can attribute failures to individual steps.
 
