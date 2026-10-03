@@ -13,6 +13,9 @@ All endpoints accept and return JSON. WebSocket endpoints use `ws://localhost:80
 - [Browser](#browser)
 - [Privacy](#privacy)
 - [Audit](#audit)
+- [VPN](#vpn)
+- [Simulation Compute](#simulation-compute)
+- [Agent](#agent)
 - [Vault](#vault)
 - [Security](#security)
 - [Fingerprint](#fingerprint)
@@ -480,6 +483,73 @@ View a shared audit (no auth required).
 
 ---
 
+### GET /audit/export/sarif · /export/json · /export/markdown · /export/html · /export/jira · /export/linear
+
+Download the findings of a saved audit in a CI/tracker-friendly format.
+`jira`/`linear` produce issue-create payloads (content-fingerprint labels);
+`sarif` is SARIF 2.1.0.
+
+---
+
+## VPN
+
+### GET /vpn/status
+
+Tunnel state and per-endpoint pool health, credentials redacted.
+
+### GET /vpn/config
+
+Resolved VPN configuration (credentials redacted).
+
+### POST /vpn/select
+
+Which endpoint a session would be pinned to.
+
+**Request:**
+```json
+{"session_key": "flow-1", "exclude": ["eu1"]}
+```
+
+### POST /vpn/probe
+
+Run one health sweep across the pool now.
+
+---
+
+## Simulation Compute
+
+### GET /simulation/config · GET /simulation/nodes
+
+Pricing/tolerances/registered nodes; fleet health + reputation.
+
+### POST /simulation/quote
+
+Price a job and name its verification tier. No dispatch.
+
+### POST /simulation/submit
+
+Dispatch → verify → settle (or quarantine). `queued=true` writes a QUEUED
+row drained later by the durable worker (`JAMBU_SIM_QUEUE=1`).
+
+### GET /simulation/jobs · GET /simulation/jobs/{id} · GET /simulation/jobs/{id}/evidence
+
+Job history/spend; one job with attempts; signed compute_simulation bundle.
+
+---
+
+## Agent
+
+### GET /agent/plan-library · POST /agent/plan-library/clear · DELETE /agent/plan-library?query=…
+
+Inspect/prune cached plan templates (success rates).
+
+### GET /agent/aegis/configs · GET /agent/aegis/configs/latest
+
+Read-only view of the persisted harness-config store the AEGIS evolution
+pipeline writes.
+
+---
+
 ## API Keys
 
 ### POST /api-keys/create
@@ -751,6 +821,20 @@ Search for entities in the knowledge graph.
 ### GET /knowledge/entity/{entity_id}
 
 Get an entity and its relationships.
+
+### GET /knowledge/entity/{entity_id}/neighborhood
+
+Depth-limited ego subgraph around an entity (what a neighborhood explorer
+would center on).
+
+**Parameters:**
+- `depth` (int, optional): 1-3 hops (default: 1)
+- `max_nodes` (int, optional): cap on returned nodes (default: 50)
+
+**Response:** `{center, depth, nodes[], edges[], truncated}` — nodes carry
+`hop` distance from the center entity.
+
+---
 
 ### GET /knowledge/clusters
 

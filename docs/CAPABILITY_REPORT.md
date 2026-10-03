@@ -37,7 +37,7 @@ Layered egress: a **tunnel** (WireGuard/OpenVPN) as base + a rotating **proxy po
 DCM provider + `/dcm/*` + 5 MCP + `jambu dcm`; MeshPay epochs/Merkle/memo-anchor + payouts prepared/broadcast + 12 routes; x402 paywall + atomic nonce-claim fix; eval certs frozen spec_hash; verification SIGNED<CANARY<REDUNDANT<ATTESTED-no>; A2A card + SendMessage/GetTask/CancelTask; Ed25519 evidence + standalone verifier; Remote MCP `/mcp/` 52 tools, profiles full/curated/developer(8); **simulation compute** — verified replicated jobs on the mesh, settled only on numeric agreement (`docs/SIMULATION_COMPUTE.md`).
 
 ### Developer + Desktop
-Factory `engine.py ~250 lines`, 20+9 routers, 340+ handlers, 9 middlewares, WS, `/v1` OpenAI-compat, `/v2`; CLI 20 groups (~1750 lines) + PyPI/Homebrew packaging; eval/council, plugins, supply-chain, API-keys, teams; Tauri CDP Chromium + screencast 30-60FPS + takeover + dual-mode stream|native; AppShell 20+ panels + zustand; iOS 2949 LOC.
+Factory `engine.py ~300 lines`, 34 included routers (~290 endpoints), 9 middlewares, WS, `/v1` OpenAI-compat, `/v2`; CLI 20 groups (~1750 lines) + PyPI/Homebrew packaging; eval/council, plugins, supply-chain, API-keys, teams; Tauri CDP Chromium + screencast 30-60FPS + takeover + dual-mode stream|native; AppShell 20+ panels + zustand; iOS 2949 LOC.
 
 ## 2. Gaps (explicit, tracked)
 1. Native tabs: Phase-3 shims missing (downloads/find/copy disabled in native), no crash fallback, no privacy-script review — see `docs/MULTIWEBVIEW_PLAN.md:86-92`.
