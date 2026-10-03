@@ -819,3 +819,45 @@ class TestLeakCheck:
                                  doh=_fake_doh_1_2_3_4))
         assert out["verdict"] == "disabled"
         assert out["leaks"] == []
+
+
+class TestExtendedTunnelKinds:
+    def test_masque_selects_masque_backend(self):
+        cfg = VPNConfig.from_env({
+            "JAMBU_VPN_ENABLED": "1", "JAMBU_VPN_TUNNEL": "masque",
+            "JAMBU_VPN_TUNNEL_ENDPOINT": "masque.example.com",
+        })
+        backend = build_backend(cfg)
+        assert backend.kind == TunnelKind.MASQUE.value
+        from backend.core.vpn.tunnel import MasqueTunnel
+
+        assert isinstance(backend, MasqueTunnel)
+
+    def test_amneziawg_selects_amneziawg_backend(self):
+        cfg = VPNConfig.from_env({
+            "JAMBU_VPN_ENABLED": "1", "JAMBU_VPN_TUNNEL": "amneziawg",
+            "JAMBU_VPN_TUNNEL_INTERFACE": "awg0",
+        })
+        backend = build_backend(cfg)
+        from backend.core.vpn.tunnel import AmneziaWGTunnel
+
+        assert isinstance(backend, AmneziaWGTunnel)
+        assert backend.kind == TunnelKind.AMNEZIAWG.value
+
+    def test_dry_run_masque_reports_up(self):
+        cfg = VPNConfig.from_env({
+            "JAMBU_VPN_ENABLED": "1", "JAMBU_VPN_TUNNEL": "masque",
+            "JAMBU_VPN_TUNNEL_ENDPOINT": "masque.example.com",
+        })
+        status = run(TunnelManager(cfg, dry_run=True).start())
+        assert status.state == "up"
+        assert status.detail.get("scheme") == "masque"
+
+    def test_dry_run_amneziawg_reports_up(self):
+        cfg = VPNConfig.from_env({
+            "JAMBU_VPN_ENABLED": "1", "JAMBU_VPN_TUNNEL": "amneziawg",
+            "JAMBU_VPN_TUNNEL_INTERFACE": "awg0",
+        })
+        status = run(TunnelManager(cfg, dry_run=True).start())
+        assert status.state == "up"
+        assert status.detail.get("obfuscation") == "amneziawg"

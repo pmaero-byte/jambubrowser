@@ -40,6 +40,8 @@ class RotationPolicy(str, Enum):
 class TunnelKind(str, Enum):
     WIREGUARD = "wireguard"
     OPENVPN = "openvpn"
+    MASQUE = "masque"
+    AMNEZIAWG = "amneziawg"
     NONE = "none"
 
 
@@ -105,7 +107,7 @@ class VPNConfig:
         ``JAMBU_VPN_HEALTH_TIMEOUT``   per-probe timeout in seconds (5)
         ``JAMBU_VPN_FAILURE_THRESHOLD`` failures before an endpoint is dead (3)
         ``JAMBU_VPN_HEALTH_PROBE_URL`` URL the probe fetches (optional)
-        ``JAMBU_VPN_TUNNEL``           wireguard|openvpn
+        ``JAMBU_VPN_TUNNEL``           wireguard|openvpn|masque|amneziawg
         ``JAMBU_VPN_TUNNEL_INTERFACE`` interface name to manage
         ``JAMBU_VPN_TUNNEL_ENDPOINT``  peer endpoint host:port
         ``JAMBU_VPN_TUNNEL_CONFIG``    path to a .conf

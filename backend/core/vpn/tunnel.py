@@ -320,9 +320,132 @@ class OpenVPNTunnel(_CommandTunnel):
         return self._status
 
 
+class AmneziaWGTunnel(WireGuardTunnel):
+    """AmneziaWG — the obfuscated WireGuard fork (DPI-resistant handshakes).
+
+    Wire-compatible with WireGuard, so the operational UX is identical, but
+    traffic is shaped to resist VPN fingerprinting. Selected with
+    ``JAMBU_VPN_TUNNEL=amneziawg``; requires the ``awg`` binaries.
+    """
+
+    kind = TunnelKind.AMNEZIAWG.value
+    binary = "awg-quick"
+
+    @classmethod
+    def required_binaries(cls) -> tuple[str, ...]:
+        return ("awg-quick", "awg")
+
+    async def up(self) -> TunnelStatus:
+        blocked = self._blocked_reason()
+        if blocked:
+            return self._fail(blocked)
+        iface = self._config.tunnel_interface
+        code, _, err = await self._run(
+            ["awg-quick", "up", self._config.tunnel_config_path or iface]
+        )
+        if code != 0:
+            return self._fail(err.strip() or f"awg-quick up failed ({code})")
+        self._status = TunnelStatus(
+            kind=self.kind,
+            state=TunnelState.UP.value,
+            interface=iface,
+            endpoint=self._config.tunnel_endpoint,
+            dns=list(self._config.tunnel_dns),
+            since=time.time(),
+            detail={"simulated": self._dry_run, "obfuscation": "amneziawg"},
+        )
+        return self._status
+
+    async def down(self) -> TunnelStatus:
+        blocked = self._blocked_reason()
+        if blocked:
+            return self._fail(blocked)
+        code, _, err = await self._run(["awg-quick", "down", self._config.tunnel_interface])
+        if code != 0:
+            return self._fail(err.strip() or f"awg-quick down failed ({code})")
+        self._status.state = TunnelState.DOWN.value
+        self._status.since = 0.0
+        return self._status
+
+    async def status(self) -> TunnelStatus:
+        if not self._config.tunnel_interface:
+            return self._fail("no interface configured")
+        blocked = self._blocked_reason()
+        if blocked:
+            return self._fail(blocked)
+        code, out, err = await self._run(["awg", "show", self._config.tunnel_interface])
+        if code != 0:
+            self._status.state = TunnelState.DOWN.value
+            self._status.last_error = err.strip()[:200]
+        else:
+            self._status.state = TunnelState.UP.value
+            self._status.detail["has_output"] = bool(out.strip())
+        return self._status
+
+
+class MasqueTunnel(_CommandTunnel):
+    """MASQUE / CONNECT-UDP-IP egress over HTTP/3 (RFC 9484).
+
+    Selected with ``JAMBU_VPN_TUNNEL=masque``. A gost-class client exposes a
+    local socks5h endpoint which is then used exactly like a pool proxy.
+    The local port is set via ``JAMBU_VPN_TUNNEL_INTERFACE`` as
+    ``socks:<port>`` to keep the config dataclass unchanged.
+    """
+
+    kind = TunnelKind.MASQUE.value
+    binary = "gost"
+
+    @classmethod
+    def required_binaries(cls) -> tuple[str, ...]:
+        return ("gost", "pkill")
+
+    async def up(self) -> TunnelStatus:
+        blocked = self._blocked_reason()
+        if blocked:
+            return self._fail(blocked)
+        port = "1080"
+        csv = self._config.tunnel_interface
+        if csv.startswith("socks:"):
+            port = csv.split(":", 1)[1] or "1080"
+        endpoint = self._config.tunnel_endpoint
+        if not endpoint:
+            return self._fail("JAMBU_VPN_TUNNEL_ENDPOINT must name the MASQUE proxy")
+        code, _, err = await self._run(
+            ["gost", "-L", f"socks5://:{port}", "-F", f"masque://{endpoint}"]
+        )
+        if code != 0:
+            return self._fail(err.strip() or f"gost failed ({code})")
+        self._status = TunnelStatus(
+            kind=self.kind,
+            state=TunnelState.UP.value,
+            interface=f"socks:{port}",
+            endpoint=endpoint,
+            dns=list(self._config.tunnel_dns),
+            since=time.time(),
+            detail={"simulated": self._dry_run, "scheme": "masque"},
+        )
+        return self._status
+
+    async def down(self) -> TunnelStatus:
+        blocked = self._blocked_reason()
+        if blocked:
+            return self._fail(blocked)
+        code, _, err = await self._run(["pkill", "-TERM", "-f", "gost.*masque"])
+        if code not in (0, 1):
+            return self._fail(err.strip() or f"gost shutdown failed ({code})")
+        self._status.state = TunnelState.DOWN.value
+        self._status.since = 0.0
+        return self._status
+
+    async def status(self) -> TunnelStatus:
+        return self._status
+
+
 _BACKENDS = {
     TunnelKind.WIREGUARD: WireGuardTunnel,
     TunnelKind.OPENVPN: OpenVPNTunnel,
+    TunnelKind.MASQUE: MasqueTunnel,
+    TunnelKind.AMNEZIAWG: AmneziaWGTunnel,
 }
 
 

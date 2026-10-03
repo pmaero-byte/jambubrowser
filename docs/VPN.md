@@ -220,4 +220,4 @@ API, and CLI — without touching the host network. Every test in
 
 - `docs/FEATURE_MAP.md` — the DeepNet / browser pillar overview
 - `docs/CHANGELOG.md` — release notes
-- `tests/test_vpn.py` — 92 tests covering all three layers
+- `tests/test_vpn.py` — 96 tests covering all three layers
