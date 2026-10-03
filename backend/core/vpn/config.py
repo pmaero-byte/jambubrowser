@@ -91,6 +91,10 @@ class VPNConfig:
     # Restore entries at most this old; older files are ignored so a week-old
     # quarantine never pins a recovered endpoint for new sessions.
     state_max_age: float = 86400.0
+    # Post-quantum key-exchange sidecar for the tunnel. Empty means no PQ:
+    # classical Curve25519 only. "rosenpass" adopts that project's
+    # sidecar rather than reimplementing protocol code.
+    pq: str = ""
 
     @classmethod
     def from_env(cls, env: Optional[Any] = None) -> "VPNConfig":
@@ -115,6 +119,7 @@ class VPNConfig:
         ``JAMBU_VPN_STICKY_TTL``       seconds a session keeps its endpoint (300)
         ``JAMBU_VPN_STATE_FILE``       JSON path for pool-health persistence (off)
         ``JAMBU_VPN_STATE_MAX_AGE``    oldest state to restore, seconds (86400)
+        ``JAMBU_VPN_PQ``               post-quantum sidecar: "" | "rosenpass"
         """
         src = os.environ if env is None else env
 
@@ -163,6 +168,7 @@ class VPNConfig:
             state_max_age=_env_float_from(
                 src, "JAMBU_VPN_STATE_MAX_AGE", 86400.0, minimum=60.0
             ),
+            pq=get("JAMBU_VPN_PQ").lower(),
         )
 
     # -- derived state -----------------------------------------------------
@@ -207,6 +213,8 @@ class VPNConfig:
                 )
             if not parsed.hostname:
                 problems.append(f"proxy entry has no host: {redact_proxy_url(url)}")
+        if self.enabled and self.pq and self.pq not in ("rosenpass",):
+            problems.append(f"unknown JAMBU_VPN_PQ value '{self.pq}'")
         if self.health_probe_url:
             try:
                 scheme = urlparse(self.health_probe_url).scheme
@@ -214,6 +222,14 @@ class VPNConfig:
                 scheme = ""
             if not scheme.startswith("http"):
                 problems.append("health probe URL must be http(s)")
+        if self.pq == "rosenpass" and self.enabled:
+            import shutil
+
+            if shutil.which("rosenpass") is None:
+                problems.append(
+                    "JAMBU_VPN_PQ=rosenpass requested but the 'rosenpass' "
+                    "binary is not on PATH — PQ key exchange will NOT be active"
+                )
         return problems
 
     def is_valid(self) -> bool:
@@ -251,6 +267,7 @@ class VPNConfig:
             "sticky_ttl": self.sticky_ttl,
             "state_file": self.state_file,
             "state_max_age": self.state_max_age,
+            "pq": self.pq,
         }
 
 

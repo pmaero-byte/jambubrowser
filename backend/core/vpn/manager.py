@@ -3,8 +3,11 @@ VPN manager — the single façade over both layers.
 
     request ──► VPNManager.resolve_proxy()
                   │
-                  ├─ tunnel layer  (WireGuard/OpenVPN)  ── base egress
+                  ├─ tunnel layer  (WireGuard/OpenVPN/MASQUE/AmneziaWG)  ── base egress
                   └─ pool layer    (proxy endpoints)    ── dynamic selection
+
+Plus an optional post-quantum sidecar (`JAMBU_VPN_PQ=rosenpass`) whose
+presence is reported, never assumed.
 
 Callers do not need to know which layers are active. With nothing configured
 :meth:`resolve_proxy` returns ``None`` and every existing code path keeps
@@ -27,6 +30,26 @@ from backend.core.vpn.pool import NoHealthyEndpoint, ProxyPool
 from backend.core.vpn.tunnel import TunnelManager, TunnelState, TunnelStatus
 
 log = logging.getLogger("jambu.vpn")
+
+
+def _pq_status(config: VPNConfig) -> dict[str, Any]:
+    """Post-quantum posture block for status output.
+
+    We do NOT run the sidecar or reimplement it — we report whether the
+    requested one is present so the audit trail can cite it (or flag that a
+    PQ claim is missing).
+    """
+    requested = config.pq or ""
+    if not requested:
+        return {"requested": "", "state": "disabled", "binary_present": False}
+    import shutil
+
+    present = shutil.which(requested) is not None
+    return {
+        "requested": requested,
+        "state": "ready" if present else "missing",
+        "binary_present": present,
+    }
 
 
 class VPNUnavailable(RuntimeError):
@@ -136,6 +159,7 @@ class VPNManager:
             "tunnel": tunnel_status.to_dict(),
             "pool": self._pool.health(),
             "problems": self.problems(),
+            "post_quantum": _pq_status(self._config),
         }
 
     # -- the one call callers need ----------------------------------------

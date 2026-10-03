@@ -861,3 +861,22 @@ class TestExtendedTunnelKinds:
         status = run(TunnelManager(cfg, dry_run=True).start())
         assert status.state == "up"
         assert status.detail.get("obfuscation") == "amneziawg"
+
+
+class TestPostQuantumPosture:
+    def test_pq_missing_is_reported_in_problems_and_status(self):
+        cfg = VPNConfig.from_env({"JAMBU_VPN_ENABLED": "1", "JAMBU_VPN_PQ": "rosenpass"})
+        manager = VPNManager(cfg)
+        assert any("rosenpass" in p for p in manager.problems())
+
+    def test_pq_unknown_value_flagged(self):
+        cfg = VPNConfig.from_env({"JAMBU_VPN_ENABLED": "1", "JAMBU_VPN_PQ": "quantum-sauce"})
+        assert any("JAMBU_VPN_PQ" in p for p in cfg.validates())
+
+    def test_pq_disabled_state_is_reported(self):
+        manager = VPNManager(VPNConfig.from_env({"JAMBU_VPN_ENABLED": "1"}))
+        assert manager.status  # existence
+        cfg = VPNConfig.from_env({"JAMBU_VPN_ENABLED": "1"})
+        from backend.core.vpn.manager import _pq_status
+
+        assert _pq_status(cfg)["state"] == "disabled"
