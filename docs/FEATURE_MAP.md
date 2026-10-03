@@ -286,8 +286,8 @@ federation — the information-access surface a normal browser can't offer.
    `get_neighborhood()` + `GET /knowledge/entity/{id}/neighborhood`.
 2. **Federated RAG has no trust model surfaced to the user** — peers are
    "trusted" but the user can't see or revoke.
-3. **Missions have no results browser** — you can schedule them but
-   seeing what they collected requires diving into the DB.
+3. ~~Missions have no results browser~~ — `MissionResultsViewer.tsx`
+   ships with the desktop app against `/mission/{id}/results`.
 4. **P2P / federated / consensus features are single-node in practice** —
    the routes and MCP tools work, but with no second Jambubrowser node on
    the LAN discovery finds no peers, federated queries return empty, and
