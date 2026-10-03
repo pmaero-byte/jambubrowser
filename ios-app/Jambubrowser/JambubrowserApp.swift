@@ -42,10 +42,9 @@ struct JambubrowserApp: App {
                 .environment(spotlightService)
                 .environment(handoffService)
                 .environment(gatewayClient ?? createClient())
-                .task {
-                    // Request notification permission on first launch
-                    await notificationService.requestPermission()
-                }
+                // Notification permission is requested from SettingsView when
+                // the user turns notifications on — not on first launch, so the
+                // system dialog never blocks the dashboard.
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .background {
                         BackgroundTaskManager.scheduleConnectorHealthRefresh()

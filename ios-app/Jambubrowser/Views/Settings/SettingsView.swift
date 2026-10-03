@@ -167,16 +167,7 @@ struct SettingsView: View {
                 // Models
                 Section("Available Models") {
                     ForEach(appState.models) { model in
-                        HStack {
-                            Image(systemName: "cpu")
-                                .foregroundStyle(.orange)
-                            Text(model.id)
-                                .font(.subheadline)
-                            Spacer()
-                            Text(model.ownedBy)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
+                        ModelRowView(model: model)
                     }
                 }
 
@@ -192,31 +183,11 @@ struct SettingsView: View {
                         }
                     } else {
                         ForEach(mcpServers) { server in
-                            HStack {
-                                Circle()
-                                    .fill(server.connected ? .green : .gray)
-                                    .frame(width: 8, height: 8)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(server.name)
-                                        .font(.subheadline)
-                                    Text(server.connected ? "\(server.toolCount) tools" : "Disconnected")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                if server.connected {
-                                    Button("Disconnect") {
-                                        Task { await disconnectMCPServer(server.name) }
-                                    }
-                                    .font(.caption)
-                                    .foregroundStyle(.red)
-                                } else {
-                                    Button("Connect") {
-                                        Task { await connectMCPServer(server.name) }
-                                    }
-                                    .font(.caption)
-                                }
-                            }
+                            MCPServerRow(
+                                server: server,
+                                onConnect: { await connectMCPServer(server.name) },
+                                onDisconnect: { await disconnectMCPServer(server.name) }
+                            )
                         }
                         .onDelete { indexSet in
                             for index in indexSet {
@@ -444,4 +415,51 @@ struct SettingsView: View {
         .environment(AppState())
         .environment(GatewayClient(baseURL: URL(string: "http://localhost:8001")!))
         .environment(NotificationService())
+}
+
+private struct ModelRowView: View {
+    let model: ModelInfo
+
+    var body: some View {
+        HStack {
+            Image(systemName: "cpu")
+                .foregroundStyle(.orange)
+            Text(model.id)
+                .font(.subheadline)
+            Spacer()
+            Text(model.ownedBy)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct MCPServerRow: View {
+    let server: MCPServerStatus
+    let onConnect: () async -> Void
+    let onDisconnect: () async -> Void
+
+    var body: some View {
+        HStack {
+            Circle()
+                .fill(server.connected ? .green : .gray)
+                .frame(width: 8, height: 8)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(server.name)
+                    .font(.subheadline)
+                Text(server.connected ? "\(server.toolCount) tools" : "Disconnected")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            if server.connected {
+                Button("Disconnect") { Task { await onDisconnect() } }
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            } else {
+                Button("Connect") { Task { await onConnect() } }
+                    .font(.caption)
+            }
+        }
+    }
 }

@@ -164,7 +164,11 @@ struct DashboardView: View {
                 // Detect connector status changes for notifications
                 detectConnectorChanges(old: appState.connectors, new: connectors)
 
-                appState.isConnected = health.status == "ok"
+                // /health answers {"status": "online"} on a healthy engine —
+                // any non-error status means we are connected.
+                let healthStatus = (health.status ?? "").lowercased()
+                appState.isConnected = !healthStatus.isEmpty
+                    && healthStatus != "offline" && healthStatus != "error"
                 appState.sessions = sessions
                 appState.connectors = connectors
                 appState.models = models.data

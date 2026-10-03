@@ -36,7 +36,7 @@ Legend: **●** wired + tested | **◐** wired, partial/inert in practice | **�
 | 24 | Harness bridge | ○ | Experimental-gated, talks to localhost:9090 infra not shipped. **Depth fix: package verbatim or remove from the shipped story** |
 | 25 | Billing / Stripe | ○ | Stub `billing.py`; TEAMS/Pro tiers exist but no checkout. **Depth fix: real Stripe or mark as roadmap in docs** |
 | 26 | Desktop (Tauri) | ● | CDP screencast/takeover/native-mode opt-in; sidecar now prefers venv python; `cargo check` clean. Native-tab parity items remain (downloads/find/copy/crash-fallback/privacy review) |
-| 27 | iOS app | ○ | ~2.9k LOC Swift, not part of the desktop CI path; needs Xcode/mac runner to verify |
+| 27 | iOS app | ◐ | Builds, installs and renders live engine data on the iOS simulator (verified 2026-10-04: Dashboard shows 17/17 connectors, 8 models). Server-side gaps remain: `/v1/mcp/*`, `/v1/run/parallel`, SSE streaming. Device install needs your Apple signing team — see `ios-app/README.md` |
 | 28 | CI / packaging | ● | 3.4.0 artifacts pass `twine check`; MCP docs generator has a --check freshness gate; version-sync test passes |
 
 ## Cross-cutting risks

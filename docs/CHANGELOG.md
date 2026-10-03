@@ -119,6 +119,22 @@ persisted harness-config store the AEGIS evolution pipeline writes —
 evolution round, parent lineage, tags, success rate. Read-only on purpose:
 mutating what the agent runs is a product decision, not a default.
 
+### Added — iOS app: buildable, installable, and live against the engine
+
+The iOS client existed as un-buildable sources (no project, and the
+environment layer every view imported was missing). Shipped:
+`ios-app/project.yml` (XcodeGen spec), `Jambubrowser/Services/AppSupport.swift`
+(AppState, GatewayClient, notification/Spotlight/Handoff/LiveActivity
+services, SwiftData cache models, TipKit tips), `JambubrowserKit/Services/Models.swift`
+(shared `/v1` response models with lenient decoding), plus three real bugs
+fixed against the live API: the app compared `health.status == "ok"` while
+the engine answers `"online"`; `/v1/models` returns provider *names*, and
+`/v1/connectors` returns tool *specs* — both are now mapped honestly instead
+of failing the whole dashboard load. Verified 2026-10-04 on the iPhone 17 Pro
+simulator: `xcodebuild` succeeds, app installs, Dashboard renders live
+connector/model/session data from the engine. `ios-app/README.md` documents
+the simulator and device (physical iPhone) flows.
+
 ### Added — plan library (cached successful plans)
 
 `backend/agent/plan_library.py` stores each successful run's plan as a
