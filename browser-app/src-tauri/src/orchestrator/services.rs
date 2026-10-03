@@ -15,7 +15,20 @@ pub fn start_all_services(app: &tauri::AppHandle) {
 
     tauri::async_runtime::spawn(async move {
         let shell = app_handle.shell();
-        let cmd = shell.command("python3")
+        // Prefer the project's own venv interpreter: the system `python3`
+        // frequently lacks the engine's dependencies (it did here until the
+        // venv was populated), and the engine silently failed to boot.
+        let venv_py = project_root.join(".venv").join(if cfg!(windows) {
+            "Scripts/python.exe"
+        } else {
+            "bin/python"
+        });
+        let interpreter = if venv_py.exists() {
+            venv_py.to_string_lossy().into_owned()
+        } else {
+            "python3".to_string()
+        };
+        let cmd = shell.command(&interpreter)
             .args(["-m", "uvicorn", "backend.engine:app", "--host", "127.0.0.1", "--port", "8001"])
             .current_dir(&project_root);
 

@@ -113,7 +113,7 @@ def api_request(method: str, path: str, data: dict = None, stream: bool = False)
         return None
     except URLError as e:
         print(f"\033[91mError: Cannot reach engine at {get_engine_url()}\033[0m")
-        print(f"Start the engine: python3 -m uvicorn backend.engine:app --port 8001")
+        print(f"Start the engine: .venv/bin/python -m uvicorn backend.engine:app --port 8001")
         return None
 
 

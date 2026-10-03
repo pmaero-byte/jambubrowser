@@ -92,6 +92,14 @@ Verified, priced, replicated job execution on the mesh (`backend/decentralized/s
   oracle; `DeterministicExecutor` is a seedable numeric kernel, not a physics
   solver. Tests: `tests/test_simulation.py` (108).
 
+### Fixed — Tauri sidecar no longer depends on system python3
+
+The backend orchestrator spawned the bare `python3` binary, which on a fresh
+machine lacks the engine's dependencies and fails to boot. It now prefers
+`<project_root>/.venv/bin/python` (or `Scripts/python.exe` on Windows) and
+falls back to `python3` with the existing error surfaced. `cargo check`
+clean; the CLI's "engine unreachable" hint now points at the venv too.
+
 ### Added — Jira/Linear defect export + per-step browser-flow SARIF
 
 - `findings_to_jira_issues()` / `findings_to_linear_issues()` in
