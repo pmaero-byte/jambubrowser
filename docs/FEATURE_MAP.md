@@ -79,11 +79,7 @@ verifier) with shared memory and budgets, instead of trusting a single model.
 ### What still hurts (improvement targets)
 1. ~~MoA not in auto-discovery~~ — verified false 2026-10-03: a fresh
    `ProviderRegistry` resolves all 8 providers including `moa` on miss.
-2. **No shared "plan library" across runs** — every agent run starts from
-   zero. Procedural memory *is* consulted on plan generation
-   (`get_procedural_hints` → planner context, verified by
-   `tests/test_agent_loop.py::TestProceduralMemoryWiring`), but successful
-   *plans* themselves aren't cached/retrieved as templates yet.
+2. ~~No shared "plan library"~~ — shipped 2026-10-03: `backend/agent/plan_library.py` caches successful plan templates, advises the planner on near-duplicate goals, tracks per-template success rate, and exposes `/agent/plan-library` for inspection/pruning. `tests/test_plan_library.py` covers matching/scoring/persistence/eviction.
 3. ~~Goal orchestrator UI missing~~ — `GoalsPanel.tsx` landed in `d44fcb9`.
 4. **AEGIS evolution / co-evolution pipeline is experimental and unwired**
    (`backend/agent/evolution.py`, `backend/agent/coevolution.py`, ~1.8k

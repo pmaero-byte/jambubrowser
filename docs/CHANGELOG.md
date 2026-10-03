@@ -92,6 +92,18 @@ Verified, priced, replicated job execution on the mesh (`backend/decentralized/s
   oracle; `DeterministicExecutor` is a seedable numeric kernel, not a physics
   solver. Tests: `tests/test_simulation.py` (108).
 
+### Added — plan library (cached successful plans)
+
+`backend/agent/plan_library.py` stores each successful run's plan as a
+template keyed by normalised goal; a near-identical later goal gets the
+proven template as *advisory* planner context, so the run starts warm
+instead of cold. Success rate is tracked per template, corrupt or stale
+files degrade gracefully, LRU eviction caps the store, and only
+fully-successful runs are cached. Surfaces: `GET /agent/plan-library`,
+`POST /agent/plan-library/clear`, `DELETE /agent/plan-library?query=…`.
+`tests/test_plan_library.py` covers normalisation, exact/fuzzy matching,
+scoring, persistence, eviction, and advisory rendering.
+
 ### Fixed — Tauri sidecar no longer depends on system python3
 
 The backend orchestrator spawned the bare `python3` binary, which on a fresh

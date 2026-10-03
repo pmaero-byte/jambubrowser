@@ -203,6 +203,19 @@ class Agent:
             except Exception:
                 pass  # procedural memory is advisory; never block plan generation
 
+        # Plan library: advise the planner with the template that worked for
+        # a near-identical goal last time. Advisory only — the planner still
+        # inspects the live page; a library write never happens unless the
+        # whole run succeeded.
+        try:
+            from backend.agent.plan_library import advise_planner
+
+            template = advise_planner(query)
+            if template:
+                context = (context + "\n\n" + template) if context else template
+        except Exception:
+            pass  # the library is advisory; never block plan generation
+
         # Step 0: Decompose goal into a plan
         try:
             plan = await decompose_goal(
@@ -377,6 +390,16 @@ class Agent:
             success=True,
         )
         self._run_history.append(result)
+
+        # A run that reached an answer is a success: cache its plan as a
+        # template so the next similar goal can start warm. Advisory store —
+        # a failure here must not disturb the completed run's events.
+        try:
+            from backend.agent.plan_library import get_plan_library
+
+            get_plan_library().put(query, plan.to_dict(), success=True)
+        except Exception:
+            log.debug("plan library write skipped", exc_info=True)
 
         await _teardown_browser()
 

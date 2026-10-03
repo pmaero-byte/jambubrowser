@@ -177,6 +177,7 @@ python3 -m pytest tests/test_e2e.py -v
 ### Agentic Research (v3 — the engine underneath)
 - **Unified LLM Layer**: 7 providers (Anthropic, OpenAI, Ollama, MLX, MiniMax, DecentraCode Mesh, Mock) behind one `Provider` protocol. Auto-discovery, env-driven defaults, smart routing (`cheapest` / `fastest` / `quality` / `fallback` / `local_only`), per-request cost tracking.
 - **ReAct Agent Loop**: Plan → Execute → Verify → Replan, with streaming SSE events. Auto-derived JSON Schema for every tool, 10 built-in tools wrapping existing capabilities (web_search, scrape_url, vault_get, knowledge_query, memory_recall, memory_store, code_exec, goal_set, risk_check, final_answer). Budget-aware (max steps / tokens / seconds).
+- **Plan library** (`backend/agent/plan_library.py`): successful plans are cached as templates keyed by normalised goal; near-identical goals get the proven template as advisory planner context, so runs start warm instead of cold. Success rate is tracked per template; inspect/prune at `GET /agent/plan-library`, `POST /agent/plan-library/clear`, `DELETE /agent/plan-library?query=…`. The library is *advice, not a script* — the run still verifies every step against the live app, and only fully successful runs are stored.
 - **Memory & Personalization**: 4 sub-stores (user profile, session, semantic with embeddings, procedural with success rates). Hybrid retrieval: 60% vector + 30% recency+importance + 10% FTS, with profile-interest boost. Per-user scoping, full forget support.
 
 ### Simulation Compute (decentralised, verified job execution)
