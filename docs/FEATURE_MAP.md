@@ -77,16 +77,14 @@ verifier) with shared memory and budgets, instead of trusting a single model.
   synthesizer.
 
 ### What still hurts (improvement targets)
-1. **MoA is registered as a provider but not in the LLM provider
-   registry's auto-discovery path.** It lives in `providers/` but the
-   health-check / fallback chain may not see it.
+1. ~~MoA not in auto-discovery~~ — verified false 2026-10-03: a fresh
+   `ProviderRegistry` resolves all 8 providers including `moa` on miss.
 2. **No shared "plan library" across runs** — every agent run starts from
    zero. Procedural memory *is* consulted on plan generation
    (`get_procedural_hints` → planner context, verified by
    `tests/test_agent_loop.py::TestProceduralMemoryWiring`), but successful
    *plans* themselves aren't cached/retrieved as templates yet.
-3. **Goal orchestrator has 593 LOC but no visible UI surface** beyond
-   `/goal/*` routes — users can't see goals in the app.
+3. ~~Goal orchestrator UI missing~~ — `GoalsPanel.tsx` landed in `d44fcb9`.
 4. **AEGIS evolution / co-evolution pipeline is experimental and unwired**
    (`backend/agent/evolution.py`, `backend/agent/coevolution.py`, ~1.8k
    LOC) — no route, CLI, or MCP surface invokes it; only tests and
