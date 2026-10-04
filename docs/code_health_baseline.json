@@ -128,15 +128,15 @@
     },
     {
       "debug_prints": 0,
-      "documented_defs": 7,
+      "documented_defs": 11,
       "duplicate_definitions": [],
-      "functions": 11,
-      "lines": 558,
-      "long_functions": 1,
+      "functions": 18,
+      "lines": 712,
+      "long_functions": 0,
       "longest_function": "run",
-      "longest_function_loc": 246,
+      "longest_function_loc": 131,
       "path": "backend/agent/loop.py",
-      "public_defs": 10,
+      "public_defs": 14,
       "silent_excepts": 0,
       "todos": 0
     },
@@ -3461,14 +3461,14 @@
   ],
   "summary": {
     "debug_prints": 15,
-    "docstring_ratio": 0.6069,
-    "documented_defs": 1178,
+    "docstring_ratio": 0.6077,
+    "documented_defs": 1182,
     "duplicate_definitions": 0,
     "files": 247,
     "long_files": 0,
-    "long_functions": 13,
-    "public_defs": 1941,
+    "long_functions": 12,
+    "public_defs": 1945,
     "silent_excepts": 0,
-    "total_lines": 63440
+    "total_lines": 63594
   }
 }

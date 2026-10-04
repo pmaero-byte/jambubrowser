@@ -64,6 +64,113 @@ except ImportError:
 log = logging.getLogger("jambu.agent.loop")
 
 
+
+def enrich_context(query: str, user_id: Optional[str]) -> str:
+    """Add what previous runs learned to the planner's context.
+
+    Two advisory sources, both optional and both best-effort:
+
+    * **Procedural memory** — what worked and what did not for this user, so a
+      planner does not re-try an approach that already failed.
+    * **The plan library** — the plan template that succeeded for a near
+      identical goal. The planner still inspects the live page; this only
+      biases where it starts.
+
+    Both are looked up lazily and swallowed on failure, because a missing memory
+    table must not stop an agent from running.
+    """
+    parts: list[str] = []
+    if user_id:
+        try:
+            from backend.memory.retrieval import get_procedural_hints
+
+            hints = get_procedural_hints(user_id, query)
+            if hints:
+                parts.append(hints)
+        except Exception:
+            log.debug("procedural memory hints unavailable", exc_info=True)
+    try:
+        from backend.agent.plan_library import advise_planner
+
+        template = advise_planner(query)
+        if template:
+            parts.append(template)
+    except Exception:
+        log.debug("planner library advice unavailable", exc_info=True)
+    return "\n\n".join(parts)
+
+
+def budget_exhausted(
+    *,
+    steps_executed: int,
+    total_tokens: int,
+    elapsed_seconds: float,
+    max_steps: int,
+    max_tokens: int,
+    max_seconds: float,
+) -> Optional[str]:
+    """Return the reason the run must stop, or None to keep going.
+
+    Checked before every step rather than after, so a run can never start work
+    it has no budget for. The message names the *budget*, not the tool, because
+    the useful question when this fires is which knob to turn.
+    """
+    if steps_executed >= max_steps:
+        return f"max_steps={max_steps} reached"
+    if elapsed_seconds > max_seconds:
+        return f"max_seconds={max_seconds} exceeded"
+    if total_tokens >= max_tokens:
+        return f"max_tokens={max_tokens} reached"
+    return None
+
+
+def collect_sources(tool_result, into: list[str]) -> None:
+    """Append every source URL a tool result carries.
+
+    Tools report provenance under three different keys and a `results` list, so
+    all four shapes are read here. Order is preserved and de-duplication happens
+    once at the end of the run.
+    """
+    data = tool_result.data
+    if isinstance(data, dict):
+        for key in ("url", "source", "link"):
+            if isinstance(data.get(key), str):
+                into.append(data[key])
+        for row in data.get("results", []) or []:
+            if isinstance(row, dict) and "url" in row:
+                into.append(row["url"])
+
+
+def extract_answer(tool_result) -> tuple[str, list[str]]:
+    """Pull the final answer text and its sources out of a `final_answer` result."""
+    data = tool_result.data or {}
+    text = data.get("text", "") if isinstance(data, dict) else str(data)
+    sources = list(data.get("sources", [])) if isinstance(data, dict) else []
+    return text, sources
+
+@dataclass
+class StepOutcome:
+    """What one plan step produced, filled by `_execute_step`.
+
+    Python async generators cannot return a value, so the state a step produces
+    comes back through this record rather than a return value. It is also what
+    makes the three exits from a step — tool raised, tool failed, tool succeeded
+    — legible at the call site: read one field instead of tracking flags.
+    """
+
+    #: A replacement plan, when the step triggered a replan.
+    plan: Optional[Plan] = None
+    #: Tokens the tool reported, for run-total attribution.
+    usage: Usage = field(default_factory=Usage)
+    #: Sources the tool result carried.
+    sources: list[str] = field(default_factory=list)
+    #: Set when this step produced the run's answer.
+    answer_text: str = ""
+    answer_produced: bool = False
+    #: Whether the step counted against max_steps.
+    counted: bool = False
+
+
 @dataclass
 class AgentRunResult:
     """The non-streaming result of an agent run."""
@@ -178,6 +285,11 @@ class Agent:
         THIS run only; when omitted, the instance defaults are used. They are
         resolved into locals so concurrent runs on a shared Agent instance
         never mutate each other's budgets.
+
+        The body is the sequence, not the mechanics: enrich the planner's
+        context, decompose, execute steps until the budget or an answer stops
+        it, then report. Everything step-sized lives in `_execute_step`, which
+        yields the same events in the same order as the inline version did.
         """
         run_id = run_id or uuid.uuid4().hex[:12]
         max_steps = self.max_steps if max_steps is None else max_steps
@@ -192,33 +304,13 @@ class Agent:
 
         yield run_started(run_id, query, user_id)
 
-        # Consult procedural memory so the planner sees past approaches
-        # (which worked, which didn't) and starts from a warm cache.
-        if user_id:
-            try:
-                from backend.memory.retrieval import get_procedural_hints
-                hints = get_procedural_hints(user_id, query)
-                if hints:
-                    context = (context + "\n" + hints) if context else hints
-            except Exception:
-                # Procedural memory is advisory; never block plan generation.
-                                log.debug("procedural memory hints unavailable", exc_info=True)
+        enriched = enrich_context(query, user_id)
+        if enriched:
+            context = f"{context}\n{enriched}" if context else enriched
 
-        # Plan library: advise the planner with the template that worked for
-        # a near-identical goal last time. Advisory only — the planner still
-        # inspects the live page; a library write never happens unless the
-        # whole run succeeded.
-        try:
-            from backend.agent.plan_library import advise_planner
-
-            template = advise_planner(query)
-            if template:
-                context = (context + "\n\n" + template) if context else template
-        except Exception:
-            # The plan library is advisory; never block plan generation.
-                        log.debug("planner library advice unavailable", exc_info=True)
-
-        # Step 0: Decompose goal into a plan
+        # Step 0: Decompose goal into a plan. There is no fallback here — a run
+        # without a plan has nothing to execute, and pretending otherwise would
+        # hide the failure behind a synthesized answer.
         try:
             plan = await decompose_goal(
                 query,
@@ -235,138 +327,48 @@ class Agent:
             yield run_failed(run_id, f"plan_decomposition_failed: {e}")
             return
 
-        # Step 1..N: Execute the plan
+        # Step 1..N: Execute the plan.
         answer_produced = False
         for step_idx, step in enumerate(plan.steps):
-            if steps_executed >= max_steps:
-                yield log_event(run_id, "warn", f"max_steps={max_steps} reached")
-                break
-            elapsed = time.monotonic() - started
-            if elapsed > max_seconds:
-                yield log_event(run_id, "warn", f"max_seconds={max_seconds} exceeded")
-                break
-            if total_usage.total_tokens >= max_tokens:
-                yield log_event(run_id, "warn", f"max_tokens={max_tokens} reached")
+            stopped = budget_exhausted(
+                steps_executed=steps_executed,
+                total_tokens=total_usage.total_tokens,
+                elapsed_seconds=time.monotonic() - started,
+                max_steps=max_steps,
+                max_tokens=max_tokens,
+                max_seconds=max_seconds,
+            )
+            if stopped:
+                yield log_event(run_id, "warn", stopped)
                 break
 
-            step.status = StepStatus.RUNNING
-            yield step_started(run_id, step.to_dict())
+            outcome = StepOutcome()
+            remaining = [
+                s for s in plan.steps[step_idx + 1:] if s.status == StepStatus.PENDING
+            ]
+            async for event in self._execute_step(
+                step,
+                query=query,
+                run_id=run_id,
+                remaining=remaining,
+                max_steps_left=max_steps - steps_executed,
+                outcome=outcome,
+            ):
+                yield event
 
-            if step.tool is None:
-                # Reasoning step with no tool — treat as success and continue
-                step.status = StepStatus.SUCCEEDED
+            if outcome.plan is not None:
+                plan = outcome.plan
+            if outcome.counted:
                 steps_executed += 1
-                yield step_verified(run_id, step.to_dict(), StepVerdict(advanced=True, confidence=1.0, feedback="reasoning step").to_dict())
-                continue
-
-            # Execute the tool
-            try:
-                tool_result = await self.tools.execute(step.tool, **step.args)
-            except Exception as e:
-                log.exception("Tool %s raised", step.tool)
-                tool_result = None
-                yield tool_failed(run_id, step.tool, step.args, str(e))
-                step.status = StepStatus.FAILED
-                step.error = str(e)
-                # Replan
-                new_plan = await replan(
-                    query,
-                    step,
-                    {"error": str(e)},
-                    available_tools=self.tools.list_names(),
-                    max_steps=max_steps - steps_executed,
-                    prompt_template=(
-                        self._prompts.replanner_user_template if self._prompts else None
-                    ),
-                )
-                plan = new_plan
-                yield replanned(run_id, f"step_failed: {e}", plan.to_dict())
-                continue
-
-            if not tool_result.success:
-                yield tool_failed(run_id, step.tool, step.args, tool_result.error or "unknown error")
-                step.status = StepStatus.FAILED
-                step.error = tool_result.error
-                # Replan
-                new_plan = await replan(
-                    query,
-                    step,
-                    {"error": tool_result.error},
-                    available_tools=self.tools.list_names(),
-                    max_steps=max_steps - steps_executed,
-                    prompt_template=(
-                        self._prompts.replanner_user_template if self._prompts else None
-                    ),
-                )
-                plan = new_plan
-                yield replanned(run_id, f"step_failed: {tool_result.error}", plan.to_dict())
-                continue
-
-            step.status = StepStatus.SUCCEEDED
-            step.result = tool_result.to_dict()
-            yield tool_called(run_id, step.tool, step.args, tool_result.to_dict())
-            steps_executed += 1
-            total_usage = total_usage + Usage(  # rough attribution
-                prompt_tokens=int(tool_result.metadata.get("prompt_tokens", 0) or 0),
-                completion_tokens=int(tool_result.metadata.get("completion_tokens", 0) or 0),
-            )
-
-            # Collect sources from the result
-            for k in ("url", "source", "link"):
-                if k in tool_result.data and isinstance(tool_result.data[k], str):
-                    sources.append(tool_result.data[k])
-            if isinstance(tool_result.data, dict):
-                for r in tool_result.data.get("results", []) or []:
-                    if isinstance(r, dict) and "url" in r:
-                        sources.append(r["url"])
-
-            # Verify
-            remaining = [s for s in plan.steps[step_idx + 1:] if s.status == StepStatus.PENDING]
-            verdict = await verify_step(
-                query, step, tool_result.to_dict(), remaining,
-                prompt_template=(
-                    self._prompts.verifier_user_template if self._prompts else None
-                ),
-            )
-            step.verification = verdict.to_dict()
-            yield step_verified(run_id, step.to_dict(), verdict.to_dict())
-
-            # Use config-driven replan threshold if available
-            cf_threshold = (
-                self.harness_config.control_flow.replan_confidence_threshold
-                if self.harness_config
-                else 0.7
-            )
-            auto_replan = (
-                self.harness_config.control_flow.replan_on_weak_progress
-                if self.harness_config
-                else True
-            )
-
-            if not verdict.advanced and verdict.confidence >= cf_threshold and auto_replan:
-                # LLM said the step didn't advance — replan
-                new_plan = await replan(
-                    query, step, verdict.to_dict(),
-                    available_tools=self.tools.list_names(),
-                    max_steps=max_steps - steps_executed,
-                    prompt_template=(
-                        self._prompts.replanner_user_template if self._prompts else None
-                    ),
-                )
-                plan = new_plan
-                yield replanned(run_id, verdict.feedback or "verification_rejected", plan.to_dict())
-                continue
-
-            # Check if this is the final answer
-            if step.tool == "final_answer":
-                data = tool_result.data or {}
-                answer_text = data.get("text", "") if isinstance(data, dict) else str(data)
-                if isinstance(data, dict) and data.get("sources"):
-                    sources.extend(data["sources"])
+            total_usage = total_usage + outcome.usage
+            sources.extend(outcome.sources)
+            if outcome.answer_produced:
+                answer_text = outcome.answer_text
                 answer_produced = True
                 break
 
-        # If no final_answer step, synthesize from observations
+        # If no final_answer step ran, synthesize an answer from what was
+        # observed rather than reporting nothing.
         if not answer_produced:
             answer_text = await self._synthesize(query, plan, total_usage)
             total_usage = total_usage + Usage(
@@ -374,7 +376,6 @@ class Agent:
                 completion_tokens=int(getattr(self, "_last_synth_usage", Usage()).completion_tokens),
             )
 
-        # Final event
         duration = (time.monotonic() - started) * 1000
         unique_sources = list(dict.fromkeys(sources))[:20]  # dedupe + cap
 
@@ -392,21 +393,174 @@ class Agent:
             success=True,
         )
         self._run_history.append(result)
+        self._cache_plan_template(query, plan)
 
-        # A run that reached an answer is a success: cache its plan as a
-        # template so the next similar goal can start warm. Advisory store —
-        # a failure here must not disturb the completed run's events.
+        await _teardown_browser()
+
+        yield answer_ready(run_id, answer_text, unique_sources, total_usage.__dict__)
+        yield run_completed(run_id, duration, steps_executed, total_usage.total_tokens, total_usage.cost_usd)
+
+    async def _execute_step(
+        self,
+        step: PlanStep,
+        *,
+        query: str,
+        run_id: str,
+        remaining: list[PlanStep],
+        max_steps_left: int,
+        outcome: StepOutcome,
+    ) -> AsyncIterator[AgentEvent]:
+        """Execute, verify and possibly replan one plan step.
+
+        Fills ``outcome`` with everything the run loop needs to carry forward:
+        a replacement plan, token usage, sources, and whether this step produced
+        the answer. Three exits, in the order they are checked:
+
+        1. **Reasoning step** (no tool) — counts as a step and passes
+           verification with full confidence. The agent is allowed to think.
+        2. **The tool raised or reported failure** — the failure is recorded,
+           the step is marked failed, and the loop replans from the error.
+        3. **The tool succeeded** — the result is verified, and a verdict that
+           says the step did not advance triggers a replan too.
+
+        Replanning is the same in both failure paths and in the weak-progress
+        case, which is why it is one method (`_replan_after`) called three times
+        rather than three copies.
+        """
+        step.status = StepStatus.RUNNING
+        yield step_started(run_id, step.to_dict())
+
+        # 1. Reasoning step: no tool to call.
+        if step.tool is None:
+            step.status = StepStatus.SUCCEEDED
+            outcome.counted = True
+            yield step_verified(
+                run_id,
+                step.to_dict(),
+                StepVerdict(
+                    advanced=True, confidence=1.0, feedback="reasoning step",
+                ).to_dict(),
+            )
+            return
+
+        # 2a. The tool raised.
+        try:
+            tool_result = await self.tools.execute(step.tool, **step.args)
+        except Exception as e:
+            log.exception("Tool %s raised", step.tool)
+            yield tool_failed(run_id, step.tool, step.args, str(e))
+            step.status = StepStatus.FAILED
+            step.error = str(e)
+            async for event in self._replan_after(
+                query, step, {"error": str(e)},
+                run_id=run_id, max_steps_left=max_steps_left, outcome=outcome,
+                reason=f"step_failed: {e}",
+            ):
+                yield event
+            return
+
+        # 2b. The tool ran but reported failure.
+        if not tool_result.success:
+            yield tool_failed(
+                run_id, step.tool, step.args, tool_result.error or "unknown error",
+            )
+            step.status = StepStatus.FAILED
+            step.error = tool_result.error
+            async for event in self._replan_after(
+                query, step, {"error": tool_result.error},
+                run_id=run_id, max_steps_left=max_steps_left, outcome=outcome,
+                reason=f"step_failed: {tool_result.error}",
+            ):
+                yield event
+            return
+
+        # 3. The tool succeeded.
+        step.status = StepStatus.SUCCEEDED
+        step.result = tool_result.to_dict()
+        yield tool_called(run_id, step.tool, step.args, tool_result.to_dict())
+        outcome.counted = True
+        outcome.usage = Usage(  # rough attribution from whatever the tool reported
+            prompt_tokens=int(tool_result.metadata.get("prompt_tokens", 0) or 0),
+            completion_tokens=int(tool_result.metadata.get("completion_tokens", 0) or 0),
+        )
+        collect_sources(tool_result, outcome.sources)
+
+        verdict = await verify_step(
+            query, step, tool_result.to_dict(), remaining,
+            prompt_template=(
+                self._prompts.verifier_user_template if self._prompts else None
+            ),
+        )
+        step.verification = verdict.to_dict()
+        yield step_verified(run_id, step.to_dict(), verdict.to_dict())
+
+        # A verdict that says the step did not advance replans the rest of the
+        # run — but only when the harness says to. Both the threshold and the
+        # on/off switch are configuration, with the historical values as the
+        # default when no harness config is loaded.
+        cf = self.harness_config.control_flow if self.harness_config else None
+        cf_threshold = cf.replan_confidence_threshold if cf else 0.7
+        auto_replan = cf.replan_on_weak_progress if cf else True
+
+        if not verdict.advanced and verdict.confidence >= cf_threshold and auto_replan:
+            async for event in self._replan_after(
+                query, step, verdict.to_dict(),
+                run_id=run_id, max_steps_left=max_steps_left, outcome=outcome,
+                reason=verdict.feedback or "verification_rejected",
+            ):
+                yield event
+            return
+
+        if step.tool == "final_answer":
+            text, extra = extract_answer(tool_result)
+            outcome.answer_text = text
+            outcome.sources.extend(extra)
+            outcome.answer_produced = True
+
+    async def _replan_after(
+        self,
+        query: str,
+        step: PlanStep,
+        evidence: dict,
+        *,
+        run_id: str,
+        max_steps_left: int,
+        outcome: StepOutcome,
+        reason: str,
+    ) -> AsyncIterator[AgentEvent]:
+        """Ask the planner for a new plan after a step failed or stalled.
+
+        The replacement lands in ``outcome.plan``; the caller adopts it and keeps
+        iterating. Emitting the `replanned` event here rather than at the call
+        site is what keeps the three failure paths identical in what the consumer
+        sees — an agent watching the stream cannot tell a tool crash from a
+        rejected step.
+        """
+        outcome.plan = await replan(
+            query,
+            step,
+            evidence,
+            available_tools=self.tools.list_names(),
+            max_steps=max_steps_left,
+            prompt_template=(
+                self._prompts.replanner_user_template if self._prompts else None
+            ),
+        )
+        yield replanned(run_id, reason, outcome.plan.to_dict())
+
+    def _cache_plan_template(self, query: str, plan: Plan) -> None:
+        """Store this run's plan as a template for a similar future goal.
+
+        Only ever called for a run that reached an answer, and deliberately
+        advisory: a failure here must not disturb the completed run's events,
+        which the caller has already decided to emit.
+        """
         try:
             from backend.agent.plan_library import get_plan_library
 
             get_plan_library().put(query, plan.to_dict(), success=True)
         except Exception:
             log.debug("plan library write skipped", exc_info=True)
-
-        await _teardown_browser()
-
-        yield answer_ready(run_id, answer_text, unique_sources, total_usage.__dict__)
-        yield run_completed(run_id, duration, steps_executed, total_usage.total_tokens, total_usage.cost_usd)
 
     async def run_to_completion(
         self,

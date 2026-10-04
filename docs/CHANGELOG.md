@@ -196,6 +196,37 @@ already defines a route handler named `audit_collect` — a plain import would
 have shadowed it at import time, the same collision class as the
 `memory_delete` bug fixed above.
 
+### Fixed — a tool returning no data killed the agent run
+
+`Agent.run` collected a tool's provenance with `if k in tool_result.data`
+*before* checking that `data` was a dict. A tool that legitimately succeeds
+with nothing (`data=None`) or returns a scalar made that expression raise
+`TypeError: argument of type 'NoneType' is not a container or iterable` — inside
+the step loop, so the whole run died rather than completing with an answer.
+
+The refactor below extracted that code into `collect_sources`, which checks the
+type first; `tests/test_agent_loop_steps.py` pins it for `None`, `5`, `3.5`,
+`str`, `list` and `object()`, and end-to-end for a tool that returns nothing.
+Confirmed to fail against the old body.
+
+### Changed — the agent loop is a sequence again
+
+`Agent.run` was 246 lines and did seven things inline: enrich the planner's
+context from procedural memory and the plan library, decompose, check three
+budgets before every step, execute/verify/replan each step, collect sources,
+extract the answer, build the result.
+
+The step mechanics now live in `_execute_step` (an async generator that fills a
+`StepOutcome`, because Python async generators cannot return a value), the three
+copies of the eleven-line replan block became one `_replan_after`, and
+`budget_exhausted`, `collect_sources`, `extract_answer`, `enrich_context` and
+`_cache_plan_template` are module-level functions. `run` is now the readable
+sequence it should have been.
+
+Verified by A/B-ing the two versions: the same five scenarios (tool succeeds,
+tool reports failure, tool raises, weak verification, budget exhausted) produce
+**byte-identical event streams** — same event types, same order, same payloads.
+
 ### Changed — modularity and measurable gates
 
 - **Step actions split by family** — `browser_agent._run_step` was the repo's
@@ -216,10 +247,10 @@ have shadowed it at import time, the same collision class as the
   `init_db` is idempotent, and asserts every helper is actually called — so a
   helper that is defined but not invoked, which would silently drop a table
   from a fresh install, fails the suite.
-- Metrics: `silent_excepts` 71 → 0, `long_functions` 17 → 13, `long_files` 4 → 0,
+- Metrics: `silent_excepts` 71 → 0, `long_functions` 17 → 12, `long_files` 4 → 0,
   `docstring_ratio` 0.577 → 0.607, `mcp_server.py` 1,894 → 86 lines,
   `browser_agent.py` 3,402 → 1,370 lines, `cli/jambu.py` 2,108 → 84 lines,
-  `decentralized/simulation.py` 1,542 → 5 modules. Suite: 2006 passed, 9 skipped.
+  `decentralized/simulation.py` 1,542 → 5 modules. Suite: 2032 passed, 9 skipped.
 
 ## [3.4.0] - 2026-10-03
 
