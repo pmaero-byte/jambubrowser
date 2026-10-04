@@ -234,7 +234,7 @@ federation — the information-access surface a normal browser can't offer.
 - **P2P discovery** (`backend/modules/p2p_discovery.py`) — mDNS/UDP
   peer discovery for a multi-node research mesh. Single-node in practice:
   finds nothing unless other Jambubrowser nodes run on the same LAN.
-- **Simulation compute** (`backend/decentralized/simulation.py`,
+- **Simulation compute** (`backend/decentralized/simulation/`,
   `docs/SIMULATION_COMPUTE.md`) — decentralised job execution: the spec is
   canonicalised and `sha256`-hashed *before* dispatch (optional
   `module_digest` pins the artefact), the job is priced in DCT and its USD

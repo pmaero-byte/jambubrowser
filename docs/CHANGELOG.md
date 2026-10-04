@@ -126,6 +126,43 @@ an empty frontier sleeps 30s rather than spinning).
 The repo docstring ratio crosses the 60% gate for the first time: **0.583 →
 0.605**.
 
+### Changed — simulation compute is a package, and no file is over 1,500 lines
+
+`backend/decentralized/simulation.py` was 1,542 lines and the last file over
+the code-health limit. It could not be split naively: it owns two mutable
+registries (`EXECUTORS`, `NODE_HEALTH`) that every function reached by bare
+name, so a moving part would have kept a reference to a dict that no longer
+existed. It is now five modules, layered so the import graph is acyclic and
+each registry lives with its only mutators:
+
+| module | lines | owns |
+| --- | --- | --- |
+| `types.py` | 236 | kinds, statuses, limits, the two errors, `SimulationConfig`, `SimulationSpec` (leaf) |
+| `health.py` | 236 | `NODE_HEALTH` (quarantine) and `reputation` (ranking) |
+| `executors.py` | 206 | `EXECUTORS` and the four executors that run a spec |
+| `runner.py` | 458 | `quote`, replica verification, dispatch (`run_job`) |
+| `jobs.py` | 487 | job store, idempotency, `submit`, the durable queue, the evidence bundle |
+
+Two details make the split behaviour-preserving rather than merely compiling:
+
+- `simulation.EXECUTORS` and `simulation.NODE_HEALTH` are resolved through a
+  PEP 562 module `__getattr__`, not a `from ... import`. A static import binds
+  one dict object at import time, so rebinding `executors.EXECUTORS` — test
+  isolation, or an embedder injecting its own nodes — would have left the
+  package name pointing at a dict nothing writes to. `run_job` likewise reads
+  the registry through its owning module.
+- The whole previous public surface (79 names, including the ones that were only
+  visible because the module imported them) is re-exported from the package, so
+  `from backend.decentralized import simulation` is unchanged. Verified by
+  comparing every name, kind and function signature before and after.
+
+`tests/test_simulation_module_graph.py` imports each module first in a fresh
+interpreter, checks the surface is intact and asserts the registries are not
+snapshots — confirmed to fail when a cycle is reintroduced.
+
+**`long_files` is now 0** — no file in `backend/`, `cli/` or `scripts/` is over
+1,500 lines.
+
 ### Changed — modularity and measurable gates
 
 - **Step actions split by family** — `browser_agent._run_step` was the repo's
@@ -146,10 +183,10 @@ The repo docstring ratio crosses the 60% gate for the first time: **0.583 →
   `init_db` is idempotent, and asserts every helper is actually called — so a
   helper that is defined but not invoked, which would silently drop a table
   from a fresh install, fails the suite.
-- Metrics: `silent_excepts` 71 → 0, `long_functions` 17 → 14, `long_files` 4 → 1,
+- Metrics: `silent_excepts` 71 → 0, `long_functions` 17 → 14, `long_files` 4 → 0,
   `docstring_ratio` 0.577 → 0.605, `mcp_server.py` 1,894 → 86 lines,
-  `browser_agent.py` 3,402 → 1,370 lines, `cli/jambu.py` 2,108 → 84 lines.
-  Suite: 1975 passed, 9 skipped.
+  `browser_agent.py` 3,402 → 1,370 lines, `cli/jambu.py` 2,108 → 84 lines,
+  `decentralized/simulation.py` 1,542 → 5 modules. Suite: 1989 passed, 9 skipped.
 
 ## [3.4.0] - 2026-10-03
 

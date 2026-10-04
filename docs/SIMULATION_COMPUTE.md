@@ -7,7 +7,7 @@ The mesh already meters simulation work — DCM emits `simulation-charge`
 receipts and MeshPay audits them. What was missing was everything in
 between: a way to submit a job, freeze its definition, dispatch it, check
 that the nodes actually computed the same thing, and settle. This document
-covers that path (`backend/decentralized/simulation.py`).
+covers that path (`backend/decentralized/simulation/`).
 
 ---
 

@@ -44,11 +44,17 @@ def registry(monkeypatch):
     ``NODE_HEALTH`` is a module global for the same reason ``EXECUTORS`` is:
     the scheduler is stateless-per-request but the fleet is process-wide. A
     node quarantined by one test would otherwise be unavailable to the next.
+
+    Both now live in the submodule that owns them — ``executors.EXECUTORS`` and
+    ``health.NODE_HEALTH`` — because every reader and mutator of each is in that
+    one file. Patching the package attribute would rebind a name nothing reads.
     """
-    monkeypatch.setattr(simulation, "EXECUTORS", {})
-    monkeypatch.setattr(simulation, "NODE_HEALTH", {})
+    from backend.decentralized.simulation import executors, health
+
+    monkeypatch.setattr(executors, "EXECUTORS", {})
+    monkeypatch.setattr(health, "NODE_HEALTH", {})
     yield
-    simulation.EXECUTORS.clear()
+    executors.EXECUTORS.clear()
     simulation.reset_node_health()
 
 
