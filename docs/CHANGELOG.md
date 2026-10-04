@@ -53,8 +53,17 @@ on `F821`/`F811` so the next one cannot land.
   longest function left (174 lines).
 - **CI now fails on undefined names** — `ruff check --select F821,F811` is a
   gate, not a warning.
-- Metrics: `silent_excepts` 71 → 0, `long_functions` 17 → 15,
-  `browser_agent.py` 3,402 → 2,883 lines. Suite: 1944 passed, 9 skipped.
+- **The schema is no longer one function** — `init_db` was the repo's longest
+  function at 891 lines: 39 `CREATE TABLE`s, their migrations and their FTS
+  triggers, so a schema bug gave you a line number and nothing else. It is now
+  a 72-line connection/extension handler plus 13 per-domain helpers
+  (`_schema_core`, `_schema_monitors`, `_schema_qa`, …) called in the original
+  order. `tests/test_database_schema.py` pins the 69 resulting objects, checks
+  `init_db` is idempotent, and asserts every helper is actually called — so a
+  helper that is defined but not invoked, which would silently drop a table
+  from a fresh install, fails the suite.
+- Metrics: `silent_excepts` 71 → 0, `long_functions` 17 → 14,
+  `browser_agent.py` 3,402 → 2,883 lines. Suite: 1947 passed, 9 skipped.
 
 ## [3.4.0] - 2026-10-03
 

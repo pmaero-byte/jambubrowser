@@ -270,11 +270,11 @@
       "debug_prints": 0,
       "documented_defs": 18,
       "duplicate_definitions": [],
-      "functions": 20,
-      "lines": 1295,
-      "long_functions": 1,
-      "longest_function": "init_db",
-      "longest_function_loc": 891,
+      "functions": 33,
+      "lines": 1367,
+      "long_functions": 0,
+      "longest_function": "_schema_core",
+      "longest_function_loc": 150,
       "path": "backend/core/database.py",
       "public_defs": 18,
       "silent_excepts": 0,
@@ -3018,9 +3018,9 @@
     "duplicate_definitions": 0,
     "files": 215,
     "long_files": 4,
-    "long_functions": 15,
+    "long_functions": 14,
     "public_defs": 1907,
     "silent_excepts": 0,
-    "total_lines": 61982
+    "total_lines": 62054
   }
 }

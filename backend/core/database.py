@@ -100,6 +100,31 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
     
     cursor = conn.cursor()
     
+
+    # DDL runs in this exact order; the helpers are the original blocks,
+    # split at the section banners that were already in this function.
+    # Order matters: FTS triggers reference their base table, and the
+    # migration ALTERs assume the table they extend exists.
+    _schema_core(cursor)
+    _schema_harness_compat(cursor)
+    _schema_analytics(cursor)
+    _schema_billing(cursor)
+    _schema_recordings(cursor)
+    _schema_monitors(cursor)
+    _schema_qa(cursor)
+    _schema_meshpay_anchors(cursor)
+    _schema_x402(cursor)
+    _schema_evidence(cursor)
+    _schema_decentralized(cursor)
+    _schema_meshpay_walleting(cursor)
+    _schema_simulation(cursor)
+    conn.commit()
+    return conn
+
+
+def _schema_core(cursor: sqlite3.Cursor) -> None:
+    """Documents, embeddings, missions, tools, vault, consensus, sessions."""
+
     # Standard table for raw text and URLs
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS documents (
@@ -248,6 +273,10 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
         )
     """)
 
+
+def _schema_harness_compat(cursor: sqlite3.Cursor) -> None:
+    """Memory store (FTS5) and session tables."""
+
     # ── Phase 1: Harness Gateway Compatibility ──────────────────────────
     # Memory entries (Harness-compatible FTS5 store)
     cursor.execute("""
@@ -310,6 +339,10 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
         )
     """)
 
+
+def _schema_analytics(cursor: sqlite3.Cursor) -> None:
+    """Task metrics, tool usage, provider quota, session analytics."""
+
     # ── Phase 1: Analytics Engine ─────────────────────────────────────────
     # Task performance metrics
     cursor.execute("""
@@ -364,6 +397,10 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
         )
     """)
 
+
+def _schema_billing(cursor: sqlite3.Cursor) -> None:
+    """API keys, usage and audit-history tables."""
+
     # ── API Keys & Billing ─────────────────────────────────────────────
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS api_keys (
@@ -410,6 +447,10 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
             created_at REAL DEFAULT (CAST(strftime('%s','now') AS REAL))
         )
     """)
+
+
+def _schema_recordings(cursor: sqlite3.Cursor) -> None:
+    """Session record/replay plus dismissed findings."""
 
     # ── Session record / replay ─────────────────────────────────────────
     # A "recording" captures every navigation + action of a scripted run
@@ -507,6 +548,10 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_dismissed_url ON dismissed_findings(url)"
     )
+
+
+def _schema_monitors(cursor: sqlite3.Cursor) -> None:
+    """Audit monitors and flow monitors with their run tables."""
 
     # ── Audit monitors ─────────────────────────────────────────────────────
     # Recurring audits with regression alerting: a monitor re-runs the audit
@@ -610,6 +655,10 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
         "CREATE INDEX IF NOT EXISTS idx_flow_monitor_runs "
         "ON flow_monitor_runs(monitor_id, run_at DESC)"
     )
+
+
+def _schema_qa(cursor: sqlite3.Cursor) -> None:
+    """QA cases, runs, heal events, datasets, flake quarantine, viewport matrix."""
 
     # ── QA test cases (Milestone 1: AI QA team) ───────────────────────
     # Managed test-case model: suite → case → runs, plus heal events and
@@ -727,6 +776,10 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
         except sqlite3.OperationalError:
             cursor.execute(ddl)
 
+
+def _schema_meshpay_anchors(cursor: sqlite3.Cursor) -> None:
+    """Anchored receipt-epoch roots."""
+
     # ── MeshPay: anchored receipt-epoch roots ──────────────────────────
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS meshpay_anchors (
@@ -754,6 +807,10 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_meshpay_anchors ON meshpay_anchors(created_at DESC)"
     )
+
+
+def _schema_x402(cursor: sqlite3.Cursor) -> None:
+    """x402 paywall receipts and in-flight payment claims."""
 
     # ── x402 paywall receipts (HTTP-native agent payments) ─────────────
     cursor.execute("""
@@ -786,6 +843,10 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
             created_at REAL DEFAULT (CAST(strftime('%s','now') AS REAL))
         )
     """)
+
+
+def _schema_evidence(cursor: sqlite3.Cursor) -> None:
+    """Signed evidence bundles."""
 
     # ── Evidence bundles (signed, third-party-verifiable claims) ───────
     cursor.execute("""
@@ -820,6 +881,10 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_evidence_bundles ON evidence_bundles(created_at DESC)"
     )
+
+
+def _schema_decentralized(cursor: sqlite3.Cursor) -> None:
+    """A2A tasks and worker verdicts."""
 
     # ── A2A tasks (agent-to-agent hires) ───────────────────────────────
     cursor.execute("""
@@ -856,6 +921,10 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_worker_verdicts ON worker_verdicts(created_at DESC)"
     )
+
+
+def _schema_meshpay_walleting(cursor: sqlite3.Cursor) -> None:
+    """Provider wallets and payout batches."""
 
     # ── MeshPay Stage 1: provider wallets + payout batches ─────────────
     cursor.execute("""
@@ -902,6 +971,10 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
         "CREATE INDEX IF NOT EXISTS idx_meshpay_payouts ON meshpay_payouts(created_at DESC)"
     )
 
+
+def _schema_simulation(cursor: sqlite3.Cursor) -> None:
+    """Decentralised simulation compute jobs."""
+
     # ── Decentralised simulation compute jobs ─────────────────────────
     # spec_hash is the frozen job definition (frozen before dispatch);
     # idempotency_key makes a retried submit return the original job
@@ -937,8 +1010,7 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
         ON simulation_jobs(idempotency_key) WHERE idempotency_key IS NOT NULL
     """)
 
-    conn.commit()
-    return conn
+
 
 
 @contextmanager
