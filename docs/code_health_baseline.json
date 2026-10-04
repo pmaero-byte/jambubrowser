@@ -1712,14 +1712,42 @@
       "debug_prints": 0,
       "documented_defs": 45,
       "duplicate_definitions": [],
-      "functions": 155,
-      "lines": 3402,
-      "long_functions": 3,
+      "functions": 151,
+      "lines": 3096,
+      "long_functions": 2,
       "longest_function": "_run_step",
-      "longest_function_loc": 286,
+      "longest_function_loc": 290,
       "path": "backend/modules/browser_agent.py",
-      "public_defs": 118,
+      "public_defs": 117,
       "silent_excepts": 7,
+      "todos": 0
+    },
+    {
+      "debug_prints": 0,
+      "documented_defs": 0,
+      "duplicate_definitions": [],
+      "functions": 1,
+      "lines": 27,
+      "long_functions": 0,
+      "longest_function": "__init__",
+      "longest_function_loc": 5,
+      "path": "backend/modules/browser_agent_errors.py",
+      "public_defs": 1,
+      "silent_excepts": 0,
+      "todos": 0
+    },
+    {
+      "debug_prints": 0,
+      "documented_defs": 5,
+      "duplicate_definitions": [],
+      "functions": 5,
+      "lines": 355,
+      "long_functions": 0,
+      "longest_function": "evaluate_assert",
+      "longest_function_loc": 103,
+      "path": "backend/modules/browser_assertions.py",
+      "public_defs": 5,
+      "silent_excepts": 0,
       "todos": 0
     },
     {
@@ -2971,14 +2999,14 @@
   ],
   "summary": {
     "debug_prints": 15,
-    "docstring_ratio": 0.5753,
-    "documented_defs": 1092,
+    "docstring_ratio": 0.5765,
+    "documented_defs": 1097,
     "duplicate_definitions": 0,
-    "files": 212,
+    "files": 214,
     "long_files": 4,
-    "long_functions": 17,
-    "public_defs": 1898,
+    "long_functions": 16,
+    "public_defs": 1903,
     "silent_excepts": 71,
-    "total_lines": 61740
+    "total_lines": 61816
   }
 }

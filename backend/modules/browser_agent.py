@@ -989,14 +989,12 @@ class Step:
         }
 
 
-class SessionRefused(Exception):
-    """A safety rail refused the action (allowlist, approval, SSRF)."""
-
-    def __init__(self, reason: str, detail: str = "", candidates: Optional[list] = None):
-        self.reason = reason
-        self.detail = detail
-        self.candidates = candidates or []
-        super().__init__(detail or reason)
+# SessionRefused now lives in browser_agent_errors so extracted subsystems can
+# raise it without importing this module (see that file's docstring).
+from backend.modules.browser_agent_errors import SessionRefused  # noqa: E402
+# Re-exported so existing importers keep working while the implementation
+# lives with the assertion engine that owns it.
+from backend.modules.browser_assertions import json_path as _json_path  # noqa: E402,F401
 
 
 def _host(url: str) -> str:
@@ -1026,50 +1024,6 @@ def classify_risk(*parts: str) -> Optional[str]:
             return pattern.strip()
     return None
 
-
-def _json_path(payload: Any, path: str) -> Any:
-    """Tiny JSON-path reader for API assertions: ``a.b[0].c`` style.
-
-    Deliberately minimal (no wildcards/filters): QA assertions should be
-    readable, and anything fancier belongs in a real schema check.
-    """
-    if not path:
-        return payload
-    node = payload
-    token = ""
-    i = 0
-    parts: list[Any] = []
-    while i < len(path):
-        ch = path[i]
-        if ch == ".":
-            if token:
-                parts.append(token)
-                token = ""
-        elif ch == "[":
-            if token:
-                parts.append(token)
-                token = ""
-            end = path.find("]", i)
-            if end < 0:
-                return None
-            index = path[i + 1:end].strip().strip("'\"")
-            parts.append(int(index) if index.isdigit() else index)
-            i = end
-        else:
-            token += ch
-        i += 1
-    if token:
-        parts.append(token)
-    for part in parts:
-        if isinstance(part, int):
-            if not isinstance(node, list) or part >= len(node):
-                return None
-            node = node[part]
-        else:
-            if not isinstance(node, dict) or part not in node:
-                return None
-            node = node[part]
-    return node
 
 
 def estimate_tokens(payload) -> int:
@@ -2727,7 +2681,11 @@ class BrowserAgentSession:
 
         if action == "assert" or action.startswith("assert_"):
             state = await self._read_state()
-            passed, message = await self._evaluate_assert(step, state)
+            # The assertion vocabulary lives in browser_assertions; this class
+            # keeps only the plumbing (read state, raise on failure).
+            from backend.modules.browser_assertions import evaluate_assert
+
+            passed, message = await evaluate_assert(self, step, state)
             if not passed:
                 raise SessionRefused("assertion_failed", message)
             return message, {}
@@ -2763,270 +2721,6 @@ class BrowserAgentSession:
                 "wait_timeout", f"url never contained {step['url_contains']!r}",
             )
         await self._call_optional("wait_for", timeout_ms=timeout)
-
-    async def _evaluate_assert(self, step: dict, state: dict) -> tuple[bool, str]:
-        action = (step.get("action") or "").strip().lower()
-        kind = (step.get("kind") or
-                (action[len("assert_"):] if action.startswith("assert_") else "")).strip().lower()
-        kind = kind or "visible"
-        target = step.get("target") or step.get("name") or ""
-        value = str(step.get("value", step.get("expected", "")))
-
-        element = None
-        if target:
-            try:
-                element = self.catalog.get(self.resolve_target(target))
-            except SessionRefused:
-                element = None
-
-        selector = (step.get("selector") or "").strip()
-        if selector and kind in (
-            "visible", "not_visible", "hidden", "text", "text_contains",
-            "text_equals", "value", "count", "checked", "unchecked",
-            "not_checked", "enabled", "disabled",
-        ):
-            return await self._assert_selector(kind, selector, value)
-
-        if kind in ("dialog", "no_dialog", "no_dialogs"):
-            dialogs = self._peek_telemetry().get("dialogs") or []
-            if kind in ("no_dialog", "no_dialogs"):
-                if not dialogs:
-                    return True, "no dialog was raised"
-                return False, (
-                    f"{len(dialogs)} dialog(s) raised; last: "
-                    f"{dialogs[-1].get('type')}:{str(dialogs[-1].get('message', ''))[:60]}"
-                )
-            if not dialogs:
-                return False, "no dialog was raised"
-            last = dialogs[-1]
-            want_type = str(step.get("type", "") or "")
-            if want_type and last.get("type") != want_type:
-                return False, f"last dialog was {last.get('type')}, wanted {want_type}"
-            if value and value not in str(last.get("message") or ""):
-                return False, (
-                    f"dialog message {str(last.get('message'))[:80]!r} "
-                    f"does not contain {value!r}"
-                )
-            if step.get("accepted") is not None:
-                if bool(last.get("accepted")) != bool(step.get("accepted")):
-                    return False, (
-                        "dialog was " + ("accepted" if last.get("accepted") else "dismissed")
-                    )
-            state_bit = ""
-            if step.get("accepted") is not None:
-                state_bit = " accepted" if last.get("accepted") else " dismissed"
-            return True, f"dialog {last.get('type')}{state_bit}"
-
-        if kind in ("no_a11y_violations", "a11y_clean", "accessible"):
-            audit = await self._call_optional("a11y_audit")
-            issues = (audit or {}).get("issues") or []
-            if not issues:
-                return True, "no accessibility violations"
-            summary = ", ".join(
-                f"{i.get('id')}({i.get('count')})" for i in issues[:5]
-            )
-            return False, f"{len(issues)} a11y issue(s): {summary}"
-
-        if kind in ("perf", "lcp", "fcp", "load", "dom_nodes", "transfer_kb",
-                    "resource_count", "navigation_ms"):
-            metric = kind if kind != "perf" else (step.get("metric") or "lcp").lower()
-            metrics = await self._call_optional("perf_metrics")
-            metrics = metrics or {}
-            source = {
-                "lcp": "lcp_ms", "fcp": "fcp_ms", "load": "load_ms",
-                "dom_nodes": "dom_nodes", "resource_count": "resource_count",
-                "navigation_ms": "response_ms",
-            }.get(metric, metric)
-            actual = float(metrics.get(source, 0) or 0)
-            if metric == "transfer_kb":
-                actual = float(metrics.get("transfer_bytes", 0) or 0) / 1024.0
-            budget = float(value or 0)
-            ok = actual <= budget if budget > 0 else actual > 0
-            return ok, (f"{metric}={actual:.1f} (budget {budget:g})" if budget > 0
-                        else f"{metric}={actual:.1f}")
-
-        if kind in ("status", "api_status"):
-            if self._last_api is None:
-                return False, "no api step ran before this assertion"
-            actual = int(self._last_api.get("status") or 0)
-            expect = value or "2xx"
-            if str(expect).isdigit():
-                ok = actual == int(expect)
-            else:
-                e = str(expect).lower()
-                ok = (e == "2xx" and 200 <= actual < 300) or \
-                     (e == "3xx" and 300 <= actual < 400) or \
-                     (e == "4xx" and 400 <= actual < 500) or \
-                     (e == "5xx" and 500 <= actual < 600)
-            return ok, f"api status {actual} (expected {expect})"
-
-        if kind in ("latency", "api_latency"):
-            if self._last_api is None:
-                return False, "no api step ran before this assertion"
-            actual = int(self._last_api.get("latency_ms") or 0)
-            budget = int(float(value or 0))
-            ok = actual <= budget if budget > 0 else actual > 0
-            return ok, (f"api latency {actual}ms (budget {budget}ms)"
-                        if budget > 0 else f"api latency {actual}ms")
-
-        if kind in ("json", "api_json", "json_path"):
-            if self._last_api is None:
-                return False, "no api step ran before this assertion"
-            payload = self._last_api.get("json")
-            if payload is None:
-                return False, "api response was not JSON"
-            path = (step.get("path") or step.get("json_path") or "")
-            expected = (step.get("expected") if step.get("expected") is not None
-                        else step.get("value"))
-            got = _json_path(payload, path) if path else payload
-            if expected is None or expected == "":
-                ok = got is not None
-                return ok, (f"json {path or '<root>'} present" if ok
-                            else f"json {path or '<root>'} missing")
-            ok = str(got) == str(expected)
-            return ok, (f"json {path or '<root>'}: {got!r}"
-                        + ("" if ok else f" != {expected!r}"))
-
-        if kind in ("schema", "api_schema"):
-            if self._last_api is None:
-                return False, "no api step ran before this assertion"
-            payload = self._last_api.get("json")
-            required = step.get("required") or step.get("value") or []
-            if isinstance(required, str):
-                required = [k.strip() for k in required.split(",") if k.strip()]
-            if not isinstance(payload, dict):
-                return False, "api response was not a JSON object"
-            missing = [k for k in required if k not in payload]
-            return (not missing), (
-                f"schema ok ({len(required)} keys)" if not missing
-                else f"missing keys: {', '.join(missing)}")
-
-        if kind in ("header", "api_header"):
-            if self._last_api is None:
-                return False, "no api step ran before this assertion"
-            headers = {k.lower(): str(v) for k, v in
-                       (self._last_api.get("headers") or {}).items()}
-            key = (step.get("header") or step.get("name") or "").lower()
-            got = headers.get(key)
-            expected = str(step.get("value", step.get("expected", "")))
-            if not expected:
-                ok = got is not None
-                return ok, (f"header {key} present" if ok
-                            else f"header {key} missing")
-            ok = got is not None and expected.lower() in got.lower()
-            return ok, (f"header {key}: {got!r}")
-
-        if kind == "made_request":
-            made = await self._call_optional("made_request", value)
-            return bool(made), (f"request made: {value}" if made
-                                else f"no matching request: {value}")
-        if kind in ("no_request", "request_absent"):
-            made = await self._call_optional("made_request", value)
-            return (not made), (f"request absent: {value}" if not made
-                                else f"unexpected request: {value}")
-
-        if kind == "visible":
-            if element is not None:
-                ok = element.get("visible") is not False
-                return ok, (f"visible: {target}" if ok else f"not visible: {target}")
-            # Non-interactive content (headings, panels, text) is not in the
-            # element catalog; fall back to rendered page text (innerText
-            # respects display:none, so hidden content stays hidden).
-            text_hit = (target or "").lower() in (state.get("text") or "").lower()
-            return text_hit, (f"visible text: {target}" if text_hit
-                              else f"element/text missing: {target}")
-        if kind in ("not_visible", "hidden"):
-            if element is not None:
-                ok = element.get("visible") is False
-                return ok, (f"not visible: {target}" if ok else f"still visible: {target}")
-            text_hit = (target or "").lower() in (state.get("text") or "").lower()
-            return (not text_hit), (f"not visible: {target}" if not text_hit
-                                    else f"text still present: {target}")
-        if kind in ("text", "text_contains"):
-            blob = (element or {}).get("name") if element else state.get("text", "")
-            blob = blob or (state.get("text", "") if not element else "")
-            ok = value.lower() in (blob or "").lower()
-            return ok, (f"text contains {value!r}" if ok else f"text missing {value!r}")
-        if kind == "text_equals":
-            blob = (element or {}).get("name") if element else state.get("text", "")
-            ok = (blob or "").strip() == value.strip()
-            return ok, (f"text == {value!r}" if ok else f"text != {value!r}")
-        if kind == "value":
-            ok = value.lower() in ((element or {}).get("value") or "").lower()
-            return ok, (f"value contains {value!r}" if ok else f"value missing {value!r}")
-        if kind == "url":
-            ok = value in state.get("url", "")
-            return ok, (f"url contains {value!r}" if ok else f"url does not contain {value!r}")
-        if kind == "title":
-            ok = value.lower() in (state.get("title", "") or "").lower()
-            return ok, (f"title contains {value!r}" if ok else f"title missing {value!r}")
-        if kind == "count":
-            if target:
-                n = sum(1 for e in self.catalog.values()
-                        if target.lower() in (e.get("name") or "").lower())
-            else:
-                n = len(self.catalog)
-            ok = n == int(value or 0)
-            return ok, (f"count == {n}" if ok else f"count {n} != {value}")
-        if kind == "checked":
-            ok = bool(element) and element.get("checked") is True
-            return ok, ("checked" if ok else f"not checked: {target}")
-        if kind in ("unchecked", "not_checked"):
-            ok = element is None or element.get("checked") is not True
-            return ok, ("unchecked" if ok else f"checked: {target}")
-        if kind == "enabled":
-            ok = bool(element) and not element.get("disabled")
-            return ok, ("enabled" if ok else f"disabled/missing: {target}")
-        if kind == "disabled":
-            ok = bool(element) and element.get("disabled")
-            return ok, ("disabled" if ok else f"enabled/missing: {target}")
-        if kind in ("console_clean", "no_console_errors"):
-            errors = self._peek_telemetry().get("console_errors", [])
-            return (not errors), ("console clean" if not errors else f"{len(errors)} console error(s)")
-        if kind in ("no_failed_requests", "network_clean"):
-            failed_reqs = self._peek_telemetry().get("failed_requests", [])
-            return (not failed_reqs), ("no failed requests" if not failed_reqs
-                                       else f"{len(failed_reqs)} failed request(s)")
-        raise SessionRefused("unknown_assertion", f"unsupported assertion kind: {kind}")
-
-    async def _assert_selector(self, kind: str, selector: str, value: str) -> tuple[bool, str]:
-        """Assertion kinds answered by direct CSS/XPath probes."""
-        label = selector[:60]
-        if kind == "visible":
-            ok = await self._call_optional("is_visible_selector", selector)
-            return bool(ok), (f"visible: {label}" if ok else f"not visible: {label}")
-        if kind in ("not_visible", "hidden"):
-            ok = await self._call_optional("is_visible_selector", selector)
-            return (not ok), (f"not visible: {label}" if not ok else f"still visible: {label}")
-        if kind in ("text", "text_contains"):
-            blob = await self._call_optional("text_of_selector", selector) or ""
-            ok = value.lower() in blob.lower()
-            return ok, (f"text contains {value!r}" if ok else f"text missing {value!r}")
-        if kind == "text_equals":
-            blob = (await self._call_optional("text_of_selector", selector) or "").strip()
-            ok = blob == value.strip()
-            return ok, (f"text == {value!r}" if ok else f"text != {value!r}")
-        if kind == "value":
-            current = await self._call_optional("value_of_selector", selector) or ""
-            ok = value.lower() in current.lower()
-            return ok, (f"value contains {value!r}" if ok else f"value missing {value!r}")
-        if kind == "count":
-            n = await self._call_optional("count_selector", selector)
-            ok = int(n) == int(value or 0)
-            return ok, (f"count == {n}" if ok else f"count {n} != {value}")
-        if kind == "checked":
-            ok = await self._call_optional("is_checked_selector", selector)
-            return bool(ok), ("checked" if ok else f"not checked: {label}")
-        if kind in ("unchecked", "not_checked"):
-            ok = await self._call_optional("is_checked_selector", selector)
-            return (not ok), ("unchecked" if not ok else f"checked: {label}")
-        if kind == "enabled":
-            ok = await self._call_optional("is_enabled_selector", selector)
-            return bool(ok), ("enabled" if ok else f"disabled/missing: {label}")
-        if kind == "disabled":
-            ok = await self._call_optional("is_enabled_selector", selector)
-            return (not ok), ("disabled" if not ok else f"enabled/missing: {label}")
-        raise SessionRefused("unknown_assertion", f"unsupported assertion kind: {kind}")
 
     async def capture_screenshot(self, full_page: bool = False) -> Optional[str]:
         """Current frame as base64 PNG (live-view / takeover source)."""
