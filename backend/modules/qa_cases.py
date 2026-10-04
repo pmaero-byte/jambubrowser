@@ -417,6 +417,137 @@ def _record_procedural(case: dict, success: bool,
     except Exception:
         log.debug("procedural record skipped", exc_info=True)
 
+
+#: Playwright context options a viewport variant may set. Same vocabulary as
+#: ``BrowserAgentService.run_matrix`` — a variant is a browser context, not an
+#: arbitrary bag of settings, so the keys are validated against this list
+#: instead of being passed through.
+MATRIX_OPTION_KEYS = ("viewport", "locale", "user_agent",
+                      "device_scale_factor", "timezone_id",
+                      "color_scheme", "is_mobile", "has_touch")
+
+
+def _resolve_rows(case: dict, dataset_rows: Optional[list[dict]]) -> Optional[list[dict]]:
+    """Return the dataset rows for this run, or None for a plain single run.
+
+    Three ways in, in order: an explicit ``dataset_rows`` wins, otherwise the
+    case's own dataset is loaded, otherwise there is no matrix. The row-count
+    cap is enforced here rather than at the call site so a caller cannot skip
+    it by passing rows directly.
+    """
+    rows = dataset_rows
+    if rows is None and case.get("dataset_id"):
+        from backend.modules.qa_datasets import get_dataset
+
+        dataset = get_dataset(case["dataset_id"])
+        if dataset is None:
+            raise ValueError(f"case dataset {case['dataset_id']} not found")
+        rows = dataset["rows"]
+    if rows is None:
+        return None
+    if not isinstance(rows, list) or not rows:
+        raise ValueError("dataset_rows must be a non-empty list")
+    from backend.modules.qa_datasets import MAX_DATASET_ROWS
+
+    if len(rows) > MAX_DATASET_ROWS:
+        raise ValueError(f"max {MAX_DATASET_ROWS} rows per run")
+    return rows
+
+
+def _build_variants(viewport_matrix, *, row_count: int) -> list[dict]:
+    """Normalise a viewport matrix into named browser-context variants.
+
+    Each variant is ``{"name": ..., "context_options": {...}}``. Entries are
+    validated rather than trusted: a non-dict entry or a non-list matrix is a
+    caller bug, and failing loudly here beats a KeyError twenty lines later
+    inside Playwright.
+
+    The size guard is the important part. Cells run concurrently, so a large
+    cross product does not just take longer — it opens browser contexts at once
+    and can exhaust the session cap. The limit is expressed in cells (parallel
+    sessions × 16) rather than in rows or variants, because cells is what
+    actually consumes a session.
+    """
+    if not viewport_matrix:
+        return []
+    if not isinstance(viewport_matrix, list):
+        raise ValueError("viewport_matrix must be a list")
+    variants: list[dict] = []
+    for v in viewport_matrix:
+        if not isinstance(v, dict):
+            raise ValueError("viewport_matrix entries must be objects")
+        name = str(v.get("name") or f"variant-{len(variants) + 1}")
+        context_options = {
+            k: v[k] for k in MATRIX_OPTION_KEYS if v.get(k) is not None
+        }
+        variants.append({"name": name, "context_options": context_options})
+
+    from backend.modules.browser_agent import BrowserAgentService
+
+    max_parallel = max(1, BrowserAgentService().max_sessions)
+    cells = len(variants) * max(1, row_count)
+    if cells > max_parallel * 16:
+        raise ValueError(
+            f"matrix too large: {len(variants)} variants × "
+            f"{max(1, row_count)} rows exceeds {max_parallel * 16} cells")
+    return variants
+
+
+def _summarise_matrix(case_id: int, case_name: str, actor: str,
+                      outcomes: list[dict], variant_names: list[str],
+                      *, row_count: int, variant_count: int) -> dict:
+    """Fold per-cell verdicts into one summary with per-variant buckets.
+
+    Pure: it reads verdicts and counts, and calls ``_update_case_health`` for
+    the fresh health block. A variant is ``ok`` only when every one of its cells
+    passed, and a flaky cell still counts as failed for the gate while being
+    counted separately — flaky is "green but not trustworthy", and collapsing
+    the two is how a gate stops meaning anything.
+    """
+    by_variant: dict[str, dict] = {}
+    for vname, cell in zip(variant_names, outcomes):
+        bucket = by_variant.setdefault(vname, {
+            "variant": vname, "cells": 0, "passed": 0,
+            "failed": 0, "flaky": 0, "ok": True})
+        bucket["cells"] += 1
+        bucket["passed"] += 1 if cell["ok"] else 0
+        bucket["failed"] += 0 if cell["ok"] else 1
+        bucket["flaky"] += 1 if cell.get("flaky") else 0
+        bucket["ok"] = bucket["ok"] and bool(cell["ok"])
+    ok_all = all(o["ok"] for o in outcomes)
+    return {
+        "case_id": case_id, "matrix": True,
+        "cells": len(outcomes),
+        "rows": row_count, "variants": variant_count,
+        "passed_cells": sum(1 for o in outcomes if o["ok"]),
+        "failed_cells": sum(1 for o in outcomes if not o["ok"]),
+        "flaky_cells": sum(1 for o in outcomes if o.get("flaky")),
+        "by_variant": list(by_variant.values()),
+        "ok": ok_all, "status": "passed" if ok_all else "failed",
+        "runs": outcomes,
+        "run_ids": [o["run_id"] for o in outcomes],
+        "actor": actor,
+        "health": _update_case_health(case_id),
+    }
+
+
+def _summarise_rows(case_id: int, actor: str, outcomes: list[dict]) -> dict:
+    """Fold per-row verdicts into one summary. Pure counting, like above."""
+    ok_all = all(o["ok"] for o in outcomes)
+    return {
+        "case_id": case_id, "matrix": True,
+        "rows": len(outcomes),
+        "passed_rows": sum(1 for o in outcomes if o["ok"]),
+        "failed_rows": sum(1 for o in outcomes if not o["ok"]),
+        "flaky_rows": sum(1 for o in outcomes if o.get("flaky")),
+        "ok": ok_all, "status": "passed" if ok_all else "failed",
+        "runs": outcomes,
+        "run_ids": [o["run_id"] for o in outcomes],
+        "actor": actor,
+        "health": _update_case_health(case_id),
+    }
+
+
 async def run_case(case_id: int, *, local: bool = False,
                    approve: bool = False, stop_on_failure: bool = False,
                    trace: bool = False, har: bool = False,
@@ -450,26 +581,9 @@ async def run_case(case_id: int, *, local: bool = False,
             f"({case.get('quarantine_reason') or 'flaky'}); "
             "pass force=true to run it anyway")
 
-    rows = dataset_rows
-    if rows is None and case.get("dataset_id"):
-        dataset = get_dataset(case["dataset_id"])
-        if dataset is None:
-            raise ValueError(
-                f"case dataset {case['dataset_id']} not found")
-        rows = dataset["rows"]
-    if rows is not None:
-        if not isinstance(rows, list) or not rows:
-            raise ValueError("dataset_rows must be a non-empty list")
-        from backend.modules.qa_datasets import MAX_DATASET_ROWS
-
-        if len(rows) > MAX_DATASET_ROWS:
-            raise ValueError(f"max {MAX_DATASET_ROWS} rows per run")
-
+    rows = _resolve_rows(case, dataset_rows)
+    variants = _build_variants(viewport_matrix, row_count=len(rows or []))
     attempts_allowed = 2 if case.get("auto_retry", True) else 1
-
-    _MATRIX_OPTION_KEYS = ("viewport", "locale", "user_agent",
-                           "device_scale_factor", "timezone_id",
-                           "color_scheme", "is_mobile", "has_touch")
 
     async def _one(bound_steps: list[dict], unbound: list[str],
                    index: Optional[int], total_rows: int,
@@ -516,28 +630,11 @@ async def run_case(case_id: int, *, local: bool = False,
 
     from backend.modules.qa_datasets import bind_placeholders as _bind
 
-    # Viewport variants: one entry per browser context (name + Playwright
-    # context options), same vocabulary as BrowserAgentService.run_matrix.
-    variants: list[dict] = []
-    if viewport_matrix:
-        if not isinstance(viewport_matrix, list):
-            raise ValueError("viewport_matrix must be a list")
-        for v in viewport_matrix:
-            if not isinstance(v, dict):
-                raise ValueError("viewport_matrix entries must be objects")
-            name = str(v.get("name") or f"variant-{len(variants) + 1}")
-            context_options = {
-                k: v[k] for k in _MATRIX_OPTION_KEYS if v.get(k) is not None
-            }
-            variants.append({"name": name, "context_options": context_options})
+    max_parallel = 1
+    if variants:
         from backend.modules.browser_agent import BrowserAgentService
 
         max_parallel = max(1, BrowserAgentService().max_sessions)
-        if len(variants) * max(1, len(rows or [])) > max_parallel * 16:
-            raise ValueError(
-                f"matrix too large: {len(variants)} variants × "
-                f"{len(rows or [])} rows exceeds {max_parallel * 16} cells")
-
     host = _host(case["url"])
     if variants:
         # Cross product: dataset rows × viewport variants, cells run
@@ -566,58 +663,24 @@ async def run_case(case_id: int, *, local: bool = False,
             return_exceptions=False,
         )
         outcomes = list(outcomes)
-        by_variant: dict[str, dict] = {}
         variant_names = [v["name"] for v in variants for _ in row_list]
-        for vname, cell in zip(variant_names, outcomes):
-            bucket = by_variant.setdefault(vname, {
-                "variant": vname, "cells": 0, "passed": 0,
-                "failed": 0, "flaky": 0, "ok": True})
-            bucket["cells"] += 1
-            bucket["passed"] += 1 if cell["ok"] else 0
-            bucket["failed"] += 0 if cell["ok"] else 1
-            bucket["flaky"] += 1 if cell.get("flaky") else 0
-            bucket["ok"] = bucket["ok"] and bool(cell["ok"])
-        ok_all = all(o["ok"] for o in outcomes)
-        summary = {
-            "case_id": case_id, "matrix": True,
-            "cells": len(outcomes),
-            "rows": len(row_list), "variants": len(variants),
-            "passed_cells": sum(1 for o in outcomes if o["ok"]),
-            "failed_cells": sum(1 for o in outcomes if not o["ok"]),
-            "flaky_cells": sum(1 for o in outcomes if o.get("flaky")),
-            "by_variant": list(by_variant.values()),
-            "ok": ok_all, "status": "passed" if ok_all else "failed",
-            "runs": outcomes,
-            "run_ids": [o["run_id"] for o in outcomes],
-            "actor": actor,
-            "health": _update_case_health(case_id),
-        }
+        summary = _summarise_matrix(
+            case_id, case["name"], actor, outcomes, variant_names,
+            row_count=len(row_list), variant_count=len(variants),
+        )
         if junit:
             summary["junit"] = runs_to_junit(
                 case["name"],
                 [get_run(o["run_id"]) for o in outcomes])
         return summary
 
-    host = _host(case["url"])
     outcomes: list[dict] = []
     for idx, row in enumerate(rows):
         if not isinstance(row, dict):
             raise ValueError(f"dataset row {idx} must be an object")
         bound, unbound = _bind(case["steps"], row, host)
         outcomes.append(await _one(bound, unbound, idx, len(rows)))
-    ok_all = all(o["ok"] for o in outcomes)
-    summary = {
-        "case_id": case_id, "matrix": True,
-        "rows": len(outcomes),
-        "passed_rows": sum(1 for o in outcomes if o["ok"]),
-        "failed_rows": sum(1 for o in outcomes if not o["ok"]),
-        "flaky_rows": sum(1 for o in outcomes if o.get("flaky")),
-        "ok": ok_all, "status": "passed" if ok_all else "failed",
-        "runs": outcomes,
-        "run_ids": [o["run_id"] for o in outcomes],
-        "actor": actor,
-        "health": _update_case_health(case_id),
-    }
+    summary = _summarise_rows(case_id, actor, outcomes)
     if junit:
         summary["junit"] = runs_to_junit(
             case["name"],

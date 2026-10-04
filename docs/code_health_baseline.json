@@ -2440,11 +2440,11 @@
       "debug_prints": 0,
       "documented_defs": 6,
       "duplicate_definitions": [],
-      "functions": 34,
-      "lines": 942,
-      "long_functions": 1,
-      "longest_function": "run_case",
-      "longest_function_loc": 206,
+      "functions": 38,
+      "lines": 1005,
+      "long_functions": 0,
+      "longest_function": "_execute_bound",
+      "longest_function_loc": 150,
       "path": "backend/modules/qa_cases.py",
       "public_defs": 17,
       "silent_excepts": 0,
@@ -3466,9 +3466,9 @@
     "duplicate_definitions": 0,
     "files": 247,
     "long_files": 0,
-    "long_functions": 11,
+    "long_functions": 10,
     "public_defs": 1945,
     "silent_excepts": 0,
-    "total_lines": 63686
+    "total_lines": 63749
   }
 }

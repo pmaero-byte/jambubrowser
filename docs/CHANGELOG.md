@@ -252,6 +252,24 @@ ranking function is pure, so its ordering is pinned rather than inferred — and
 `top_n` truncating *after* ranking is the kind of thing that silently
 inverts when someone reorders two lines.
 
+### Changed — `run_case` splits its inputs from its arithmetic
+
+`run_case` was 206 lines because three separable concerns were inline:
+resolving and validating the run's inputs, the cross-product execution, and the
+per-variant bucketing that turns N cell verdicts into one summary. Four
+module-level functions now own them — `_resolve_rows`, `_build_variants`,
+`_summarise_matrix`, `_summarise_rows` — and `run_case` keeps the execution and
+the retry policy, which genuinely need the case in scope.
+
+The bucketing was thirty lines of `bucket["passed"] += 1 if cell["ok"] else 0`:
+arithmetic that is easy to get subtly wrong and trivial to test once it is a
+pure function. `tests/test_qa_case_matrix.py` (28 tests) pins the decisions that
+decide whether a gate means anything — a flaky cell is counted separately
+*and* fails its variant, a variant is `ok` only if every cell passed, the
+row-count cap cannot be bypassed by passing rows directly, and the matrix size
+guard is expressed in **cells** because cells are what consume a browser
+session.
+
 ### Changed — modularity and measurable gates
 
 - **Step actions split by family** — `browser_agent._run_step` was the repo's
@@ -272,10 +290,10 @@ inverts when someone reorders two lines.
   `init_db` is idempotent, and asserts every helper is actually called — so a
   helper that is defined but not invoked, which would silently drop a table
   from a fresh install, fails the suite.
-- Metrics: `silent_excepts` 71 → 0, `long_functions` 17 → 11, `long_files` 4 → 0,
+- Metrics: `silent_excepts` 71 → 0, `long_functions` 17 → 10, `long_files` 4 → 0,
   `docstring_ratio` 0.577 → 0.607, `mcp_server.py` 1,894 → 86 lines,
   `browser_agent.py` 3,402 → 1,370 lines, `cli/jambu.py` 2,108 → 84 lines,
-  `decentralized/simulation.py` 1,542 → 5 modules. Suite: 2049 passed, 9 skipped.
+  `decentralized/simulation.py` 1,542 → 5 modules. Suite: 2077 passed, 9 skipped.
 
 ## [3.4.0] - 2026-10-03
 
