@@ -119,6 +119,26 @@ persisted harness-config store the AEGIS evolution pipeline writes —
 evolution round, parent lineage, tags, success rate. Read-only on purpose:
 mutating what the agent runs is a product decision, not a default.
 
+### Added — deterministic browser testing: clock, network shaping, JS coverage
+
+Flows can now state the conditions they run under, which is what turns a
+flaky agent test into a reproducible one:
+
+- `clock` (`page.clock`) — freeze or advance the page clock: a flow can
+  test midnight-only UI or expiry paths without waiting.
+- `throttle` (CDP `Network.emulateNetworkConditions`) — emulate offline,
+  3G, or latency profiles so timeout/offline paths are testable.
+- `coverage` (Chromium JS coverage) — per-flow used/total JS bytes with the
+  worst offender named; surfaced in the report, the MCP digest, and
+  `jambu test --coverage`.
+
+Available on `POST /browser/sessions/run`, `POST /browser/sessions/{id}/flow`,
+MCP `browser_test_flow`, and CLI `jambu test --clock/--throttle/--coverage`.
+Every run reports a `determinism` block stating what was applied, and any
+capability the engine lacks is recorded as `skipped` rather than silently
+ignored — a flow still runs. `tests/test_browser_determinism.py` (10 tests)
+covers the wiring, the coverage summariser, and the degraded paths.
+
 ### Added — iOS app: buildable, installable, and live against the engine
 
 The iOS client existed as un-buildable sources (no project, and the

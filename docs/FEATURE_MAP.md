@@ -168,6 +168,12 @@ the page being audited.
   Playwright.
 
 ### What still hurts (improvement targets)
+0. ~~No deterministic clock / network shaping / JS coverage~~ — shipped
+   2026-10-04 (`clock`, `throttle`, `coverage` flow options; see
+   `tests/test_browser_determinism.py`). Still missing: multi-tab steps
+   (`expect_page`/`new_tab`), response-body `patch`/contract assertions,
+   auth recipes (basic/digest/OAuth-PKCE + vault-backed personas), and
+   one-bundle artifact manifests for CI.
 1. **Desktop browser rendering** — the Tauri pane streams live frames over a
    CDP `Page.startScreencast` channel (~30–60 FPS) with the polled screenshot
    as a fallback. **Dual-mode tabs** now also allow a per-tab native system

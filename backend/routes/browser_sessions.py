@@ -86,6 +86,11 @@ class RunFlowRequest(BaseModel):
     freeze_animations: bool = True
     settle_ms: int = 0
     forbid_evaluate: bool = False
+    # Determinism knobs (Chromium): frozen/advanced clock, CDP network
+    # shaping, JS coverage summary.
+    clock: Optional[dict] = None
+    throttle: Optional[dict] = None
+    coverage: bool = False
 
 
 class RecordRequest(BaseModel):
@@ -113,6 +118,9 @@ class TestFlowRequest(BaseModel):
     settle_ms: int = 0
     detect_dev_server: bool = False
     forbid_evaluate: bool = False
+    clock: Optional[dict] = None
+    throttle: Optional[dict] = None
+    coverage: bool = False
 
 
 class PlanRequest(BaseModel):
@@ -422,6 +430,9 @@ async def test_flow(req: TestFlowRequest):
             artifacts_dir=req.artifacts_dir,
             settle_ms=req.settle_ms,
             detect_dev_server=req.detect_dev_server,
+            clock=req.clock,
+            throttle=req.throttle,
+            coverage=req.coverage,
             forbid_evaluate=req.forbid_evaluate,
         )
     except SessionRefused as refusal:
@@ -439,6 +450,7 @@ async def run_flow(session_id: str, req: RunFlowRequest):
             network=req.network, resolve_sources=req.resolve_sources,
             freeze_animations=req.freeze_animations, settle_ms=req.settle_ms,
             forbid_evaluate=req.forbid_evaluate,
+            clock=req.clock, throttle=req.throttle, coverage=req.coverage,
         )
     except SessionRefused as refusal:
         raise _refusal_to_http(refusal)

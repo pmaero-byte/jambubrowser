@@ -1386,6 +1386,21 @@ def _render_flow(result: dict) -> str:
     ]
     if tokens is not None:
         lines[1] += f"\n~{tokens} tokens" + (" · uses JS evaluate" if result.get("uses_evaluate") else "")
+    det = result.get("determinism") or {}
+    if det:
+        bits = []
+        if det.get("clock"):
+            bits.append(f"clock={_json.dumps(det['clock'])}")
+        if det.get("throttle"):
+            bits.append(f"throttle={_json.dumps(det['throttle'])}")
+        if bits:
+            lines[2] = lines[2] + "\ndeterminism: " + " · ".join(bits)
+    cov = result.get("coverage") or {}
+    if cov.get("supported") and cov.get("script_count"):
+        lines.append(
+            f"coverage: {cov.get('pct', 0)}% of {cov.get('total_bytes', 0)} JS bytes "
+            f"across {cov['script_count']} script(s)"
+        )
     for step in result.get("steps") or []:
         mark = "ok " if step.get("status") == "passed" else "FAIL"
         bit = f"{mark} #{step.get('i')} {step.get('action')}"
@@ -1440,7 +1455,9 @@ async def browser_test_flow(url: str, steps: str = "[]", allow_domains: str = ""
                             har: bool = False, video: bool = False,
                             resolve_sources: bool = False,
                             storage_state: str = "",
-                            forbid_evaluate: bool = False) -> str:
+                            forbid_evaluate: bool = False,
+                            clock: str = "", throttle: str = "",
+                            coverage: bool = False) -> str:
     """
     Test a web app end-to-end in ONE call: opens a browser session, runs a
     declarative step list (navigate / click / type / press / wait / assert_*),
@@ -1476,6 +1493,11 @@ async def browser_test_flow(url: str, steps: str = "[]", allow_domains: str = ""
         resolve_sources: Map console errors through source maps to original files
         storage_state: Optional JSON storage state ({cookies,origins}) to seed auth
         forbid_evaluate: Refuse JS-dependent evaluate steps (evaluate-free coverage)
+        clock: Optional JSON to make time deterministic, e.g.
+            {"time":"2026-01-01T09:00:00Z","rate":0} freezes the page clock
+        throttle: Optional JSON network shaping (Chromium/CDP), e.g.
+            {"offline":true} or {"download_kbps":400,"latency_ms":300}
+        coverage: Capture JS coverage and summarise used bytes per script
     """
     import json as _json
 
@@ -1498,6 +1520,8 @@ async def browser_test_flow(url: str, steps: str = "[]", allow_domains: str = ""
         "network": _load(network, None), "trace": trace, "har": har, "video": video,
         "resolve_sources": resolve_sources, "storage_state": _load(storage_state, None),
         "forbid_evaluate": forbid_evaluate,
+        "clock": _load(clock, None), "throttle": _load(throttle, None),
+        "coverage": coverage,
     }, timeout=300.0)
     if "error" in result:
         return f"Test flow failed: {result['error']}"

@@ -340,7 +340,7 @@ Args:
 **Signature**
 
 ```python
-browser_test_flow(url: str, steps: str = '[]', allow_domains: str = '', local: bool = False, approve: bool = False, stop_on_failure: bool = False, network: str = '', trace: bool = False, har: bool = False, video: bool = False, resolve_sources: bool = False, storage_state: str = '', forbid_evaluate: bool = False)
+browser_test_flow(url: str, steps: str = '[]', allow_domains: str = '', local: bool = False, approve: bool = False, stop_on_failure: bool = False, network: str = '', trace: bool = False, har: bool = False, video: bool = False, resolve_sources: bool = False, storage_state: str = '', forbid_evaluate: bool = False, clock: str = '', throttle: str = '', coverage: bool = False)
 ```
 
 **Description**
@@ -379,6 +379,11 @@ Args:
     resolve_sources: Map console errors through source maps to original files
     storage_state: Optional JSON storage state ({cookies,origins}) to seed auth
     forbid_evaluate: Refuse JS-dependent evaluate steps (evaluate-free coverage)
+    clock: Optional JSON to make time deterministic, e.g.
+        {"time":"2026-01-01T09:00:00Z","rate":0} freezes the page clock
+    throttle: Optional JSON network shaping (Chromium/CDP), e.g.
+        {"offline":true} or {"download_kbps":400,"latency_ms":300}
+    coverage: Capture JS coverage and summarise used bytes per script
 
 ### `browser_test_matrix`
 

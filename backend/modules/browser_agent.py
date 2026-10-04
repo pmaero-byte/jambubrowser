@@ -573,6 +573,592 @@ class PlaywrightPage:
     async def init_perf_observers(self) -> None:
         await self._page.add_init_script(PERF_OBSERVER_JS)
 
+    # -- determinism: clock + network shaping + coverage ---------------------
+
+    async def install_clock(self, clock: dict) -> dict:
+        """Freeze/advance the page clock so time-dependent flows are stable.
+
+        ``clock`` accepts ``{"time": "2026-01-01T09:00:00Z"}`` and/or
+        ``{"rate": 0}`` (frozen) / ``{"rate": 1}`` (realtime). Requires
+        Playwright's ``page.clock`` (Chromium). Returns what was installed so
+        the flow report can state the determinism it ran under.
+        """
+        if not hasattr(self._page, "clock"):
+            raise SessionRefused(
+                "unsupported_action",
+                "page adapter does not support clock installation (needs Chromium)",
+            )
+        spec = dict(clock or {})
+        installed: dict = {}
+        if spec.get("time"):
+            await self._page.clock.install(time=spec["time"])
+            installed["time"] = spec["time"]
+        if "rate" in spec:
+            await self._page.clock.pause() if spec["rate"] == 0 else self._page.clock.resume()
+            installed["rate"] = spec["rate"]
+        return installed
+
+    async def set_throttle(self, throttle: dict) -> dict:
+        """Emulate a network profile via CDP (offline/3G/4G/latency).
+
+        ``{"offline": true}`` or ``{"download_kbps": 400, "upload_kbps": 200,
+        "latency_ms": 300}``. Uses a raw CDP session, so it is Chromium-only;
+        other engines simply get an ``unsupported_action`` and the flow keeps
+        running (the report records that shaping was skipped).
+        """
+        spec = dict(throttle or {})
+        session = await self._context.new_cdp_session(self._page)
+        try:
+            if spec.get("offline"):
+                await session.send("Network.enable")
+                await session.send("Network.emulateNetworkConditions", {
+                    "offline": True, "latency": 0,
+                    "downloadThroughput": -1, "uploadThroughput": -1,
+                })
+            elif spec:
+                await session.send("Network.enable")
+                await session.send("Network.emulateNetworkConditions", {
+                    "offline": False,
+                    "latency": int(spec.get("latency_ms", 0)),
+                    "downloadThroughput": int(spec.get("download_kbps", -1)) * 1024 // 8,
+                    "uploadThroughput": int(spec.get("upload_kbps", -1)) * 1024 // 8,
+                })
+        finally:
+            try:
+                await session.detach()
+            except Exception:  # noqa: BLE001 - detaching must never fail a flow
+                pass
+        return spec
+
+    async def start_coverage(self) -> dict:
+        """Begin JS coverage capture (Chromium). No-op elsewhere."""
+        if not hasattr(self._page, "coverage"):
+            raise SessionRefused(
+                "unsupported_action",
+                "page adapter does not support coverage (needs Chromium)",
+            )
+        await self._page.coverage.start_javascript_coverage()
+        return {"started": True}
+
+    async def stop_coverage(self) -> dict:
+        """Stop coverage and summarise uncovered bytes per script."""
+        if not hasattr(self._page, "coverage"):
+            raise SessionRefused(
+                "unsupported_action", "page adapter does not support coverage"
+            )
+        try:
+            entries = await self._page.coverage.stop_javascript_coverage()
+        except Exception:  # noqa: BLE001 - never fail a flow on coverage
+            return {"supported": False}
+        return summarise_coverage(entries)
+
+
+    async def goto(self, url: str) -> None: ...
+    async def snapshot(self) -> dict: ...
+    async def click(self, ref: str) -> None: ...
+    async def type_text(self, ref: str, text: str) -> None: ...
+    async def current_url(self) -> str: ...
+
+
+class Telemetry:
+    """Bounded per-session buffer of console/network/page signals.
+
+    Collected between steps and drained into every flow report, so an agent
+    never has to spend a separate tool call asking "were there console
+    errors?". Bounded on all axes to keep payloads small.
+    """
+
+    def __init__(self, cap: int = MAX_TELEMETRY):
+        self.cap = cap
+        self.console: list[dict] = []
+        self.page_errors: list[str] = []
+        self.failed_requests: list[dict] = []
+        self.bad_responses: list[dict] = []
+        self.dialogs: list[dict] = []
+
+    @staticmethod
+    def _trim(seq: list, cap: int) -> None:
+        if len(seq) > cap:
+            del seq[: len(seq) - cap]
+
+    def add_console(self, level: str, text: str, location: Optional[dict] = None) -> None:
+        self.console.append({
+            "level": level, "text": (text or "")[:300],
+            "location": location or {},
+        })
+        self._trim(self.console, self.cap)
+
+    def add_page_error(self, text: str) -> None:
+        self.page_errors.append((text or "")[:300])
+        self._trim(self.page_errors, self.cap)
+
+    def add_failed_request(self, method: str, url: str, failure: str) -> None:
+        self.failed_requests.append({
+            "method": method, "url": (url or "")[:300], "failure": (failure or "")[:200],
+        })
+        self._trim(self.failed_requests, self.cap)
+
+    def add_response(self, method: str, url: str, status: int) -> None:
+        self.bad_responses.append({
+            "method": method, "url": (url or "")[:300], "status": status,
+        })
+        self._trim(self.bad_responses, self.cap)
+
+    def add_dialog(self, kind: str, message: str, *, accepted: bool,
+                   text: str = "") -> None:
+        """Record a native dialog (alert/confirm/prompt/beforeunload).
+
+        Dialogs are *interaction*, not just noise: an unhandled ``confirm()``
+        silently swallows the click that raised it, so flows need to see them.
+        """
+        self.dialogs.append({
+            "type": (kind or "dialog"), "message": (message or "")[:200],
+            "accepted": bool(accepted), "text": (text or "")[:100],
+        })
+        self._trim(self.dialogs, self.cap)
+
+    def errors(self) -> list[str]:
+        """Console errors + uncaught page errors as plain strings."""
+        out = [c["text"] for c in self.console if c.get("level") == "error"]
+        return out + list(self.page_errors)
+
+    def snapshot(self) -> dict:
+        return {
+            "console_errors": self.errors(),
+            "console_errors_detail": (
+                [{"text": c["text"], "location": c.get("location") or {}}
+                 for c in self.console if c.get("level") == "error"]
+                + [{"text": e, "location": {}} for e in self.page_errors]
+            ),
+            "console_warnings": [c["text"] for c in self.console if c.get("level") == "warning"],
+            "failed_requests": list(self.failed_requests),
+            "bad_responses": list(self.bad_responses),
+            "dialogs": list(self.dialogs),
+        }
+
+    def drain(self) -> dict:
+        data = self.snapshot()
+        self.console.clear()
+        self.page_errors.clear()
+        self.failed_requests.clear()
+        self.bad_responses.clear()
+        self.dialogs.clear()
+        return data
+
+
+class PlaywrightPage:
+    """Adapter over a Playwright page (created by ``BrowserSession``).
+
+    Attaches telemetry listeners at construction so console errors, uncaught
+    exceptions, failed requests and >=400 responses are captured continuously
+    and can be drained per flow rather than fetched with extra calls.
+    """
+
+    def __init__(self, page, network: Optional[dict] = None,
+                 network_policy: Optional[NetworkPolicy] = None):
+        self._page = page
+        self.telemetry = Telemetry()
+        self._network = network or {}
+        self._network_rules = compile_network(network)
+        self.network_policy = network_policy
+        self._route_installed = False
+        self._route_target = getattr(page, "context", None) or page
+        self.requests: list[dict] = []
+        try:
+            page.on("console", lambda msg: self.telemetry.add_console(
+                msg.type, msg.text,
+                getattr(msg, "location", None) if isinstance(
+                    getattr(msg, "location", None), dict) else None,
+            ))
+            page.on("pageerror", lambda exc: self.telemetry.add_page_error(str(exc)))
+            page.on("requestfailed", lambda req: self.telemetry.add_failed_request(
+                req.method, req.url,
+                (req.failure or "") if isinstance(req.failure, str) else str(req.failure or ""),
+            ))
+            page.on("response", lambda resp: self.telemetry.add_response(
+                resp.request.method, resp.url, resp.status,
+            ) if resp.status >= 400 else None)
+            page.on("request", lambda req: self._track_request(req.method, req.url))
+        except Exception:  # adapters/fakes without event support
+            pass
+        # Ref → frame index recorded by the last snapshot, so acting on an
+        # element inside an iframe dispatches inside that frame.
+        self._ref_frames: dict[str, int] = {}
+        # One-shot dialog policy armed by a step. Default is *dismiss*, which
+        # matches Playwright's own behaviour: a stray confirm() on a destructive
+        # action must never be auto-accepted on the agent's behalf.
+        self._dialog_policy: Optional[dict] = None
+        try:
+            page.on("dialog", self._on_dialog)
+        except Exception:  # adapters/fakes without dialog events
+            pass
+
+    async def _on_dialog(self, dialog) -> None:
+        """Record every native dialog and apply the armed policy (else dismiss).
+
+        Recording matters as much as answering: without this, an unhandled
+        ``confirm()`` looks to the agent like a click that did nothing.
+        """
+        policy = self._dialog_policy or {}
+        self._dialog_policy = None
+        accept = bool(policy.get("accept"))
+        kind = str(getattr(dialog, "type", "dialog") or "dialog")
+        message = str(getattr(dialog, "message", "") or "")
+        text = str(policy.get("text") or "")
+        try:
+            if accept and kind == "prompt" and text:
+                await dialog.accept(text)
+            elif accept:
+                await dialog.accept()
+            else:
+                await dialog.dismiss()
+        except Exception:  # already handled by the page, or page is closing
+            pass
+        self.telemetry.add_dialog(kind, message, accepted=accept, text=text)
+
+    def arm_dialog(self, accept: bool = True, text: str = "") -> None:
+        """Arm the *next* dialog raised by a subsequent action."""
+        self._dialog_policy = {"accept": bool(accept), "text": text or ""}
+
+    def _track_request(self, method: str, url: str) -> None:
+        self.requests.append({"method": method, "url": (url or "")[:300]})
+        if len(self.requests) > MAX_TELEMETRY:
+            del self.requests[: len(self.requests) - MAX_TELEMETRY]
+
+    def made_request(self, pattern: str) -> bool:
+        return any(pattern in r["url"] for r in self.requests)
+
+    def drain_requests(self) -> list[dict]:
+        out = list(self.requests)
+        self.requests.clear()
+        return out
+
+    async def setup_network(self, network: Optional[dict]) -> dict:
+        """Install request interception plus the mandatory request policy."""
+        self._network = network or {}
+        self._network_rules = compile_network(network)
+        offline = bool(self._network.get("offline"))
+        if self._route_installed:
+            return {"rules": len(self._network_rules), "offline": offline,
+                    "supported": True, "policy": True,
+                    "websocket_supported": self.network_policy._websocket_supported}
+        if self.network_policy is None:
+            return {"rules": len(self._network_rules), "offline": offline,
+                    "supported": False, "policy": False}
+
+        async def handler(route):
+            request = route.request
+            decision = await asyncio.to_thread(
+                self.network_policy.decide,
+                request.url,
+                method=request.method,
+                kind=getattr(request, "resource_type", "http"),
+            )
+            if not decision.allowed:
+                return await route.abort("blockedbyclient")
+            rule = match_network(self._network_rules, request.url, request.method)
+            if rule is not None:
+                if rule.action == "abort":
+                    return await route.abort()
+                if rule.action == "delay":
+                    await asyncio.sleep(max(0, rule.ms) / 1000)
+                    return await route.continue_()
+                if rule.action == "fulfill":
+                    return await route.fulfill(
+                        status=rule.status,
+                        body=serialize_body(rule.body, rule.content_type),
+                        content_type=rule.content_type,
+                    )
+            if self._network.get("offline"):
+                return await route.abort()
+            return await route.continue_()
+
+        try:
+            await self._route_target.route("**/*", handler)
+        except Exception:  # adapter without routing support
+            return {"rules": len(self._network_rules), "offline": offline,
+                    "supported": False, "policy": True}
+        websocket_supported = False
+        route_websocket = getattr(self._route_target, "route_web_socket", None)
+        if callable(route_websocket):
+            async def websocket_handler(websocket_route):
+                decision = await asyncio.to_thread(
+                    self.network_policy.decide,
+                    websocket_route.url, method="GET", kind="websocket",
+                )
+                if not decision.allowed:
+                    return await websocket_route.close(code=1008, reason=decision.reason)
+                return await websocket_route.connect_to_server()
+            try:
+                await route_websocket("**/*", websocket_handler)
+                websocket_supported = True
+            except Exception:
+                websocket_supported = False
+        self.network_policy._websocket_supported = websocket_supported
+        self.network_policy._routing_installed = True
+        self._route_installed = True
+        return {"rules": len(self._network_rules), "offline": offline,
+                "supported": True, "policy": True,
+                "websocket_supported": websocket_supported}
+
+    async def evaluate(self, script: str, arg: Any = None):
+        if arg is None:
+            return await self._page.evaluate(script)
+        return await self._page.evaluate(script, arg)
+
+    async def fetch_text(self, url: str) -> Optional[str]:
+        """Fetch a URL from within the page origin (used for source maps)."""
+        return await self._page.evaluate(
+            """async (u) => {
+                try { const r = await fetch(u); return r.ok ? await r.text() : null; }
+                catch (e) { return null; }
+            }""",
+            url,
+        )
+
+    async def http_request(self, method: str, url: str, *,
+                           headers: Optional[dict] = None,
+                           body: Any = None,
+                           timeout_ms: int = 15000) -> dict:
+        """Issue an API call from the browser context (shared cookies).
+
+        Uses Playwright's APIRequestContext attached to the page's
+        BrowserContext, so session cookies set by the UI are sent — which is
+        what makes "click, then verify the backend" checks meaningful.
+        Falls back to an in-page ``fetch`` when the adapter lacks it.
+        """
+        method = (method or "GET").upper()
+        headers = {k: str(v) for k, v in (headers or {}).items()}
+        if self.network_policy is not None:
+            decision = await asyncio.to_thread(
+                self.network_policy.decide, url, method=method, kind="api"
+            )
+            if not decision.allowed:
+                return {"status": 0, "ok": False, "method": method, "url": url,
+                        "latency_ms": 0, "error": f"blocked_{decision.reason}: {decision.detail}",
+                        "json": None, "text": "", "headers": {},
+                        "blocked": True, "reason": decision.reason}
+        context = getattr(self._page, "context", None)
+        request_ctx = getattr(context, "request", None)
+        if request_ctx is None:
+            request_ctx = getattr(self._page, "request", None)
+        started = time.time()
+        if request_ctx is not None:
+            kwargs: dict = {"headers": headers, "timeout": timeout_ms}
+            if body is not None:
+                if isinstance(body, (dict, list)):
+                    kwargs["data"] = body
+                else:
+                    kwargs["data"] = str(body)
+            current_url = url
+            current_method = method
+            for redirect_count in range(6):
+                response = await request_ctx.fetch(
+                    current_url, method=current_method, max_redirects=0, **kwargs
+                )
+                if not 300 <= response.status < 400:
+                    break
+                redirect_location = (response.headers or {}).get("location", "")
+                if not redirect_location:
+                    break
+                destination = urljoin(current_url, redirect_location)
+                decision = await asyncio.to_thread(
+                    self.network_policy.decide,
+                    destination, method=current_method, kind="redirect",
+                ) if self.network_policy is not None else NetworkDecision(
+                    True, "adapter_without_request_policy"
+                )
+                if not decision.allowed:
+                    latency_ms = int((time.time() - started) * 1000)
+                    return {
+                        "status": 0, "ok": False, "method": method,
+                        "url": destination, "latency_ms": latency_ms,
+                        "error": f"blocked_redirect: {decision.reason}: {decision.detail}",
+                        "json": None, "text": "", "headers": {},
+                        "blocked": True, "reason": decision.reason,
+                    }
+                if redirect_count == 5:
+                    latency_ms = int((time.time() - started) * 1000)
+                    return {
+                        "status": 0, "ok": False, "method": method,
+                        "url": current_url, "latency_ms": latency_ms,
+                        "error": "blocked_redirect: redirect chain exceeds 5 hops",
+                        "json": None, "text": "", "headers": {},
+                        "blocked": True, "reason": "redirect_loop",
+                    }
+                if response.status in (301, 302, 303) and current_method not in ("GET", "HEAD"):
+                    current_method = "GET"
+                    kwargs.pop("data", None)
+                current_url = destination
+            latency_ms = int((time.time() - started) * 1000)
+            text = ""
+            try:
+                text = await response.text()
+            except Exception:
+                text = ""
+            parsed = None
+            try:
+                parsed = json.loads(text) if text else None
+            except ValueError:
+                parsed = None
+            return {
+                "status": response.status, "ok": response.ok,
+                "method": method, "url": url, "latency_ms": latency_ms,
+                "json": parsed, "text": text[:4000],
+                "headers": dict(response.headers or {}),
+            }
+        # Fallback: in-page fetch (same origin/cookies, no custom headers
+        # beyond what the browser permits).
+        result = await self._page.evaluate(
+            """async ({method, url, headers, body}) => {
+                try {
+                    const r = await fetch(url, {method, headers,
+                        body: body === null ? undefined : body});
+                    const text = await r.text();
+                    let json = null;
+                    try { json = JSON.parse(text); } catch (e) {}
+                    return {status: r.status, ok: r.ok, text, json};
+                } catch (e) { return {error: String(e)}; }
+            }""",
+            {"method": method, "url": url, "headers": headers,
+             "body": None if body is None else (
+                 body if isinstance(body, str) else json.dumps(body))},
+        )
+        latency_ms = int((time.time() - started) * 1000)
+        if result.get("error"):
+            return {"status": 0, "ok": False, "method": method, "url": url,
+                    "latency_ms": latency_ms, "error": result["error"],
+                    "json": None, "text": "", "headers": {}}
+        return {
+            "status": result.get("status", 0), "ok": bool(result.get("ok")),
+            "method": method, "url": url, "latency_ms": latency_ms,
+            "json": result.get("json"), "text": (result.get("text") or "")[:4000],
+            "headers": {},
+        }
+
+    async def a11y_audit(self) -> dict:
+        return await self._page.evaluate(A11Y_JS)
+
+    async def perf_metrics(self) -> dict:
+        return await self._page.evaluate(PERF_JS)
+
+    async def resource_count(self) -> int:
+        return await self._page.evaluate(
+            "() => performance.getEntriesByType('resource').length"
+        )
+
+    async def inject_css(self, css: str) -> None:
+        await self._page.add_style_tag(content=css)
+
+    async def init_perf_observers(self) -> None:
+        await self._page.add_init_script(PERF_OBSERVER_JS)
+
+    # -- determinism: clock + network shaping + coverage ---------------------
+
+    async def install_clock(self, clock: dict) -> dict:
+        """Freeze/advance the page clock so time-dependent flows are stable.
+
+        ``clock`` accepts ``{"time": "2026-01-01T09:00:00Z"}`` and/or
+        ``{"rate": 0}`` (frozen) / ``{"rate": 1}`` (realtime). Requires
+        Playwright's ``page.clock`` (Chromium). Returns what was installed so
+        the flow report can state the determinism it ran under.
+        """
+        if not hasattr(self._page, "clock"):
+            raise SessionRefused(
+                "unsupported_action",
+                "page adapter does not support clock installation (needs Chromium)",
+            )
+        spec = dict(clock or {})
+        installed: dict = {}
+        if spec.get("time"):
+            await self._page.clock.install(time=spec["time"])
+            installed["time"] = spec["time"]
+        if "rate" in spec:
+            await self._page.clock.pause() if spec["rate"] == 0 else self._page.clock.resume()
+            installed["rate"] = spec["rate"]
+        return installed
+
+    async def set_throttle(self, throttle: dict) -> dict:
+        """Emulate a network profile via CDP (offline/3G/4G/latency).
+
+        ``{"offline": true}`` or ``{"download_kbps": 400, "upload_kbps": 200,
+        "latency_ms": 300}``. Uses a raw CDP session, so it is Chromium-only;
+        other engines simply get an ``unsupported_action`` and the flow keeps
+        running (the report records that shaping was skipped).
+        """
+        spec = dict(throttle or {})
+        session = await self._context.new_cdp_session(self._page)
+        try:
+            if spec.get("offline"):
+                await session.send("Network.enable")
+                await session.send("Network.emulateNetworkConditions", {
+                    "offline": True, "latency": 0,
+                    "downloadThroughput": -1, "uploadThroughput": -1,
+                })
+            elif spec:
+                await session.send("Network.enable")
+                await session.send("Network.emulateNetworkConditions", {
+                    "offline": False,
+                    "latency": int(spec.get("latency_ms", 0)),
+                    "downloadThroughput": int(spec.get("download_kbps", -1)) * 1024 // 8,
+                    "uploadThroughput": int(spec.get("upload_kbps", -1)) * 1024 // 8,
+                })
+        finally:
+            try:
+                await session.detach()
+            except Exception:  # noqa: BLE001 - detaching must never fail a flow
+                pass
+        return spec
+
+    async def start_coverage(self) -> dict:
+        """Begin JS coverage capture (Chromium). No-op elsewhere."""
+        if not hasattr(self._page, "coverage"):
+            raise SessionRefused(
+                "unsupported_action",
+                "page adapter does not support coverage (needs Chromium)",
+            )
+        await self._page.coverage.start_javascript_coverage()
+        return {"started": True}
+
+    async def stop_coverage(self) -> dict:
+        """Stop coverage and summarise uncovered bytes per script."""
+        if not hasattr(self._page, "coverage"):
+            raise SessionRefused(
+                "unsupported_action", "page adapter does not support coverage"
+            )
+        try:
+            entries = await self._page.coverage.stop_javascript_coverage()
+        except Exception:  # noqa: BLE001 - never fail a flow on coverage
+            return {"supported": False}
+        scripts = []
+        for entry in entries or []:
+            ranges = entry.get("ranges") or []
+            total = sum(int(r.get("end", 0)) - int(r.get("start", 0)) for r in ranges)
+            covered = sum(
+                max(0, int(r.get("end", 0)) - int(r.get("start", 0)))
+                for r in ranges if r.get("start", 0) == 0
+            )
+            url = entry.get("url") or ""
+            name = url.rsplit("/", 1)[-1] or url or "(anonymous)"
+            scripts.append({
+                "name": name[:120],
+                "url": url[:200],
+                "total_bytes": total,
+                "used_bytes": min(covered, total),
+                "pct": round((min(covered, total) / total * 100), 1) if total else 0.0,
+            })
+        scripts.sort(key=lambda s: s["used_bytes"] - s["total_bytes"])
+        total_bytes = sum(s["total_bytes"] for s in scripts)
+        used_bytes = sum(s["used_bytes"] for s in scripts)
+        return {
+            "supported": True,
+            "scripts": scripts[:25],
+            "script_count": len(scripts),
+            "total_bytes": total_bytes,
+            "used_bytes": used_bytes,
+            "pct": round(used_bytes / total_bytes * 100, 1) if total_bytes else 0.0,
+        }
+
     async def goto(self, url: str) -> None:
         await self._page.goto(url, wait_until="domcontentloaded", timeout=20000)
 
@@ -1126,6 +1712,43 @@ def classify_step_failure(reason: Optional[str]) -> str:
     if reason in {"error", "harness_error", "timeout", "page_closed"}:
         return "inconclusive"
     return "failed"
+
+
+def summarise_coverage(entries: list) -> dict:
+    """Chromium JS-coverage entries → used/total bytes per script.
+
+    Playwright reports ``ranges`` of *used* bytes per script, so the unused
+    gap is what a reader actually wants: the biggest dead weight, sorted
+    worst-first so the report names it immediately.
+    """
+    scripts = []
+    for entry in entries or []:
+        ranges = entry.get("ranges") or []
+        total = sum(int(r.get("end", 0)) - int(r.get("start", 0)) for r in ranges)
+        covered = sum(
+            max(0, int(r.get("end", 0)) - int(r.get("start", 0)))
+            for r in ranges if r.get("start", 0) == 0
+        )
+        url = entry.get("url") or ""
+        name = url.rsplit("/", 1)[-1] or url or "(anonymous)"
+        scripts.append({
+            "name": name[:120],
+            "url": url[:200],
+            "total_bytes": total,
+            "used_bytes": min(covered, total),
+            "pct": round((min(covered, total) / total * 100), 1) if total else 0.0,
+        })
+    scripts.sort(key=lambda s: s["used_bytes"] - s["total_bytes"])
+    total_bytes = sum(s["total_bytes"] for s in scripts)
+    used_bytes = sum(s["used_bytes"] for s in scripts)
+    return {
+        "supported": True,
+        "scripts": scripts[:25],
+        "script_count": len(scripts),
+        "total_bytes": total_bytes,
+        "used_bytes": used_bytes,
+        "pct": round(used_bytes / total_bytes * 100, 1) if total_bytes else 0.0,
+    }
 
 
 def classify_flow_status(results: list[dict]) -> str:
@@ -1991,6 +2614,8 @@ class BrowserAgentSession:
         observe: bool = True, network: Optional[dict] = None,
         freeze_animations: bool = True, resolve_sources: bool = False,
         settle_ms: int = 0, forbid_evaluate: bool = False,
+        clock: Optional[dict] = None, throttle: Optional[dict] = None,
+        coverage: bool = False,
     ) -> dict:
         """Execute a declarative list of steps and return one compact report.
 
@@ -2003,6 +2628,16 @@ class BrowserAgentSession:
         ``network`` installs request interception (mocks/fail/delay/offline),
         ``resolve_sources`` maps console errors through source maps, and each
         step carries the telemetry + DOM delta it caused.
+
+        Determinism knobs (all optional, all reported back so a run states
+        the conditions it executed under):
+
+        ``clock``     — ``{"time": ..., "rate": 0}`` freezes/advances the
+                        page clock (Playwright ``page.clock``).
+        ``throttle``  — CDP network shaping (``{"offline": true}`` or
+                        kbps/latency) so 3G / offline paths are testable.
+        ``coverage``  — capture JS coverage and summarise used bytes per
+                        script in the report (Chromium).
         """
         normalized = normalize_flow_steps(steps)
         results: list[dict] = []
@@ -2018,6 +2653,23 @@ class BrowserAgentSession:
         }
         if network or self.network_policy is not None:
             network_info = await self._call_optional("setup_network", network or {}) or network_info
+        determinism: dict = {}
+        if clock:
+            try:
+                determinism["clock"] = await self._call_optional("install_clock", clock)
+            except SessionRefused as exc:
+                determinism["clock"] = {"skipped": exc.detail or "unsupported"}
+        if throttle:
+            try:
+                determinism["throttle"] = await self._call_optional("set_throttle", throttle)
+            except SessionRefused as exc:
+                determinism["throttle"] = {"skipped": exc.detail or "unsupported"}
+        coverage_info: dict = {}
+        if coverage:
+            try:
+                await self._call_optional("start_coverage")
+            except SessionRefused as exc:
+                coverage_info = {"supported": False, "reason": exc.detail or "unsupported"}
         if freeze_animations:
             try:
                 await self._call_optional("inject_css", DISABLE_ANIM_CSS)
@@ -2086,6 +2738,15 @@ class BrowserAgentSession:
         }
         if network:
             report["network"] = network_info
+        if determinism:
+            report["determinism"] = determinism
+        if coverage:
+            try:
+                coverage_info = await self._call_optional("stop_coverage") or {}
+            except SessionRefused as exc:
+                coverage_info = {"supported": False, "reason": exc.detail or "unsupported"}
+        if coverage_info:
+            report["coverage"] = coverage_info
         report["network_policy"] = (
             self.network_policy.report() if self.network_policy is not None
             else {"enforced": False, "reason": "adapter_without_request_policy"}
@@ -2965,6 +3626,8 @@ class BrowserAgentService:
         har: bool = False, video: bool = False,
         artifacts_dir: Optional[str] = None, settle_ms: int = 0,
         detect_dev_server: bool = False, forbid_evaluate: bool = False,
+        clock: Optional[dict] = None, throttle: Optional[dict] = None,
+        coverage: bool = False,
     ) -> dict:
         """One-shot: open an ephemeral session, run a flow, close, return report.
 
@@ -2996,6 +3659,7 @@ class BrowserAgentService:
                 network=network, resolve_sources=resolve_sources,
                 freeze_animations=freeze_animations, settle_ms=settle_ms,
                 forbid_evaluate=forbid_evaluate,
+                clock=clock, throttle=throttle, coverage=coverage,
             )
             receipts = session.receipts()
         finally:

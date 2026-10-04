@@ -177,6 +177,17 @@ def cmd_auth(args):
     print(f"✓ API key saved to {CONFIG_FILE}")
 
 
+def _json_load_arg(raw: str):
+    """Parse a JSON CLI argument, warning (not crashing) on bad input."""
+    import json as _json
+
+    try:
+        return _json.loads(raw)
+    except Exception as exc:
+        print(f"Ignoring invalid JSON argument ({exc})")
+        return None
+
+
 def _write_export(path: str, content: str, label: str) -> None:
     """Write an export payload to a file, or stdout when path is '-'."""
     if path == "-":
@@ -1498,6 +1509,12 @@ def cmd_test(args) -> int:
         "forbid_evaluate": args.forbid_evaluate,
         "network": flow.get("network"),
     }
+    if getattr(args, "clock", ""):
+        payload["clock"] = _json_load_arg(args.clock)
+    if getattr(args, "throttle", ""):
+        payload["throttle"] = _json_load_arg(args.throttle)
+    if getattr(args, "coverage", False):
+        payload["coverage"] = True
     result = api_request("POST", "/browser/sessions/run", payload)
     if result is None:
         return EXIT_ENGINE_ERROR
@@ -1524,6 +1541,13 @@ def cmd_test(args) -> int:
     artifacts = result.get("artifacts") or {}
     if artifacts:
         print("  artifacts: " + ", ".join(f"{k}={v}" for k, v in artifacts.items()))
+    cov = result.get("coverage") or {}
+    if cov.get("supported") and cov.get("script_count"):
+        print(f"  coverage: {cov.get('pct')}% of {cov.get('total_bytes')} JS bytes "
+              f"across {cov['script_count']} script(s)")
+    det = result.get("determinism") or {}
+    if det:
+        print(f"  determinism: {json.dumps(det)}")
     if args.json:
         print(json.dumps(result, indent=2))
     sarif_path = getattr(args, "sarif", None)
@@ -1767,6 +1791,12 @@ def main():
     p_test.add_argument("--json", action="store_true", help="Print the full report JSON")
     p_test.add_argument("--sarif", metavar="FILE",
                         help="Write a per-step SARIF 2.1.0 report (use '-' for stdout)")
+    p_test.add_argument("--clock", default="",
+                        help="JSON clock spec, e.g. '{\"time\":\"2026-01-01T09:00:00Z\",\"rate\":0}'")
+    p_test.add_argument("--throttle", default="",
+                        help="JSON network shaping, e.g. '{\"offline\":true}' or '{\"download_kbps\":400}'")
+    p_test.add_argument("--coverage", action="store_true",
+                        help="Capture JS coverage and report used bytes per script")
 
     p_export = subparsers.add_parser(
         "export", help="Export a flow to Playwright Test (.spec.ts)",
