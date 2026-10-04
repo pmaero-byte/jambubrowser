@@ -37,6 +37,13 @@ log = logging.getLogger("jambu.shadow_browser")
 
 @dataclass
 class InterestTopic:
+    """One thing the shadow crawler is interested in.
+
+    Carries its own crawl budget (``max_depth``) and running totals so
+    ``GET /shadow-browser`` can show what a topic has actually produced
+    without querying the crawl history.
+    """
+
     name: str
     keywords: List[str]
     seed_urls: List[str]
@@ -59,6 +66,13 @@ DEFAULT_INTERESTS = [
 
 @dataclass
 class URLNode:
+    """A queued crawl target.
+
+    ``depth`` is hops from the seed (0 = a seed URL itself) and is
+    compared against the topic's ``max_depth`` before any link is
+    extracted from the page.
+    """
+
     url: str
     depth: int
     source_url: str
@@ -68,6 +82,15 @@ class URLNode:
 
 
 class URLFrontier:
+    """Priority queue of URLs waiting to be crawled.
+
+    Priority 5 is the *highest*: ``pop`` drains 5 → 1, so a security
+    topic outranks a science one. When the frontier is full it evicts
+    from priority 1 first — the lowest-value work goes, not the
+    oldest. Deduplication is by scheme+host+path, so ``/a`` and
+    ``/a/`` are the same target.
+    """
+
     def __init__(self, max_size: int = 10000):
         self._queues: Dict[int, deque] = {p: deque() for p in range(1, 6)}
         self._seen: Set[str] = set()
@@ -110,6 +133,10 @@ class ShadowBrowser:
     USER_AGENT = "Jambubrowser-Shadow/2.0 (Research Crawler; +https://jambubrowser.dev/bot)"
 
     def __init__(self):
+        """Build an idle crawler: empty frontier, the three default topics, and
+        a shared HTTP client that is created on first use.
+        """
+
         self._frontier = URLFrontier()
         self._interests: List[InterestTopic] = list(DEFAULT_INTERESTS)
         self._running = False
@@ -119,6 +146,14 @@ class ShadowBrowser:
         self._lock = asyncio.Lock()
 
     async def _get_client(self) -> httpx.AsyncClient:
+        """The shared HTTP client, created lazily.
+
+        One client for the whole crawler so connections are reused and
+        every request carries the identifying User-Agent a research crawler
+        should send. Redirects are capped at 3 so a redirect loop cannot
+        pin the crawl loop.
+        """
+
         if self._http_client is None:
             self._http_client = make_async_client(
                 headers={"User-Agent": self.USER_AGENT},
@@ -126,19 +161,42 @@ class ShadowBrowser:
         return self._http_client
 
     def add_interest(self, topic: InterestTopic):
+        """Register a topic and queue its seed URLs at depth 0.
+
+        Adding a topic with the same name twice is allowed; both seed
+        their URLs, and the frontier's dedup drops the duplicates.
+        """
+
         self._interests.append(topic)
         for url in topic.seed_urls:
             self._frontier.add(URLNode(url=url, depth=0, source_url='', topic=topic.name, priority=topic.priority))
 
     def remove_interest(self, name: str):
+        """Forget a topic by name.
+
+        URLs already queued for it stay in the frontier but are popped with
+        no matching topic, so they are crawled and not expanded — the only
+        way to fully drain them is a restart.
+        """
+
         self._interests = [i for i in self._interests if i.name != name]
 
     def get_interests(self) -> List[dict]:
+        """The topic list as JSON-safe dicts, for the API response.
+        """
+
         return [{'name': i.name, 'keywords': i.keywords, 'priority': i.priority,
                  'urls_discovered': i.urls_discovered, 'urls_crawled': i.urls_crawled}
                 for i in self._interests]
 
     async def seed_from_existing(self):
+        """Queue the root of up to 50 previously-indexed URLs.
+
+        Seeds from the local document store rather than the public web, so
+        the crawler starts from what this node already knows. A failure
+        here (no documents table yet) is logged and skipped.
+        """
+
         try:
             with get_db_cursor() as cursor:
                 cursor.execute("SELECT DISTINCT url FROM documents ORDER BY RANDOM() LIMIT 50")
@@ -152,6 +210,15 @@ class ShadowBrowser:
             log.debug("history seed skipped", exc_info=True)
 
     async def _extract_links(self, html: str, base_url: str, topic: InterestTopic) -> List[URLNode]:
+        """Find same-topic links on a crawled page.
+
+        A link is kept only if its URL mentions one of the topic's
+        keywords, and its priority rises with the number it mentions, so a
+        page that is on-topic everywhere is crawled first. Capped at 20
+        candidates per page: a crawler that follows everything finds
+        nothing.
+        """
+
         href_pattern = re.compile(r'href=["\'](https?://[^"\'\s]+)', re.I)
         raw_urls = href_pattern.findall(html)
         links = []
@@ -167,6 +234,15 @@ class ShadowBrowser:
         return links
 
     async def _crawl_page(self, url: str) -> Optional[str]:
+        """Fetch a page and return its visible text, or None.
+
+        None means "not worth indexing": a non-200, a non-HTML content
+        type, or fewer than 100 characters of text (which is usually a
+        navigation shell or an error page). HTML is truncated to
+        MAX_PAGE_SIZE and stripped to text here so the caller never sees
+        markup.
+        """
+
         try:
             client = await self._get_client()
             resp = await client.get(url)
@@ -183,6 +259,14 @@ class ShadowBrowser:
             return None
 
     async def _index_page(self, url: str, text: str, topic_name: str):
+        """Chunk a page, embed it, and store it in the search index.
+
+        Embeddings are cached by chunk hash, so re-crawling a page costs
+        no inference. If sentence-transformers is not installed the text is
+        still stored (unembedded), so keyword search keeps working and only
+        semantic search is lost.
+        """
+
         try:
             from backend.core.database import smart_chunking
             from sentence_transformers import SentenceTransformer
@@ -205,6 +289,15 @@ class ShadowBrowser:
                 cursor.execute("INSERT INTO documents (url, text) VALUES (?, ?)", (url, f"[{topic_name}] {text[:5000]}"))
 
     async def run_loop(self):
+        """The crawl loop: pop, crawl, index, expand, sleep.
+
+        CRAWL_DELAY between every page is deliberate politeness, not a
+        performance setting. An empty frontier sleeps 30s rather than
+        spinning. A failure on one page is swallowed after a 10s backoff
+        so one bad host cannot end the crawl; ``stop()`` and cancellation
+        are the only ways out.
+        """
+
         self._running = True
         await self.seed_from_existing()
         for interest in self._interests:
@@ -242,14 +335,26 @@ class ShadowBrowser:
                 await asyncio.sleep(10)
 
     def get_stats(self) -> dict:
+        """Running flag, queue depth, totals and per-topic progress.
+        """
+
         return {'running': self._running, 'frontier_size': self._frontier.size(),
                 'pages_crawled': self._pages_crawled, 'pages_indexed': self._pages_indexed,
                 'interests': self.get_interests()}
 
     def stop(self):
+        """Ask the crawl loop to finish after the page it is on.
+        """
+
         self._running = False
 
     async def close(self):
+        """Stop the loop and close the HTTP client.
+
+        Called from the engine lifespan, so a leaked client would keep the
+        process alive on shutdown.
+        """
+
         self.stop()
         if self._http_client:
             await self._http_client.aclose()

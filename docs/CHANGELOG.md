@@ -111,6 +111,21 @@ Verified behaviour-preserving: all 22 per-command `--help` outputs are
 byte-identical to the pre-split CLI. The only user-visible change is that the
 top-level command list is now grouped by area rather than interleaved.
 
+### Changed — docstrings where a traceback needed explaining
+
+The five LLM providers, `shadow_browser.py` and `risk_shield.py` were all at
+0% documented: 41 public functions and classes with no docstring at all. Those
+are exactly the places where the answer to "why did it do that" lives — why the
+crawler treated a page as noise, why priority 5 is the *highest*, why an
+unreachable URLhaus must not read as "safe", why the mock provider must report
+zero cost. Each docstring now says what the code does and what the surprising
+decision was, including the ones a reader would otherwise get wrong (a
+`data:` URI scores 0.8; the frontier evicts lowest priority first, not oldest;
+an empty frontier sleeps 30s rather than spinning).
+
+The repo docstring ratio crosses the 60% gate for the first time: **0.583 →
+0.605**.
+
 ### Changed — modularity and measurable gates
 
 - **Step actions split by family** — `browser_agent._run_step` was the repo's
@@ -132,8 +147,9 @@ top-level command list is now grouped by area rather than interleaved.
   helper that is defined but not invoked, which would silently drop a table
   from a fresh install, fails the suite.
 - Metrics: `silent_excepts` 71 → 0, `long_functions` 17 → 14, `long_files` 4 → 1,
-  `mcp_server.py` 1,894 → 86 lines, `browser_agent.py` 3,402 → 1,370 lines,
-  `cli/jambu.py` 2,108 → 84 lines. Suite: 1975 passed, 9 skipped.
+  `docstring_ratio` 0.577 → 0.605, `mcp_server.py` 1,894 → 86 lines,
+  `browser_agent.py` 3,402 → 1,370 lines, `cli/jambu.py` 2,108 → 84 lines.
+  Suite: 1975 passed, 9 skipped.
 
 ## [3.4.0] - 2026-10-03
 

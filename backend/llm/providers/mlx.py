@@ -39,11 +39,17 @@ class MLXProvider:
     supports_tools = False
 
     def __init__(self, config: LLMConfig):
+        """Take the local server URL and model from the shared config.
+        """
+
         self.config = config
         self.base_url = config.mlx_base_url.rstrip("/")
         self.default_model = config.mlx_model
 
     async def health(self) -> bool:
+        """True once the local MLX server responds on its port.
+        """
+
         try:
             async with httpx.AsyncClient() as client:
                 r = await client.get(f"{self.base_url}/v1/models", timeout=self.config.health_timeout)
@@ -66,6 +72,9 @@ class MLXProvider:
         timeout: float = 60.0,  # MLX cold starts need more time
         **kwargs,
     ) -> ChatResponse:
+        """POST to the MLX server for this model and return the parsed reply.
+        """
+
         mdl = model or self.default_model
         # mlx-vlm expects 'max_tokens' or 'max_completion_tokens' depending on version
         payload: dict[str, Any] = {
@@ -122,6 +131,9 @@ class MLXProvider:
         timeout: float = 60.0,
         **kwargs,
     ) -> AsyncIterator[StreamChunk]:
+        """Stream the MLX server response, one chunk per delta.
+        """
+
         mdl = model or self.default_model
         payload = {
             "model": mdl,
@@ -171,6 +183,9 @@ class MLXProvider:
             raise ProviderTimeout(f"MLX stream timeout: {e}") from e
 
     def estimate_cost(self, usage: Usage, model: Optional[str] = None) -> float:
+        """Always 0.0 — local inference is free.
+        """
+
         return 0.0  # local
 
 

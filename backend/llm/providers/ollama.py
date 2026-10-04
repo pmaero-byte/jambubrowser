@@ -43,6 +43,13 @@ class OllamaProvider:
     supports_tools = False
 
     def __init__(self, config: LLMConfig):
+        """Resolve the base URL and default model from the shared config.
+
+        Ollama serves both ``/v1/chat/completions`` (OpenAI-compatible) and the
+        native ``/api/chat``; the trailing ``/v1`` is stripped so one root works
+        for either.
+        """
+
         self.config = config
         self.base_url = config.ollama_base_url.rstrip("/")
         self.default_model = config.ollama_model
@@ -53,6 +60,12 @@ class OllamaProvider:
             self._root = self._root[:-3]
 
     async def health(self) -> bool:
+        """True when ``GET /api/tags`` answers.
+
+        The registry uses this to decide whether ollama belongs in the auto-
+        detect fallback chain.
+        """
+
         try:
             async with httpx.AsyncClient() as client:
                 r = await client.get(f"{self._root}/api/tags", timeout=self.config.health_timeout)
@@ -70,6 +83,9 @@ class OllamaProvider:
         tools: Optional[list[dict]] = None,
         timeout: float = 30.0,
     ) -> ChatResponse:
+        """POST to the local chat endpoint and return the parsed reply.
+        """
+
         mdl = model or self.default_model
         started = time.monotonic()
         try:
@@ -175,6 +191,10 @@ class OllamaProvider:
         tools: Optional[list[dict]] = None,
         timeout: float = 30.0,
     ) -> AsyncIterator[StreamChunk]:
+        """Stream the chat endpoint, yielding one chunk per token and a final chunk
+        carrying usage.
+        """
+
         mdl = model or self.default_model
         try:
             async with httpx.AsyncClient() as client:
@@ -217,6 +237,12 @@ class OllamaProvider:
             raise ProviderTimeout(f"Ollama stream timeout: {e}") from e
 
     def estimate_cost(self, usage: Usage, model: Optional[str] = None) -> float:
+        """Always 0.0 — local inference is free.
+
+        Charging a cloud price for it would overstate what a browser flow saved,
+        which is the number this feeds.
+        """
+
         return 0.0  # local = free
 
 

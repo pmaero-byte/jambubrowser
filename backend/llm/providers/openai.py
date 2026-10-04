@@ -44,6 +44,12 @@ class OpenAIProvider:
     supports_tools = True
 
     def __init__(self, config: LLMConfig):
+        """Take the API key from the config, falling back to the environment.
+
+        Without a key ``health`` reports False and the registry skips this
+        provider rather than failing every call.
+        """
+
         self.config = config
         self.api_key = config.openai_api_key
         self.base_url = config.openai_base_url.rstrip("/")
@@ -88,6 +94,11 @@ class OpenAIProvider:
         return payload
 
     async def health(self) -> bool:
+        """True when the key is present and the models endpoint answers.
+
+        A 401 means "not usable", which the registry treats as absent.
+        """
+
         if not self.api_key:
             return False
         try:
@@ -111,6 +122,12 @@ class OpenAIProvider:
         tools: Optional[list[dict]] = None,
         timeout: float = 30.0,
     ) -> ChatResponse:
+        """POST to the chat-completions endpoint in OpenAI's message format.
+
+        Raises ``ProviderError`` on a non-2xx reply, carrying the API's own
+        error message so the caller can tell a bad key from a bad request.
+        """
+
         if not self.api_key:
             raise ProviderAuthError("OPENAI_API_KEY is not set")
         mdl = model or self.default_model
@@ -165,6 +182,11 @@ class OpenAIProvider:
         tools: Optional[list[dict]] = None,
         timeout: float = 30.0,
     ) -> AsyncIterator[StreamChunk]:
+        """Stream server-sent events, decoding each delta into a chunk.
+
+        The final event carries the finish reason and usage.
+        """
+
         if not self.api_key:
             raise ProviderAuthError("OPENAI_API_KEY is not set")
         mdl = model or self.default_model
@@ -213,6 +235,12 @@ class OpenAIProvider:
             raise ProviderTimeout(f"OpenAI stream timeout: {e}") from e
 
     def estimate_cost(self, usage: Usage, model: Optional[str] = None) -> float:
+        """Per-model input/output price from the pricing table.
+
+        An unknown model returns 0.0 rather than a guess: a wrong cost is worse
+        than a missing one in a savings report.
+        """
+
         return estimate_cost_for_model(self.name, model or self.default_model, usage)
 
 

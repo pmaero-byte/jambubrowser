@@ -30,6 +30,11 @@ log = logging.getLogger("jambu.risk_shield")
 
 
 class RiskLevel:
+    """Risk bands, ordered so ``SAFE < LOW < MEDIUM < HIGH < CRITICAL``
+
+    comparison and thresholding both work.
+    """
+
     SAFE = "safe"
     LOW = "low"
     MEDIUM = "medium"
@@ -39,6 +44,12 @@ class RiskLevel:
 
 @dataclass
 class CheckResult:
+    """The verdict of one source (URLhaus, PhishTank or the heuristic).
+
+    ``details`` is a human-readable string, not a machine field: it is
+    concatenated into the reason shown to the user.
+    """
+
     source: str
     risk_level: str
     score: float
@@ -47,12 +58,31 @@ class CheckResult:
 
 
 class LRUCache:
+    """TTL + size-bounded cache for assessment results.
+
+    A URL's risk does not change minute to minute, so re-querying
+    URLhaus for every page load is waste. Entries expire after ``ttl``
+    seconds and the least-recently-used entry is dropped when the cache
+    is full.
+    """
+
     def __init__(self, max_size: int = 1000, ttl: int = 3600):
+        """Bound the cache by entry count and by age.
+
+        Defaults suit a browsing session: 1,000 URLs, one hour.
+        """
+
         self._cache = OrderedDict()
         self._max_size = max_size
         self._ttl = ttl
 
     def get(self, key: str) -> Optional[dict]:
+        """Return a cached result, or None if absent or expired.
+
+        Expired entries are dropped on read rather than on a sweep, so
+        there is no background timer to leak.
+        """
+
         if key in self._cache:
             entry = self._cache[key]
             if time.time() - entry['timestamp'] < self._ttl:
@@ -62,6 +92,9 @@ class LRUCache:
         return None
 
     def set(self, key: str, value: dict):
+        """Store a result, evicting the least-recently-used entry if full.
+        """
+
         if key in self._cache:
             self._cache.move_to_end(key)
         else:
@@ -85,21 +118,38 @@ class RiskShield:
     ]
 
     def __init__(self):
+        """Build the shield with an empty cache and no HTTP client yet.
+        """
+
         self._cache = LRUCache(max_size=2000, ttl=1800)
         self._http_client: Optional[httpx.AsyncClient] = None
         self._notifier = None
 
     async def _get_client(self) -> httpx.AsyncClient:
+        """The shared HTTP client for URLhaus/PhishTank lookups, created lazily.
+        """
+
         if self._http_client is None:
             self._http_client = make_async_client(timeout=10.0)
         return self._http_client
 
     def _get_notifier(self):
+        """The notification sink, imported lazily so the module
+        still loads when the notifier package is absent.
+        """
+
         if self._notifier is None:
             self._notifier = get_notifier()
         return self._notifier
 
     async def _check_urlhaus(self, url: str) -> Optional[CheckResult]:
+        """Ask URLhaus whether the URL is a known malware host.
+
+        Returns None on any failure — an unreachable list must not be
+        read as "safe", it must be read as "unknown", and the caller
+        falls back to the heuristic.
+        """
+
         start = time.time()
         try:
             client = await self._get_client()
@@ -118,6 +168,14 @@ class RiskShield:
             return None
 
     def _check_heuristic(self, url: str) -> CheckResult:
+        """Score the URL from its shape alone.
+
+        Suspicious TLDs, phishing keywords, excessive length, subdomain
+        depth, an ``@`` (credential phishing) and ``data:`` URIs each add
+        score; 0.7+ is HIGH. This is the check that works with no network,
+        so it is also the floor under every assessment.
+        """
+
         start = time.time()
         parsed = urlparse(url)
         domain = parsed.hostname or ''
@@ -159,6 +217,12 @@ class RiskShield:
             response_time=time.time() - start)
 
     async def _check_phishtank(self, url: str) -> Optional[CheckResult]:
+        """Ask PhishTank whether the URL is in its phishing database.
+
+        A verified entry is CRITICAL; an unverified one is HIGH. Returns
+        None when the service cannot be reached.
+        """
+
         start = time.time()
         try:
             client = await self._get_client()
@@ -178,6 +242,13 @@ class RiskShield:
             return None
 
     async def assess_url(self, url: str, real_time: bool = True) -> dict:
+        """Assess one URL against every source and decide whether to block.
+
+        The highest-risk verdict wins, and the decision is cached. With
+        ``real_time=False`` the network checks are skipped and only the
+        heuristic runs, which is what the fast path uses.
+        """
+
         cached = self._cache.get(url)
         if cached:
             return cached
@@ -237,6 +308,12 @@ class RiskShield:
         return result
 
     def _generate_reason(self, checks, risk_level, blocked):
+        """Explain the decision in one sentence from the individual verdicts.
+
+        Shown to the user when a navigation is blocked, so it names the
+        source that triggered it rather than only printing a level.
+        """
+
         if not checks:
             return "No checks performed."
         flagged = [c for c in checks if c.score >= 0.4]
@@ -247,6 +324,9 @@ class RiskShield:
         return prefix + "; ".join(parts)
 
     async def quick_check(self, url: str) -> dict:
+        """Cheap risk lookup for callers that only need a level, not a verdict.
+        """
+
         heuristic = self._check_heuristic(url)
         blocked = heuristic.score >= 0.7
         if heuristic.score >= 0.7: risk = RiskLevel.HIGH
@@ -259,14 +339,26 @@ class RiskShield:
                            'score': heuristic.score, 'details': heuristic.details}]}
 
     async def batch_assess(self, urls: List[str]) -> List[dict]:
+        """Assess many URLs concurrently.
+
+        Results come back in the order the URLs were given, so a caller can
+        zip them with its input.
+        """
+
         return await asyncio.gather(*[self.assess_url(url) for url in urls], return_exceptions=True)
 
     async def close(self):
+        """Close the HTTP client. Called from the engine lifespan.
+        """
+
         if self._http_client:
             await self._http_client.aclose()
             self._http_client = None
 
     def get_cache_stats(self) -> dict:
+        """Cache occupancy and hit rate, for the status endpoint.
+        """
+
         return {
             'size': len(self._cache._cache),
             'max_size': self._cache._max_size,

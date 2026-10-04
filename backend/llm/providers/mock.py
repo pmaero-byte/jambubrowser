@@ -48,11 +48,20 @@ class MockProvider:
     supports_tools = True
 
     def __init__(self, config: LLMConfig):
+        """Hold the config and the call history.
+
+        The config is kept but unused — there is nothing to dial — and
+        ``history`` exists so tests can assert on what was asked.
+        """
+
         self.config = config
         self.call_count = 0
         self.history: list[list[ChatMessage]] = []
 
     async def health(self) -> bool:
+        """Always True: the mock provider has no network to be unhealthy.
+        """
+
         return True
 
     async def chat(
@@ -65,6 +74,13 @@ class MockProvider:
         tools: Optional[list[dict]] = None,
         timeout: float = 5.0,
     ) -> ChatResponse:
+        """Return a canned or echoed response and record the call.
+
+        A user message containing ``{"tool": ...}`` is answered with a tool
+        call; otherwise the text is echoed with a ``[mock:model]`` prefix so a
+        test can tell which model answered.
+        """
+
         self.call_count += 1
         self.history.append(list(messages))
         last_user = next((m for m in reversed(messages) if m.role.value == "user"), None)
@@ -120,6 +136,11 @@ class MockProvider:
         tools: Optional[list[dict]] = None,
         timeout: float = 5.0,
     ) -> AsyncIterator[StreamChunk]:
+        """Replay ``chat`` in small chunks.
+
+        That exercises the streaming code paths with no provider present.
+        """
+
         resp = await self.chat(messages, model=model, max_tokens=max_tokens, tools=tools, timeout=timeout)
         # Stream the text in small chunks
         if resp.content:
@@ -133,6 +154,10 @@ class MockProvider:
         yield StreamChunk(delta="", finish_reason="stop", usage=resp.usage)
 
     def estimate_cost(self, usage: Usage, model: Optional[str] = None) -> float:
+        """Always 0.0 — the mock provider must never report a cost, or the token-
+        savings figures in the browser reports become fiction.
+        """
+
         return 0.0
 
 

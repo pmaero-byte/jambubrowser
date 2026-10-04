@@ -46,6 +46,9 @@ class MiniMaxProvider:
     supports_tools = True
 
     def __init__(self, config: LLMConfig):
+        """Take the API key and base URL from the shared config.
+        """
+
         self.config = config
         self.api_key = config.minimax_api_key
         self.base_url = config.minimax_base_url.rstrip("/")
@@ -60,6 +63,9 @@ class MiniMaxProvider:
         }
 
     async def health(self) -> bool:
+        """True when the API key is configured and the account answers.
+        """
+
         if not self.api_key:
             return False
         try:
@@ -83,6 +89,9 @@ class MiniMaxProvider:
         tools: Optional[list[dict]] = None,
         timeout: float = 30.0,
     ) -> ChatResponse:
+        """POST to the MiniMax chat endpoint and return the parsed reply.
+        """
+
         if not self.api_key:
             raise ProviderAuthError("MINIMAX_API_KEY is not set")
         mdl = model or self.default_model
@@ -144,6 +153,9 @@ class MiniMaxProvider:
         tools: Optional[list[dict]] = None,
         timeout: float = 30.0,
     ) -> AsyncIterator[StreamChunk]:
+        """Stream the MiniMax response, one chunk per delta.
+        """
+
         if not self.api_key:
             raise ProviderAuthError("MINIMAX_API_KEY is not set")
         mdl = model or self.default_model
@@ -196,6 +208,9 @@ class MiniMaxProvider:
             raise ProviderTimeout(f"MiniMax stream timeout: {e}") from e
 
     def estimate_cost(self, usage: Usage, model: Optional[str] = None) -> float:
+        """Per-model price from the pricing table.
+        """
+
         return estimate_cost_for_model(self.name, model or self.default_model, usage)
 
 
