@@ -128,9 +128,14 @@ flaky agent test into a reproducible one:
   test midnight-only UI or expiry paths without waiting.
 - `throttle` (CDP `Network.emulateNetworkConditions`) — emulate offline,
   3G, or latency profiles so timeout/offline paths are testable.
-- `coverage` (Chromium JS coverage) — per-flow used/total JS bytes with the
-  worst offender named; surfaced in the report, the MCP digest, and
-  `jambu test --coverage`.
+- `coverage` (JS coverage over raw CDP) — per-flow used/total JS bytes with
+  the worst offender named, dead zones subtracted so a file whose top-level
+  block ran is not misreported as 100%. Playwright removed `page.coverage`,
+  so this rides on `Profiler.takePreciseCoverage` (Chromium). Surfaced in the
+  report, the MCP digest, and `jambu test --coverage`.
+- Also removes ~490 lines of dead code: `browser_agent.py` defined
+  `Telemetry` and `PlaywrightPage` twice, the second shadowing the first, so
+  every fix had to be applied twice and could silently diverge.
 
 Available on `POST /browser/sessions/run`, `POST /browser/sessions/{id}/flow`,
 MCP `browser_test_flow`, and CLI `jambu test --clock/--throttle/--coverage`.
