@@ -3406,11 +3406,11 @@
       "debug_prints": 0,
       "documented_defs": 10,
       "duplicate_definitions": [],
-      "functions": 11,
-      "lines": 673,
-      "long_functions": 2,
-      "longest_function": "cmd_qa",
-      "longest_function_loc": 196,
+      "functions": 21,
+      "lines": 749,
+      "long_functions": 1,
+      "longest_function": "register",
+      "longest_function_loc": 176,
       "path": "cli/jambu_cli/commands/qa.py",
       "public_defs": 11,
       "silent_excepts": 0,
@@ -3466,9 +3466,9 @@
     "duplicate_definitions": 0,
     "files": 247,
     "long_files": 0,
-    "long_functions": 10,
+    "long_functions": 9,
     "public_defs": 1945,
     "silent_excepts": 0,
-    "total_lines": 63749
+    "total_lines": 63825
   }
 }

@@ -65,201 +65,277 @@ def cmd_watch(args) -> int:
 
 
 def cmd_qa(args) -> int:
-    """Managed QA cases: the AI QA team in the terminal."""
+    """Managed QA cases: the AI QA team in the terminal.
+
+    `jambu qa` has nine sub-subcommands, so this is a dispatch table rather
+    than an if-chain: each verb is a `_qa_*` handler below, and adding one is
+    a function plus an entry in `_qa_dispatch`. The fallback print lists the
+    verbs, so an unknown one tells the user what exists.
+    """
     sub = getattr(args, "qa_command", None)
-    if sub == "create":
-        flow: dict = {}
-        if getattr(args, "flow", None):
-            try:
-                flow = core._load_flow_file(args.flow)
-            except Exception as exc:
-                print(f"Could not read flow file {args.flow}: {exc}")
-                return core.EXIT_ENGINE_ERROR
-        url = args.url or flow.get("url")
-        if not url:
-            print("Provide --url or include an 'url' in the flow file.")
+    handler = _qa_dispatch(args).get(sub)
+    if handler is None:
+        print("jambu qa create|list|run|heals|accept|reject|quarantine|"
+              "unquarantine|auto-retry|dataset --help")
+        return core.EXIT_ENGINE_ERROR
+    # accept/reject share one handler; the verb decides the boolean. Every
+    # other handler takes `args` alone, so the kwarg is only passed where it
+    # means something.
+    if handler is _qa_review_heal:
+        return handler(args, accept=(sub == "accept"))
+    return handler(args)
+
+# ── jambu qa sub-subcommands ────────────────────────────────────────
+def _qa_dispatch(args) -> dict:
+    """sub-subcommand -> handler. Built per call so tests can inspect it."""
+    return {
+        "create": _qa_create,
+        "list": _qa_list,
+        "run": _qa_run,
+        "heals": _qa_heals,
+        "accept": _qa_review_heal,
+        "reject": _qa_review_heal,
+        "quarantine": _qa_quarantine,
+        "unquarantine": _qa_unquarantine,
+        "auto-retry": _qa_auto_retry,
+    }
+
+
+def _qa_failed(result, prefix: str) -> bool:
+    """True when the engine call failed; prints why. Keeps the error wording
+    identical across handlers — a caller should not have to learn two
+    vocabularies for "the engine said no"."""
+    if result is None or "error" in (result or {}):
+        print(f"{prefix}: {(result or {}).get('error', 'engine unreachable')}")
+        return True
+    return False
+
+def _qa_create(args) -> int:
+    """Create a QA case, optionally authoring steps from a goal."""
+
+    flow: dict = {}
+    if getattr(args, "flow", None):
+        try:
+            flow = core._load_flow_file(args.flow)
+        except Exception as exc:
+            print(f"Could not read flow file {args.flow}: {exc}")
             return core.EXIT_ENGINE_ERROR
-        steps = flow.get("steps") or []
-        if args.goal and not steps:
-            # NL goal → template plan, no browser needed to author.
-            planned = core.api_request("POST", "/browser/sessions/plan", {
-                "url": url, "goal": args.goal,
-                "kind": args.kind or None,
-            })
-            if planned is None or "error" in (planned or {}):
-                print(f"Plan failed: {(planned or {}).get('error', 'engine unreachable')}")
-                return core.EXIT_ENGINE_ERROR
-            steps = planned.get("steps") or []
-        if not steps:
-            print("No steps: pass --goal to author from NL or --flow FILE.")
-            return core.EXIT_ENGINE_ERROR
-        result = core.api_request("POST", "/qa/cases", {
-            "name": args.name, "url": url, "steps": steps,
-            "goal": args.goal or "", "kind": args.kind or "smoke",
-            "severity": args.severity, "owner": args.owner or "",
-            "local": args.local, "dataset_id": args.dataset_id,
+    url = args.url or flow.get("url")
+    if not url:
+        print("Provide --url or include an 'url' in the flow file.")
+        return core.EXIT_ENGINE_ERROR
+    steps = flow.get("steps") or []
+    if args.goal and not steps:
+        # NL goal → template plan, no browser needed to author.
+        planned = core.api_request("POST", "/browser/sessions/plan", {
+            "url": url, "goal": args.goal,
+            "kind": args.kind or None,
         })
-        if result is None or "error" in (result or {}):
-            print(f"Create failed: {(result or {}).get('error', 'engine unreachable')}")
+        if planned is None or "error" in (planned or {}):
+            print(f"Plan failed: {(planned or {}).get('error', 'engine unreachable')}")
             return core.EXIT_ENGINE_ERROR
-        if result.get("placeholders"):
-            print(f"  placeholders: {', '.join(result['placeholders'])}")
-        print(f"QA case #{result['id']} '{result['name']}' "
-              f"({result['kind']}, {len(result['steps'])} steps)")
-        return core.EXIT_OK
-    if sub == "list":
-        result = core.api_request("GET", "/qa/cases")
-        if result is None:
+        steps = planned.get("steps") or []
+    if not steps:
+        print("No steps: pass --goal to author from NL or --flow FILE.")
+        return core.EXIT_ENGINE_ERROR
+    result = core.api_request("POST", "/qa/cases", {
+        "name": args.name, "url": url, "steps": steps,
+        "goal": args.goal or "", "kind": args.kind or "smoke",
+        "severity": args.severity, "owner": args.owner or "",
+        "local": args.local, "dataset_id": args.dataset_id,
+    })
+    if result is None or "error" in (result or {}):
+        print(f"Create failed: {(result or {}).get('error', 'engine unreachable')}")
+        return core.EXIT_ENGINE_ERROR
+    if result.get("placeholders"):
+        print(f"  placeholders: {', '.join(result['placeholders'])}")
+    print(f"QA case #{result['id']} '{result['name']}' "
+          f"({result['kind']}, {len(result['steps'])} steps)")
+    return core.EXIT_OK
+
+
+def _qa_list(args) -> int:
+    """List cases with their enabled flag and last verdict."""
+
+    result = core.api_request("GET", "/qa/cases")
+    if result is None:
+        return core.EXIT_ENGINE_ERROR
+    for case in result.get("cases") or []:
+        mark = "on " if case.get("enabled") else "off"
+        print(f"  #{case['id']} [{mark}] {case['name']} "
+              f"({case['kind']}) — {case.get('last_status') or 'never run'}")
+    print(f"{result.get('count', 0)} case(s)")
+    return core.EXIT_OK
+
+
+def _qa_run(args) -> int:
+    """Run a case, optionally across dataset rows and viewports."""
+
+    rows = None
+    if getattr(args, "dataset_file", None):
+        try:
+            raw = Path(args.dataset_file).read_text()
+            doc = json.loads(raw)
+            rows = doc.get("rows", doc) if isinstance(doc, dict) else doc
+            if not isinstance(rows, list):
+                raise ValueError("expected a list or {'rows': [...]}")
+        except Exception as exc:
+            print(f"Could not read dataset file: {exc}")
             return core.EXIT_ENGINE_ERROR
-        for case in result.get("cases") or []:
-            mark = "on " if case.get("enabled") else "off"
-            print(f"  #{case['id']} [{mark}] {case['name']} "
-                  f"({case['kind']}) — {case.get('last_status') or 'never run'}")
-        print(f"{result.get('count', 0)} case(s)")
-        return core.EXIT_OK
-    if sub == "run":
-        rows = None
-        if getattr(args, "dataset_file", None):
+    viewport_matrix = None
+    if getattr(args, "viewports", None):
+        viewport_matrix = []
+        for spec in args.viewports:
             try:
-                raw = Path(args.dataset_file).read_text()
-                doc = json.loads(raw)
-                rows = doc.get("rows", doc) if isinstance(doc, dict) else doc
-                if not isinstance(rows, list):
-                    raise ValueError("expected a list or {'rows': [...]}")
-            except Exception as exc:
-                print(f"Could not read dataset file: {exc}")
+                name, size = spec.split("=", 1)
+                w, h = size.lower().split("x", 1)
+                viewport_matrix.append({
+                    "name": name.strip(),
+                    "viewport": {"width": int(w), "height": int(h)},
+                })
+            except ValueError:
+                print(f"Bad --viewport spec {spec!r} "
+                      "(want NAME=WIDTHxHEIGHT, e.g. mobile=390x844)")
                 return core.EXIT_ENGINE_ERROR
-        viewport_matrix = None
-        if getattr(args, "viewports", None):
-            viewport_matrix = []
-            for spec in args.viewports:
-                try:
-                    name, size = spec.split("=", 1)
-                    w, h = size.lower().split("x", 1)
-                    viewport_matrix.append({
-                        "name": name.strip(),
-                        "viewport": {"width": int(w), "height": int(h)},
-                    })
-                except ValueError:
-                    print(f"Bad --viewport spec {spec!r} "
-                          "(want NAME=WIDTHxHEIGHT, e.g. mobile=390x844)")
-                    return core.EXIT_ENGINE_ERROR
-        result = core.api_request("POST", f"/qa/cases/{args.case_id}/run", {
-            "local": args.local, "approve": args.approve,
-            "stop_on_failure": args.stop_on_failure,
-            "dataset_rows": rows, "junit": bool(args.junit_out),
-            "viewport_matrix": viewport_matrix,
-            "force": bool(getattr(args, "force", False)),
-        })
-        if result is None:
-            return core.EXIT_ENGINE_ERROR
-        if "error" in result:
-            print(f"Run failed: {result['error']}")
-            return core.EXIT_ENGINE_ERROR
-        if result.get("matrix"):
-            print(f"QA case #{result['case_id']} "
-                  f"{'PASS' if result.get('ok') else 'FAIL'} — "
-                  f"{result.get('passed_rows', 0)}/{result.get('rows', 0)} rows")
-            for one in result.get("runs") or []:
-                mark = "PASS" if one.get("ok") else "FAIL"
-                print(f"  row {one.get('dataset_index')}: {mark} "
-                      f"{one.get('passed', 0)}/{one.get('total', 0)} steps "
-                      f"(run #{one.get('run_id')})")
-                if one.get("unbound"):
-                    print(f"    unbound: {', '.join(one['unbound'])}")
-            xml = result.get("junit")
-            if xml and args.junit_out:
-                Path(args.junit_out).write_text(xml)
-                print(f"  junit: {args.junit_out}")
-            if getattr(args, "sarif_out", None):
-                sarif = core.api_request(
-                    "GET", f"/qa/cases/{args.case_id}/sarif?limit=1")
-                if sarif is not None:
-                    Path(args.sarif_out).write_text(json.dumps(sarif))
-                    print(f"  sarif: {args.sarif_out}")
-            return core.EXIT_OK if result.get("ok") else core.EXIT_GATE_FAILED
-        status = "PASS" if result.get("ok") else "FAIL"
-        if result.get("status") == "flaky":
-            status = "FLAKY (green)"
-        heals = result.get("healed_steps", 0)
-        extra = f" (+{heals} healed)" if heals else ""
-        print(f"QA case #{result['case_id']} {status} — "
-              f"{result.get('passed', 0)}/{result.get('total', 0)} steps{extra} "
-              f"(run #{result.get('run_id')})")
-        if result.get("unbound"):
-            print(f"  unbound placeholders: {', '.join(result['unbound'])}")
-        health = result.get("health") or {}
-        if health.get("action"):
-            print(f"  health: {health['action']} — "
-                  f"{health.get('quarantine_reason') or 'green streak'}")
-        if result.get("quarantine_reason"):
-            print(f"  quarantined: {result['quarantine_reason']}")
+    result = core.api_request("POST", f"/qa/cases/{args.case_id}/run", {
+        "local": args.local, "approve": args.approve,
+        "stop_on_failure": args.stop_on_failure,
+        "dataset_rows": rows, "junit": bool(args.junit_out),
+        "viewport_matrix": viewport_matrix,
+        "force": bool(getattr(args, "force", False)),
+    })
+    if result is None:
+        return core.EXIT_ENGINE_ERROR
+    if "error" in result:
+        print(f"Run failed: {result['error']}")
+        return core.EXIT_ENGINE_ERROR
+    if result.get("matrix"):
+        print(f"QA case #{result['case_id']} "
+              f"{'PASS' if result.get('ok') else 'FAIL'} — "
+              f"{result.get('passed_rows', 0)}/{result.get('rows', 0)} rows")
+        for one in result.get("runs") or []:
+            mark = "PASS" if one.get("ok") else "FAIL"
+            print(f"  row {one.get('dataset_index')}: {mark} "
+                  f"{one.get('passed', 0)}/{one.get('total', 0)} steps "
+                  f"(run #{one.get('run_id')})")
+            if one.get("unbound"):
+                print(f"    unbound: {', '.join(one['unbound'])}")
         xml = result.get("junit")
-        if xml:
-            if args.junit_out == "-":
-                print(xml)
-            elif args.junit_out:
-                Path(args.junit_out).write_text(xml)
-                print(f"  junit: {args.junit_out}")
-        for heal in result.get("heals") or []:
-            print(f"  heal proposed #{heal['id']}: "
-                  f"'{heal['old_target']}' → '{heal['new_target']}' "
-                  f"(accept: jambu qa accept {heal['id']})")
-        for step in result.get("failed_steps") or []:
-            print(f"  FAIL #{step.get('i')} {step.get('action')} — "
-                  f"{step.get('reason')}: {step.get('error')}")
+        if xml and args.junit_out:
+            Path(args.junit_out).write_text(xml)
+            print(f"  junit: {args.junit_out}")
+        if getattr(args, "sarif_out", None):
+            sarif = core.api_request(
+                "GET", f"/qa/cases/{args.case_id}/sarif?limit=1")
+            if sarif is not None:
+                Path(args.sarif_out).write_text(json.dumps(sarif))
+                print(f"  sarif: {args.sarif_out}")
         return core.EXIT_OK if result.get("ok") else core.EXIT_GATE_FAILED
-    if sub == "heals":
-        result = core.api_request("GET", "/qa/heals?status=proposed")
-        if result is None:
-            return core.EXIT_ENGINE_ERROR
-        heals = result.get("heals") or []
-        if not heals:
-            print("No proposed heals. Selectors are healthy.")
-            return core.EXIT_OK
-        for heal in heals:
-            print(f"  #{heal['id']} case #{heal['case_id']} "
-                  f"step {heal['step_index']}: "
-                  f"'{heal['old_target']}' → '{heal['new_target']}'")
+    status = "PASS" if result.get("ok") else "FAIL"
+    if result.get("status") == "flaky":
+        status = "FLAKY (green)"
+    heals = result.get("healed_steps", 0)
+    extra = f" (+{heals} healed)" if heals else ""
+    print(f"QA case #{result['case_id']} {status} — "
+          f"{result.get('passed', 0)}/{result.get('total', 0)} steps{extra} "
+          f"(run #{result.get('run_id')})")
+    if result.get("unbound"):
+        print(f"  unbound placeholders: {', '.join(result['unbound'])}")
+    health = result.get("health") or {}
+    if health.get("action"):
+        print(f"  health: {health['action']} — "
+              f"{health.get('quarantine_reason') or 'green streak'}")
+    if result.get("quarantine_reason"):
+        print(f"  quarantined: {result['quarantine_reason']}")
+    xml = result.get("junit")
+    if xml:
+        if args.junit_out == "-":
+            print(xml)
+        elif args.junit_out:
+            Path(args.junit_out).write_text(xml)
+            print(f"  junit: {args.junit_out}")
+    for heal in result.get("heals") or []:
+        print(f"  heal proposed #{heal['id']}: "
+              f"'{heal['old_target']}' → '{heal['new_target']}' "
+              f"(accept: jambu qa accept {heal['id']})")
+    for step in result.get("failed_steps") or []:
+        print(f"  FAIL #{step.get('i')} {step.get('action')} — "
+              f"{step.get('reason')}: {step.get('error')}")
+    return core.EXIT_OK if result.get("ok") else core.EXIT_GATE_FAILED
+
+
+def _qa_heals(args) -> int:
+    """List proposed selector heals."""
+
+    result = core.api_request("GET", "/qa/heals?status=proposed")
+    if result is None:
+        return core.EXIT_ENGINE_ERROR
+    heals = result.get("heals") or []
+    if not heals:
+        print("No proposed heals. Selectors are healthy.")
         return core.EXIT_OK
-    if sub in ("accept", "reject"):
-        result = core.api_request("POST", f"/qa/heals/{args.heal_id}", {
-            "accept": sub == "accept", "actor": args.actor,
-        })
-        if result is None or "error" in (result or {}):
-            print(f"Decide failed: {(result or {}).get('error', 'engine unreachable')}")
-            return core.EXIT_ENGINE_ERROR
-        print(f"Heal #{result['id']} {result['status']}.")
-        return core.EXIT_OK
-    if sub == "quarantine":
-        result = core.api_request("POST", f"/qa/cases/{args.case_id}/quarantine", {
-            "reason": args.reason, "actor": args.actor})
-        if result is None or "error" in (result or {}):
-            print(f"Quarantine failed: {(result or {}).get('error', 'engine unreachable')}")
-            return core.EXIT_ENGINE_ERROR
-        print(f"Case #{result['id']} quarantined "
-              f"({result.get('quarantine_reason') or 'no reason'}).")
-        return core.EXIT_OK
-    if sub == "unquarantine":
-        result = core.api_request("POST", f"/qa/cases/{args.case_id}/unquarantine",
-                             {"reason": "", "actor": "qa-lead"})
-        if result is None or "error" in (result or {}):
-            print(f"Unquarantine failed: {(result or {}).get('error', 'engine unreachable')}")
-            return core.EXIT_ENGINE_ERROR
-        print(f"Case #{result['id']} unquarantined.")
-        return core.EXIT_OK
-    if sub == "auto-retry":
-        result = core.api_request("POST", f"/qa/cases/{args.case_id}/auto-retry",
-                             {"enabled": args.enabled})
-        if result is None or "error" in (result or {}):
-            print(f"Toggle failed: {(result or {}).get('error', 'engine unreachable')}")
-            return core.EXIT_ENGINE_ERROR
-        print(f"Case #{result['id']} auto-retry "
-              f"{'on' if result.get('auto_retry') else 'off'}.")
-        return core.EXIT_OK
-    print("jambu qa create|list|run|heals|accept|reject|quarantine|"
-          "unquarantine|auto-retry|dataset --help")
-    return core.EXIT_ENGINE_ERROR
+    for heal in heals:
+        print(f"  #{heal['id']} case #{heal['case_id']} "
+              f"step {heal['step_index']}: "
+              f"'{heal['old_target']}' → '{heal['new_target']}'")
+    return core.EXIT_OK
+
+
+def _qa_review_heal(args, accept: bool = True) -> int:
+    """Accept or reject a proposed heal.
+
+    One handler for both verbs: the request body differs by a
+    boolean, and keeping them together is what makes it obvious
+    that they cannot drift apart."""
+
+    result = core.api_request("POST", f"/qa/heals/{args.heal_id}", {
+        "accept": accept, "actor": args.actor,
+    })
+    if result is None or "error" in (result or {}):
+        print(f"Decide failed: {(result or {}).get('error', 'engine unreachable')}")
+        return core.EXIT_ENGINE_ERROR
+    print(f"Heal #{result['id']} {result['status']}.")
+    return core.EXIT_OK
+
+
+def _qa_quarantine(args) -> int:
+    """Quarantine a flaky case so the gate stops trusting it."""
+
+    result = core.api_request("POST", f"/qa/cases/{args.case_id}/quarantine", {
+        "reason": args.reason, "actor": args.actor})
+    if result is None or "error" in (result or {}):
+        print(f"Quarantine failed: {(result or {}).get('error', 'engine unreachable')}")
+        return core.EXIT_ENGINE_ERROR
+    print(f"Case #{result['id']} quarantined "
+          f"({result.get('quarantine_reason') or 'no reason'}).")
+    return core.EXIT_OK
+
+
+def _qa_unquarantine(args) -> int:
+    """Release a quarantined case."""
+
+    result = core.api_request("POST", f"/qa/cases/{args.case_id}/unquarantine",
+                         {"reason": "", "actor": "qa-lead"})
+    if result is None or "error" in (result or {}):
+        print(f"Unquarantine failed: {(result or {}).get('error', 'engine unreachable')}")
+        return core.EXIT_ENGINE_ERROR
+    print(f"Case #{result['id']} unquarantined.")
+    return core.EXIT_OK
+
+
+def _qa_auto_retry(args) -> int:
+    """Toggle per-case auto-retry."""
+
+    result = core.api_request("POST", f"/qa/cases/{args.case_id}/auto-retry",
+                         {"enabled": args.enabled})
+    if result is None or "error" in (result or {}):
+        print(f"Toggle failed: {(result or {}).get('error', 'engine unreachable')}")
+        return core.EXIT_ENGINE_ERROR
+    print(f"Case #{result['id']} auto-retry "
+          f"{'on' if result.get('auto_retry') else 'off'}.")
+    return core.EXIT_OK
+
+
 
 
 def cmd_qa_dataset(args) -> int:

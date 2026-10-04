@@ -270,6 +270,21 @@ row-count cap cannot be bypassed by passing rows directly, and the matrix size
 guard is expressed in **cells** because cells are what consume a browser
 session.
 
+### Changed — `jambu qa` is a dispatch table, and it finally has tests
+
+`cmd_qa` was 196 lines of `if sub == ...: ... return` over nine
+sub-subcommands, and **nothing tested it** — the CLI suite covered audit,
+status, diff, dcm and the rest, but `jambu qa` had zero coverage. Each verb is
+now a `_qa_<sub>` handler and `cmd_qa` is a 16-line dispatch, so each one is
+callable directly with a fake `args` namespace and a stubbed engine.
+
+`tests/test_cli_qa_commands.py` (28 tests) pins what a CI user actually reads:
+the exit code is the gate, so a failed run exits `EXIT_GATE_FAILED` even though
+the command worked; `flaky` renders as its own state and never as a plain PASS;
+`accept` and `reject` share one handler and send opposite booleans; a bad
+`--viewport` spec names the format it wanted. Confirmed to fail when the flaky
+rendering or the accept/reject polarity is flipped.
+
 ### Changed — modularity and measurable gates
 
 - **Step actions split by family** — `browser_agent._run_step` was the repo's
@@ -290,10 +305,10 @@ session.
   `init_db` is idempotent, and asserts every helper is actually called — so a
   helper that is defined but not invoked, which would silently drop a table
   from a fresh install, fails the suite.
-- Metrics: `silent_excepts` 71 → 0, `long_functions` 17 → 10, `long_files` 4 → 0,
+- Metrics: `silent_excepts` 71 → 0, `long_functions` 17 → 9, `long_files` 4 → 0,
   `docstring_ratio` 0.577 → 0.607, `mcp_server.py` 1,894 → 86 lines,
   `browser_agent.py` 3,402 → 1,370 lines, `cli/jambu.py` 2,108 → 84 lines,
-  `decentralized/simulation.py` 1,542 → 5 modules. Suite: 2077 passed, 9 skipped.
+  `decentralized/simulation.py` 1,542 → 5 modules. Suite: 2105 passed, 9 skipped.
 
 ## [3.4.0] - 2026-10-03
 
