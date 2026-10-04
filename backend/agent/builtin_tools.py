@@ -426,9 +426,9 @@ async def browser_import_playwright(
 # Registration
 # ---------------------------------------------------------------------------
 
-def register_builtin_tools(registry: Optional[ToolRegistry] = None) -> ToolRegistry:
-    """Register all built-in tools into the registry."""
-    r = registry or get_registry()
+
+def _register_web(r: ToolRegistry) -> None:
+    """Web access: search and scrape."""
     r.register(
         "web_search", web_search,
         description="Search the web using the multi-engine metasearch (SearXNG, DuckDuckGo, Google).",
@@ -441,11 +441,11 @@ def register_builtin_tools(registry: Optional[ToolRegistry] = None) -> ToolRegis
         requires_network=True,
         risk_level=RiskLevel.LOW,
     )
-    r.register(
-        "vault_get", vault_get,
-        description="Look up a credential from the encrypted vault for a given domain.",
-        risk_level=RiskLevel.MEDIUM,
-    )
+
+
+
+def _register_knowledge(r: ToolRegistry) -> None:
+    """The memory store: query it, recall from it, write to it."""
     r.register(
         "knowledge_query", knowledge_query,
         description="Query the knowledge graph for an entity and its relations.",
@@ -461,11 +461,32 @@ def register_builtin_tools(registry: Optional[ToolRegistry] = None) -> ToolRegis
         description="Store a new memory entry (fact, preference, context, learning, etc.) for the user.",
         risk_level=RiskLevel.MEDIUM,
     )
+
+
+
+def _register_secrets(r: ToolRegistry) -> None:
+    """The credential vault. Separate because it is the only group
+    that hands an agent a secret."""
+    r.register(
+        "vault_get", vault_get,
+        description="Look up a credential from the encrypted vault for a given domain.",
+        risk_level=RiskLevel.MEDIUM,
+    )
+
+
+
+def _register_execution(r: ToolRegistry) -> None:
+    """Sandboxed code execution — MEDIUM risk, gated on approval."""
     r.register(
         "code_exec", code_exec,
         description="Execute Python code in a sandboxed subprocess with timeout.",
         risk_level=RiskLevel.HIGH,
     )
+
+
+
+def _register_goals(r: ToolRegistry) -> None:
+    """Goal tracking and the URL risk shield."""
     r.register(
         "goal_set", goal_set,
         description="Set a long-running goal for the agent to pursue across sessions.",
@@ -477,11 +498,22 @@ def register_builtin_tools(registry: Optional[ToolRegistry] = None) -> ToolRegis
         requires_network=True,
         risk_level=RiskLevel.LOW,
     )
+
+
+
+def _register_answer(r: ToolRegistry) -> None:
+    """The terminal step every run must end with. Declared here so the
+    registry contains it even when no goal was set."""
     r.register(
         "final_answer", final_answer,
         description="Signal that the agent has produced its final answer. Stops the loop.",
         risk_level=RiskLevel.LOW,
     )
+
+
+
+def _register_browser_actions(r: ToolRegistry) -> None:
+    """Browser primitives: navigate, click, extract, fill."""
     r.register(
         "browser_navigate", browser_navigate,
         description="Navigate the browser to a URL using Playwright. Returns page title and visible text content.",
@@ -505,6 +537,18 @@ def register_builtin_tools(registry: Optional[ToolRegistry] = None) -> ToolRegis
         requires_network=True,
         risk_level=RiskLevel.MEDIUM,
     )
+
+
+
+def _register_browser_testing(r: ToolRegistry) -> None:
+    """Declarative browser testing: flows, planning and Playwright
+    import.
+
+    This registrar is the longest because three of these tools
+    declare their parameters as explicit JSON Schema. That is
+    deliberate — the schema is what the planner model reads to
+    decide how to call the tool, so a vague schema here shows
+    up as a bad plan."""
     r.register(
         "browser_test_flow", browser_test_flow,
         description=(
@@ -611,4 +655,29 @@ def register_builtin_tools(registry: Optional[ToolRegistry] = None) -> ToolRegis
         },
         risk_level=RiskLevel.LOW,
     )
+
+
+def register_builtin_tools(registry: Optional[ToolRegistry] = None) -> ToolRegistry:
+    """Register all built-in tools into the registry.
+
+    The registrations are grouped by domain — web, knowledge, secrets,
+    execution, goals, the answer, browser actions, browser testing — each in
+    its own registrar below. This function exists to call all of them and hand
+    back the registry, because callers depend on that return value.
+
+    Order matters only for readability: `ToolRegistry.register` is idempotent,
+    so registering the same name twice keeps the first.
+    """
+    r = registry or get_registry()
+    for register in (
+        _register_web,
+        _register_knowledge,
+        _register_secrets,
+        _register_execution,
+        _register_goals,
+        _register_answer,
+        _register_browser_actions,
+        _register_browser_testing,
+    ):
+        register(r)
     return r

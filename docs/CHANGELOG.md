@@ -285,6 +285,26 @@ the command worked; `flaky` renders as its own state and never as a plain PASS;
 `--viewport` spec names the format it wanted. Confirmed to fail when the flaky
 rendering or the accept/reject polarity is flipped.
 
+### Changed — built-in tool registration is grouped by domain
+
+`register_builtin_tools` registered 18 tools in 186 lines, and the only way to
+answer "what risk level does `code_exec` declare" was to read past six other
+registrations. It is now eight registrars — web, knowledge, secrets, execution,
+goals, answer, browser actions, browser testing — each with its own docstring,
+called by a 30-line `register_builtin_tools` that keeps the signature and the
+returned registry that callers depend on.
+
+Verified identical before committing: same 17 tool names, descriptions, risk
+levels, JSON schemas and network flags.
+
+`tests/test_builtin_tool_registry.py` (20 tests) pins the contract the split
+depends on, plus two safety properties that a move could quietly lose:
+`code_exec` is the only HIGH-risk built-in and `vault_get` is MEDIUM — a
+careless edit that dropped either would make the registry approve it — and
+`final_answer` is always registered, because every run ends with it. The groups
+are asserted to be disjoint and to partition the surface, so a copy-paste that
+registers `vault_get` in the web group fails (confirmed).
+
 ### Changed — modularity and measurable gates
 
 - **Step actions split by family** — `browser_agent._run_step` was the repo's
@@ -305,10 +325,10 @@ rendering or the accept/reject polarity is flipped.
   `init_db` is idempotent, and asserts every helper is actually called — so a
   helper that is defined but not invoked, which would silently drop a table
   from a fresh install, fails the suite.
-- Metrics: `silent_excepts` 71 → 0, `long_functions` 17 → 9, `long_files` 4 → 0,
+- Metrics: `silent_excepts` 71 → 0, `long_functions` 17 → 8, `long_files` 4 → 0,
   `docstring_ratio` 0.577 → 0.607, `mcp_server.py` 1,894 → 86 lines,
   `browser_agent.py` 3,402 → 1,370 lines, `cli/jambu.py` 2,108 → 84 lines,
-  `decentralized/simulation.py` 1,542 → 5 modules. Suite: 2105 passed, 9 skipped.
+  `decentralized/simulation.py` 1,542 → 5 modules. Suite: 2125 passed, 9 skipped.
 
 ## [3.4.0] - 2026-10-03
 

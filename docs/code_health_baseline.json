@@ -32,11 +32,11 @@
       "debug_prints": 0,
       "documented_defs": 18,
       "duplicate_definitions": [],
-      "functions": 22,
-      "lines": 614,
-      "long_functions": 1,
-      "longest_function": "register_builtin_tools",
-      "longest_function_loc": 186,
+      "functions": 30,
+      "lines": 683,
+      "long_functions": 0,
+      "longest_function": "_register_browser_testing",
+      "longest_function_loc": 115,
       "path": "backend/agent/builtin_tools.py",
       "public_defs": 18,
       "silent_excepts": 0,
@@ -3466,9 +3466,9 @@
     "duplicate_definitions": 0,
     "files": 247,
     "long_files": 0,
-    "long_functions": 9,
+    "long_functions": 8,
     "public_defs": 1945,
     "silent_excepts": 0,
-    "total_lines": 63825
+    "total_lines": 63894
   }
 }
