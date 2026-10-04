@@ -16,6 +16,7 @@ Gemma 3 variants available locally:
 - gemma3:27b (powerful, ~16GB)
 """
 
+import logging
 import asyncio
 import json
 import os
@@ -27,6 +28,8 @@ from typing import Optional, List, Dict, Tuple
 from dataclasses import dataclass, field
 
 import httpx
+
+log = logging.getLogger("jambu.model_manager")
 
 
 try:
@@ -158,7 +161,7 @@ class ModelManager:
             if resp.status_code == 200:
                 return resp.json()
         except Exception:
-            pass
+            log.debug("ollama %s request failed", endpoint, exc_info=True)
         return None
 
     async def is_ollama_running(self) -> bool:
@@ -331,7 +334,7 @@ class ModelManager:
                     for m in data.get("data", [])
                 ]
         except Exception:
-            pass
+            log.debug("llamacpp model list failed", exc_info=True)
         return []
 
     # ---- Combined Operations ----

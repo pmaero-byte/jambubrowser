@@ -502,7 +502,7 @@ async def computer_capture(region: str = "full"):
             try:
                 os.unlink(tmp_path)
             except Exception:
-                pass
+                log.debug("screenshot temp file already gone", exc_info=True)
 
 
 def _get_frontmost_window_id() -> int:

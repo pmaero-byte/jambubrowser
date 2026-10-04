@@ -12,9 +12,12 @@ Priority:
 4. Fallback to localhost defaults
 """
 
+import logging
 import os
 import psutil
 from typing import Optional, Dict
+
+log = logging.getLogger("jambu.llm_config")
 
 
 # ---- Gemma 3 Default Configuration ----
@@ -96,7 +99,7 @@ class LLMConfig:
                 if result == 0:
                     return "ollama"
         except Exception:
-            pass
+            log.debug("ollama port probe failed", exc_info=True)
 
         # 3. Check for llama.cpp
         try:
@@ -108,7 +111,7 @@ class LLMConfig:
             if result == 0:
                 return "llamacpp"
         except Exception:
-            pass
+            log.debug("llamacpp port probe failed", exc_info=True)
 
         # 4. Check for OpenAI API key
         if os.environ.get("OPENAI_API_KEY"):

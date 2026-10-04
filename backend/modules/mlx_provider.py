@@ -8,6 +8,7 @@ Models are cached locally at ~/.cache/huggingface/hub/ and loaded
 directly via mlx_lm for maximum performance on Apple Silicon.
 """
 
+import logging
 import asyncio
 import json
 import os
@@ -19,6 +20,8 @@ from pathlib import Path
 from typing import Optional, Dict, List, Tuple, AsyncGenerator
 
 import httpx
+
+log = logging.getLogger("jambu.mlx_provider")
 
 try:
     from backend.core.socks import make_async_client
@@ -259,7 +262,8 @@ async def mlx_start_server(
                                 "elapsed_sec": round(time.time() - start, 1),
                             }
                 except Exception:
-                    pass
+                    log.debug("mlx status probe failed while waiting for model load",
+                                                     exc_info=True)
             await asyncio.sleep(1)
 
         return {
@@ -523,6 +527,6 @@ def get_provider_info() -> Dict:
             import mlx_lm
             result["version"] = getattr(mlx_lm, "__version__", "unknown")
         except Exception:
-            pass
+            log.debug("mlx_lm version unavailable", exc_info=True)
     
     return result

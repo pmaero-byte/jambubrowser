@@ -20,7 +20,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
         try:
             await websocket.close(code=1008, reason="connection rejected")
         except Exception:
-            pass
+            log.debug("websocket already closed while rejecting", exc_info=True)
         return
     try:
         while True:
@@ -37,7 +37,7 @@ async def audit_websocket(websocket: WebSocket):
         try:
             await websocket.close(code=1008, reason="connection rejected")
         except Exception:
-            pass
+            log.debug("audit websocket already closed while rejecting", exc_info=True)
         return
     try:
         # Send current audit stats

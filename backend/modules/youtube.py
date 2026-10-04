@@ -11,6 +11,7 @@ Features:
 - Basic content summarization via LLM
 """
 
+import logging
 import re
 import json
 import xml.etree.ElementTree as ET
@@ -20,6 +21,8 @@ from urllib.parse import urlparse, parse_qs
 from dataclasses import dataclass, field, asdict
 
 import httpx
+
+log = logging.getLogger("jambu.youtube")
 
 try:
     from backend.core.socks import make_async_client
@@ -112,7 +115,7 @@ class YouTubeAnalyzer:
             if resp.status_code == 200:
                 return resp.json()
         except Exception:
-            pass
+            log.debug("youtube feed fetch failed", exc_info=True)
         return {}
 
     async def get_transcript(self, video_id: str) -> List[YouTubeTranscript]:

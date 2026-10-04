@@ -20,6 +20,7 @@ Phase 1 of the HarnessX integration roadmap.
 """
 
 from __future__ import annotations
+import logging
 
 import copy
 import hashlib
@@ -28,6 +29,8 @@ import time
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 from typing import Any, Optional
+
+log = logging.getLogger("jambu.harness")
 
 
 # ---------------------------------------------------------------------------
@@ -475,7 +478,8 @@ def apply_edit(config: HarnessConfig, edit: HarnessEdit) -> HarnessConfig:
         try:
             edit.old_value = getattr(obj, field)
         except Exception:
-            pass
+            log.debug("edit target has no %s; treating old_value as unset", field,
+                                        exc_info=True)
 
     _apply_field_edit(obj, field, edit)
     # Recompute config_id so it reflects the edited content. clone() above hashed
@@ -735,7 +739,8 @@ class HarnessConfigStore:
                         continue
                     configs.append(config)
             except Exception:
-                pass
+                log.debug("skipping unreadable harness config %s", path.stem,
+                                                 exc_info=True)
             if len(configs) >= limit:
                 break
         return configs

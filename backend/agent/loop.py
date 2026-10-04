@@ -201,7 +201,8 @@ class Agent:
                 if hints:
                     context = (context + "\n" + hints) if context else hints
             except Exception:
-                pass  # procedural memory is advisory; never block plan generation
+                # Procedural memory is advisory; never block plan generation.
+                                log.debug("procedural memory hints unavailable", exc_info=True)
 
         # Plan library: advise the planner with the template that worked for
         # a near-identical goal last time. Advisory only — the planner still
@@ -214,7 +215,8 @@ class Agent:
             if template:
                 context = (context + "\n\n" + template) if context else template
         except Exception:
-            pass  # the library is advisory; never block plan generation
+            # The plan library is advisory; never block plan generation.
+                        log.debug("planner library advice unavailable", exc_info=True)
 
         # Step 0: Decompose goal into a plan
         try:

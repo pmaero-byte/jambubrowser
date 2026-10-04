@@ -9,10 +9,13 @@ multi-line-chain corners are deliberately left to that list rather than
 guessed.
 """
 from __future__ import annotations
+import logging
 
 import json
 import re
 from typing import Any, Optional
+
+log = logging.getLogger("jambu.browser_codegen")
 
 
 def _s(value: Any) -> str:
@@ -863,7 +866,9 @@ def _loose_json_array(text: str):
     try:
         return json.loads(text)
     except Exception:
-        pass
+        # Expected: JS array literals are not strict JSON. The lenient parser
+                # below is the real path for this function.
+                log.debug("array literal is not strict JSON", exc_info=True)
     fixed = re.sub(
         r"'((?:\\.|[^'\\])*)'",
         lambda m: '"' + m.group(1).replace('"', '\\"') + '"', text,
@@ -1193,3 +1198,4 @@ def _unparsed_reason(text: str) -> Optional[str]:
     if re.match(r"await\s+(?!page\.|expect\()", stripped):
         return "custom-helper"
     return None
+

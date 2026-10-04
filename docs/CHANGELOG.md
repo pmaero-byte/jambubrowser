@@ -31,15 +31,16 @@ on `F821`/`F811` so the next one cannot land.
 
 ### Changed — swallowed failures are now visible
 
-- Every `except Exception: pass` in the browser session, engine lifecycle,
-  peer discovery, sandbox, goal orchestrator, MCP registry and database layers
-  now logs at `debug` (or `warning` where a leak is possible) with the reason
-  the failure is ignorable. Behaviour is unchanged — still non-fatal — but the
-  failure is no longer invisible. The engine's shutdown path was swallowing
-  everything, which is precisely how a leaked browser or a stuck session becomes
-  undebuggable after the fact.
-- Six modules that had no logger at all (`browser`, `p2p_discovery`, `sandbox`,
-  `goal_orchestrator`, `mcp_server`, `database`) gained one.
+- **Zero swallowed exceptions repo-wide.** Every `except Exception: pass` is
+  gone: 71 → 0. Each now logs at `debug` (or `warning` where a leak is
+  possible) with the reason the failure is ignorable. Behaviour is unchanged —
+  still non-fatal — but the failure is no longer invisible. The engine's
+  shutdown path was swallowing everything, which is precisely how a leaked
+  browser or a stuck session becomes undebuggable after the fact. Nineteen
+  modules that had no logger at all gained one.
+- The zero is now an invariant, not a number: `tests/test_code_health.py`
+  asserts no module contains a bare `except Exception: pass`, and the
+  baseline gate fails if the count ever rises.
 
 ### Changed — modularity and measurable gates
 
@@ -52,8 +53,8 @@ on `F821`/`F811` so the next one cannot land.
   longest function left (174 lines).
 - **CI now fails on undefined names** — `ruff check --select F821,F811` is a
   gate, not a warning.
-- Metrics: `silent_excepts` 71 → 30, `long_functions` 17 → 15,
-  `browser_agent.py` 3,402 → 2,883 lines. Suite: 1943 passed, 9 skipped.
+- Metrics: `silent_excepts` 71 → 0, `long_functions` 17 → 15,
+  `browser_agent.py` 3,402 → 2,883 lines. Suite: 1944 passed, 9 skipped.
 
 ## [3.4.0] - 2026-10-03
 

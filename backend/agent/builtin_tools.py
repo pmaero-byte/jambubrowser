@@ -51,7 +51,7 @@ async def _teardown_browser():
         try:
             await _browser.close()
         except Exception:
-            pass
+            log.debug("browser close during cleanup failed", exc_info=True)
         _browser = None
 
 

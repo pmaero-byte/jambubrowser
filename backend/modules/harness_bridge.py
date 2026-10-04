@@ -118,7 +118,7 @@ class HarnessBridge:
             if resp.status_code == 200:
                 connectors = resp.json()
         except Exception:
-            pass
+            log.debug("connector list unavailable from gateway", exc_info=True)
 
         return {
             "available": True,

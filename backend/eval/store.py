@@ -7,6 +7,7 @@ over time. Reuses the same SQLite connection as the rest of the app
 """
 
 from __future__ import annotations
+import logging
 
 import json
 import sqlite3
@@ -15,6 +16,8 @@ import time
 from typing import Optional
 
 from backend.core.database import init_db, DB_PATH
+
+log = logging.getLogger("jambu.store")
 
 
 _SCHEMA = """
@@ -182,5 +185,5 @@ def reset_store(db_path: Optional[str] = None) -> ResultsStore:
                 """)
                 conn.commit()
         except Exception:
-            pass
+            log.debug("eval store schema reset skipped", exc_info=True)
     return _STORE

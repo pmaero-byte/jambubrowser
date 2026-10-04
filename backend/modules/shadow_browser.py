@@ -12,6 +12,7 @@ explores the web while idle, building a local knowledge base
 tailored to user interests.
 """
 
+import logging
 import asyncio
 import time
 import random
@@ -30,6 +31,8 @@ except ImportError:
     make_async_client = httpx.AsyncClient
 
 from backend.core.database import get_db_cursor
+
+log = logging.getLogger("jambu.shadow_browser")
 
 
 @dataclass
@@ -146,7 +149,7 @@ class ShadowBrowser:
                     root = f"{parsed.scheme}://{parsed.hostname}"
                     self._frontier.add(URLNode(url=root, depth=0, source_url=row['url'], topic="history", priority=2))
         except Exception:
-            pass
+            log.debug("history seed skipped", exc_info=True)
 
     async def _extract_links(self, html: str, base_url: str, topic: InterestTopic) -> List[URLNode]:
         href_pattern = re.compile(r'href=["\'](https?://[^"\'\s]+)', re.I)

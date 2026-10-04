@@ -13,6 +13,7 @@ Migrations are idempotent and live in `migrations.py` (auto-applied on init).
 """
 
 from __future__ import annotations
+import logging
 
 import json
 import sqlite3
@@ -23,6 +24,8 @@ from typing import Optional
 import threading
 
 from backend.core.database import init_db, DB_PATH
+
+log = logging.getLogger("jambu.store")
 
 
 class MemoryCategory(str, Enum):
@@ -493,5 +496,5 @@ def reset_memory(db_path: Optional[str] = None) -> MemoryStore:
                 """)
                 conn.commit()
         except Exception:
-            pass
+            log.debug("memory store schema reset skipped", exc_info=True)
     return _STORE

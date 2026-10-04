@@ -15,6 +15,7 @@ Security Features:
 - Hardware-bound key derivation (machine-specific salt)
 """
 
+import logging
 import os
 import base64
 import json
@@ -31,6 +32,8 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from backend.core.database import get_db_cursor
+
+log = logging.getLogger("jambu.vault")
 
 
 # ---- Key Management ----
@@ -131,7 +134,8 @@ class SecureBuffer:
                 # Overwrite with zeros (best effort in Python)
                 self._data = b'\x00' * len(self._data)
         except Exception:
-            pass
+            # Python cannot guarantee zeroing; a failure here must not block delete.
+                        log.debug("secret buffer could not be zeroed", exc_info=True)
 
 
 # ---- Credential Vault ----

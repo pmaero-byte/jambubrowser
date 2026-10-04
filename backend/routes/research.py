@@ -470,7 +470,7 @@ async def research(req: ResearchRequest):
                         (src.get("content", "")[:50000], src.get("url", "")),
                     )
             except Exception:
-                pass
+                log.debug("source not indexed", exc_info=True)
 
         # LLM synthesis
         await broadcast_agent_state(cid, "reasoning", zone="reason")
@@ -535,7 +535,7 @@ async def _scrape_source(url: str) -> Optional[str]:
             # Last resort: stringify the dict
             return str(result)[:10000]
     except Exception:
-        pass
+        log.debug("tool result exposed no readable text field", exc_info=True)
     try:
         async with make_async_client(timeout=15.0, follow_redirects=True) as cl:
             resp = await cl.get(url, headers={"User-Agent": "Mozilla/5.0"})

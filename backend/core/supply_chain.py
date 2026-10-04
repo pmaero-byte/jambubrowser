@@ -11,6 +11,7 @@ Security Features:
 - Secure update verification
 """
 
+import logging
 import hashlib
 import json
 import os
@@ -67,7 +68,8 @@ class SupplyChainVerifier:
             hash_file.write_text(json.dumps(self._known_hashes, indent=2))
             os.chmod(hash_file, 0o600)
         except Exception:
-            pass
+            # The scan still reported; losing the cache only costs time next run.
+                        log.warning("dependency hashes not persisted", exc_info=True)
 
     def verify_package(self, package_name: str) -> DependencyInfo:
         """
@@ -94,7 +96,7 @@ class SupplyChainVerifier:
                     if hasattr(dist, '_path') and dist._path:
                         location = str(dist._path.parent)
                 except Exception:
-                    pass
+                    log.debug("no install path for %s", package_name, exc_info=True)
                     
             except (ImportError, metadata.PackageNotFoundError):
                 # Fallback to pip for older Python versions
@@ -337,6 +339,8 @@ class SupplyChainVerifier:
 
 
 import sys
+
+log = logging.getLogger("jambu.supply_chain")
 
 # Module-level singleton
 _verifier: Optional[SupplyChainVerifier] = None

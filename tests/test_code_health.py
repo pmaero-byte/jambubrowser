@@ -12,11 +12,14 @@ from pathlib import Path
 import pytest
 
 from tools.code_health import (
+    DEFAULT_ROOTS,
     analyse_file,
     analyse,
     main,
     summarise,
 )
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 SAMPLE = '''
@@ -152,6 +155,20 @@ class TestCli:
         )
         assert main(["--repo-root", str(root), "--roots", "pkg",
                      "--baseline", str(base), "--json"]) == 1
+
+    def test_repo_has_no_swallowed_exceptions(self):
+        """The repo reached zero `except Exception: pass`; keep it there.
+
+        A silent handler is how an engine shutdown ends up hiding a leaked
+        browser, so the count is pinned at zero rather than merely reported.
+        The baseline comparison already fails if this number goes *up*; this
+        test states the invariant so the intent survives a baseline rewrite.
+        """
+        reports = analyse(REPO_ROOT, list(DEFAULT_ROOTS))
+        offenders = {
+            r.path: r.silent_excepts for r in reports if r.silent_excepts
+        }
+        assert offenders == {}
 
     def test_summarise_aggregates(self, tmp_path: Path):
         p = tmp_path / "x.py"

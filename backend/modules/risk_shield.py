@@ -6,6 +6,7 @@ Checks URLs against URLhaus, PhishTank, and heuristic analysis
 before the browser navigates to them.
 """
 
+import logging
 import asyncio
 import hashlib
 import json
@@ -24,6 +25,8 @@ except ImportError:
     make_async_client = httpx.AsyncClient
 
 from backend.modules.notifications import get_notifier, Urgency
+
+log = logging.getLogger("jambu.risk_shield")
 
 
 class RiskLevel:
@@ -228,7 +231,8 @@ class RiskShield:
                 await notifier.send_security_alert(url=url, risk_type=risk_level.upper(),
                     details=result['reason'])
             except Exception:
-                pass
+                # The block already happened; a failed alert must not change that.
+                                log.warning("security alert could not be sent", exc_info=True)
 
         return result
 

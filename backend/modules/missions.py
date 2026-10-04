@@ -442,14 +442,14 @@ class MissionScheduler:
                 try:
                     await self._on_new_finding(mission, result)
                 except Exception:
-                    pass
+                    log.debug("new-finding callback failed", exc_info=True)
 
             # Notify mission complete
             if self._on_mission_complete:
                 try:
                     await self._on_mission_complete(mission, result)
                 except Exception:
-                    pass
+                    log.debug("mission-complete callback failed", exc_info=True)
 
         except Exception as e:
             error_text = f"Error: {e}"

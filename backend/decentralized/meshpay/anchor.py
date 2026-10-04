@@ -20,6 +20,7 @@ downgrades**: the record always says which transport produced it.
 """
 
 from __future__ import annotations
+import logging
 
 import hashlib
 import json
@@ -27,6 +28,8 @@ import time
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
+
+log = logging.getLogger("jambu.anchor")
 
 if TYPE_CHECKING:  # solders is an optional dependency, imported lazily below
     from solders.hash import Hash
@@ -172,7 +175,10 @@ class SolanaMemoAnchor:
             try:
                 await self._confirm(client, returned_sig)
             except Exception:
-                pass
+                # The transaction is submitted and the signature is what we anchor, so
+                            # a failed confirmation is not an anchoring failure.
+                            log.debug("anchor confirmation failed; tx already submitted",
+                                      exc_info=True)
             return returned_sig
 
     async def _get_blockhash(self, client) -> "Hash":

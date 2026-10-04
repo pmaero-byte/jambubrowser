@@ -149,7 +149,7 @@ class Notifier:
                          action_url, notification.timestamp, int(success)),
                     )
             except Exception:
-                pass
+                log.debug("notification not recorded in history", exc_info=True)
 
         return notification
 

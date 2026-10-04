@@ -39,7 +39,7 @@
       "longest_function_loc": 186,
       "path": "backend/agent/builtin_tools.py",
       "public_defs": 18,
-      "silent_excepts": 1,
+      "silent_excepts": 0,
       "todos": 0
     },
     {
@@ -103,13 +103,13 @@
       "documented_defs": 13,
       "duplicate_definitions": [],
       "functions": 28,
-      "lines": 774,
+      "lines": 779,
       "long_functions": 0,
       "longest_function": "apply_edit",
-      "longest_function_loc": 64,
+      "longest_function_loc": 65,
       "path": "backend/agent/harness.py",
       "public_defs": 23,
-      "silent_excepts": 2,
+      "silent_excepts": 0,
       "todos": 0
     },
     {
@@ -131,13 +131,13 @@
       "documented_defs": 7,
       "duplicate_definitions": [],
       "functions": 11,
-      "lines": 556,
+      "lines": 558,
       "long_functions": 1,
       "longest_function": "run",
-      "longest_function_loc": 244,
+      "longest_function_loc": 246,
       "path": "backend/agent/loop.py",
       "public_defs": 10,
-      "silent_excepts": 2,
+      "silent_excepts": 0,
       "todos": 0
     },
     {
@@ -313,13 +313,13 @@
       "documented_defs": 6,
       "duplicate_definitions": [],
       "functions": 10,
-      "lines": 207,
+      "lines": 210,
       "long_functions": 0,
       "longest_function": "detect_provider",
       "longest_function_loc": 53,
       "path": "backend/core/llm_config.py",
       "public_defs": 9,
-      "silent_excepts": 2,
+      "silent_excepts": 0,
       "todos": 0
     },
     {
@@ -495,13 +495,13 @@
       "documented_defs": 7,
       "duplicate_definitions": [],
       "functions": 15,
-      "lines": 350,
+      "lines": 354,
       "long_functions": 0,
       "longest_function": "verify_package",
       "longest_function_loc": 87,
       "path": "backend/core/supply_chain.py",
       "public_defs": 8,
-      "silent_excepts": 2,
+      "silent_excepts": 0,
       "todos": 0
     },
     {
@@ -537,13 +537,13 @@
       "documented_defs": 15,
       "duplicate_definitions": [],
       "functions": 26,
-      "lines": 575,
+      "lines": 579,
       "long_functions": 0,
       "longest_function": "find_best_credential",
       "longest_function_loc": 63,
       "path": "backend/core/vault.py",
       "public_defs": 19,
-      "silent_excepts": 1,
+      "silent_excepts": 0,
       "todos": 0
     },
     {
@@ -761,13 +761,13 @@
       "documented_defs": 2,
       "duplicate_definitions": [],
       "functions": 11,
-      "lines": 253,
+      "lines": 259,
       "long_functions": 0,
       "longest_function": "anchor",
-      "longest_function_loc": 46,
+      "longest_function_loc": 49,
       "path": "backend/decentralized/meshpay/anchor.py",
       "public_defs": 7,
-      "silent_excepts": 1,
+      "silent_excepts": 0,
       "todos": 0
     },
     {
@@ -1209,13 +1209,13 @@
       "documented_defs": 2,
       "duplicate_definitions": [],
       "functions": 9,
-      "lines": 186,
+      "lines": 189,
       "long_functions": 0,
       "longest_function": "save_suite",
       "longest_function_loc": 39,
       "path": "backend/eval/store.py",
       "public_defs": 7,
-      "silent_excepts": 1,
+      "silent_excepts": 0,
       "todos": 0
     },
     {
@@ -1629,13 +1629,13 @@
       "documented_defs": 1,
       "duplicate_definitions": [],
       "functions": 29,
-      "lines": 497,
+      "lines": 500,
       "long_functions": 0,
       "longest_function": "upsert_profile",
       "longest_function_loc": 32,
       "path": "backend/memory/store.py",
       "public_defs": 27,
-      "silent_excepts": 1,
+      "silent_excepts": 0,
       "todos": 0
     },
     {
@@ -1755,13 +1755,13 @@
       "documented_defs": 3,
       "duplicate_definitions": [],
       "functions": 44,
-      "lines": 1195,
+      "lines": 1201,
       "long_functions": 1,
       "longest_function": "_parse_line",
       "longest_function_loc": 178,
       "path": "backend/modules/browser_codegen.py",
       "public_defs": 4,
-      "silent_excepts": 1,
+      "silent_excepts": 0,
       "todos": 7
     },
     {
@@ -1971,7 +1971,7 @@
       "longest_function_loc": 74,
       "path": "backend/modules/harness_bridge.py",
       "public_defs": 14,
-      "silent_excepts": 1,
+      "silent_excepts": 0,
       "todos": 0
     },
     {
@@ -2027,7 +2027,7 @@
       "longest_function_loc": 41,
       "path": "backend/modules/missions.py",
       "public_defs": 23,
-      "silent_excepts": 2,
+      "silent_excepts": 0,
       "todos": 0
     },
     {
@@ -2035,13 +2035,13 @@
       "documented_defs": 13,
       "duplicate_definitions": [],
       "functions": 17,
-      "lines": 528,
+      "lines": 532,
       "long_functions": 0,
       "longest_function": "mlx_start_server",
-      "longest_function_loc": 92,
+      "longest_function_loc": 93,
       "path": "backend/modules/mlx_provider.py",
       "public_defs": 13,
-      "silent_excepts": 2,
+      "silent_excepts": 0,
       "todos": 0
     },
     {
@@ -2049,13 +2049,13 @@
       "documented_defs": 14,
       "duplicate_definitions": [],
       "functions": 19,
-      "lines": 480,
+      "lines": 483,
       "long_functions": 0,
       "longest_function": "pull_model",
       "longest_function_loc": 53,
       "path": "backend/modules/model_manager.py",
       "public_defs": 17,
-      "silent_excepts": 2,
+      "silent_excepts": 0,
       "todos": 0
     },
     {
@@ -2083,7 +2083,7 @@
       "longest_function_loc": 42,
       "path": "backend/modules/notifications.py",
       "public_defs": 9,
-      "silent_excepts": 1,
+      "silent_excepts": 0,
       "todos": 0
     },
     {
@@ -2147,13 +2147,13 @@
       "documented_defs": 0,
       "duplicate_definitions": [],
       "functions": 18,
-      "lines": 288,
+      "lines": 292,
       "long_functions": 0,
       "longest_function": "assess_url",
-      "longest_function_loc": 57,
+      "longest_function_loc": 58,
       "path": "backend/modules/risk_shield.py",
       "public_defs": 12,
-      "silent_excepts": 1,
+      "silent_excepts": 0,
       "todos": 0
     },
     {
@@ -2217,13 +2217,13 @@
       "documented_defs": 0,
       "duplicate_definitions": [],
       "functions": 19,
-      "lines": 263,
+      "lines": 266,
       "long_functions": 0,
       "longest_function": "run_loop",
       "longest_function_loc": 36,
       "path": "backend/modules/shadow_browser.py",
       "public_defs": 14,
-      "silent_excepts": 1,
+      "silent_excepts": 0,
       "todos": 0
     },
     {
@@ -2301,13 +2301,13 @@
       "documented_defs": 9,
       "duplicate_definitions": [],
       "functions": 15,
-      "lines": 319,
+      "lines": 322,
       "long_functions": 0,
       "longest_function": "analyze",
       "longest_function_loc": 43,
       "path": "backend/modules/youtube.py",
       "public_defs": 13,
-      "silent_excepts": 1,
+      "silent_excepts": 0,
       "todos": 0
     },
     {
@@ -2433,7 +2433,7 @@
       "longest_function_loc": 110,
       "path": "backend/routes/browser.py",
       "public_defs": 29,
-      "silent_excepts": 1,
+      "silent_excepts": 0,
       "todos": 0
     },
     {
@@ -2839,7 +2839,7 @@
       "longest_function_loc": 218,
       "path": "backend/routes/research.py",
       "public_defs": 11,
-      "silent_excepts": 2,
+      "silent_excepts": 0,
       "todos": 0
     },
     {
@@ -2951,7 +2951,7 @@
       "longest_function_loc": 29,
       "path": "backend/routes/ws.py",
       "public_defs": 2,
-      "silent_excepts": 2,
+      "silent_excepts": 0,
       "todos": 0
     },
     {
@@ -3020,7 +3020,7 @@
     "long_files": 4,
     "long_functions": 15,
     "public_defs": 1907,
-    "silent_excepts": 30,
-    "total_lines": 61929
+    "silent_excepts": 0,
+    "total_lines": 61982
   }
 }
