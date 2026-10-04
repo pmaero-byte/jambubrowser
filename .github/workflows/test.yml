@@ -135,6 +135,11 @@ jobs:
 
       - name: Ruff check
         run: |
+          # Undefined names are always a bug: the branch can only raise
+          # NameError. Three of them shipped unnoticed because the rest of the
+          # ruff output was advisory only (NetworkDecision on the redirect
+          # path, Fernet in federated RAG, finish_reason in the LLM retry).
+          ruff check --select F821,F811 backend/ cli/
           ruff check backend/ || echo "::warning::Ruff issues found"
           ruff format --check backend/ || echo "::warning::Format issues found"
 

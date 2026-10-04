@@ -50,6 +50,7 @@ from backend.modules.browser_debug import (
     diff_elements,
     map_url_for,
     match_network,
+    NetworkDecision,
     NetworkPolicy,
     parse_stack_frames,
     serialize_body,

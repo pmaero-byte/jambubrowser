@@ -17,6 +17,7 @@ Architecture:
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import re
 import time
@@ -26,6 +27,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from backend.core.database import get_db_cursor
+
+log = logging.getLogger("jambu.goal_orchestrator")
 
 
 # ---- Data Models ----
@@ -123,7 +126,7 @@ class GoalOrchestrator:
                         continue
                     goals.append(goal)
                 except Exception:
-                    pass
+                    log.debug(f"skipping unreadable goal record {f.name}", exc_info=True)
         return goals
 
     def achieve_goal(self, goal_id: str = None) -> bool:
@@ -289,7 +292,7 @@ Based on previous attempts and the current goal, identify the most promising nex
                 data = json.loads(f.read_text())
                 approaches.append(Approach(**data))
             except Exception:
-                pass
+                log.debug(f"skipping unreadable approach record {f.name}", exc_info=True)
 
         return approaches[-limit:]
 
@@ -423,7 +426,7 @@ If that fails, escalate to swarm or relax constraints.
                 if data.get('id') == approach_id:
                     return Approach(**data)
             except Exception:
-                pass
+                log.debug(f"skipping unreadable approach record {f.name}", exc_info=True)
         return None
 
     def _get_recent_approaches(self, goal_id: str, limit: int = 3) -> List[Approach]:

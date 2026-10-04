@@ -4,7 +4,10 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from backend.core.database import (
-    memory_add, memory_search, memory_list, memory_delete,
+    # Imported under an alias: this module also defines an async route handler
+    # named memory_delete, and the bare name would resolve to the route (a
+    # coroutine function) at call time instead of the DB helper.
+    memory_add, memory_search, memory_list, memory_delete as db_memory_delete,
     session_create, session_update, session_list, session_get,
     get_db_cursor,
 )
@@ -83,8 +86,7 @@ async def v1_memory_search(req: MemorySearch):
 @router.delete("/v1/memory/{entry_id}")
 async def v1_memory_delete(entry_id: int):
     """Harness-compatible: delete a memory entry."""
-    memory_delete(entry_id)
-    return {"deleted": True}
+    return {"deleted": db_memory_delete(entry_id)}
 
 
 # ── /v2/memory ──

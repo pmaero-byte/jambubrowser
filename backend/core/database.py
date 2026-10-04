@@ -23,10 +23,13 @@ except ImportError as e:
         "    pip install -r requirements.txt"
     ) from e
 
+import logging
 import os
 import threading
 from contextlib import contextmanager
 from typing import Optional
+
+log = logging.getLogger("jambu.database")
 
 DB_PATH = os.environ.get("JAMBU_DB_PATH", "rag_data.db")
 
@@ -76,7 +79,8 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
                     try:
                         sqlite_vec.load(_memory_db_conn)
                     except Exception:
-                        pass  # sqlite_vec not available
+                        log.debug("sqlite_vec unavailable; vector tables stay disabled",
+                                                  exc_info=True)
             conn = _memory_db_conn
     else:
         conn = sqlite3.connect(path)
@@ -91,7 +95,8 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
             try:
                 sqlite_vec.load(conn)
             except Exception:
-                pass  # sqlite_vec not available
+                log.debug("sqlite_vec unavailable; vector tables stay disabled",
+                                          exc_info=True)
     
     cursor = conn.cursor()
     

@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from collections import defaultdict
 
 import httpx
+from cryptography.fernet import Fernet
 
 try:
     from backend.core.socks import make_async_client

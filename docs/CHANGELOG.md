@@ -4,6 +4,57 @@ All notable changes to Jambubrowser.
 
 ## [Unreleased]
 
+### Fixed — four latent bugs that static analysis surfaced
+
+All four were paths that *could never work*: the branch referenced a name
+that did not exist, so it raised `NameError` instead of doing its job. None
+was covered by a test, and `ruff` output was advisory in CI, so they shipped.
+Each now has a regression test that fails without the fix, and CI hard-fails
+on `F821`/`F811` so the next one cannot land.
+
+- **`http_request` redirects without a network policy** (`browser_agent.py`)
+  — `NetworkDecision` was used to build the "no policy configured" verdict for
+  a 3xx on a raw adapter session but was never imported. Any redirect handled
+  on a session without a network policy raised `NameError`.
+- **Federated RAG was unconstructable** (`decentralized/federated_rag.py`)
+  — `Fernet` was referenced in the constructor and in `get_federated_rag()` but
+  never imported, so *every* instantiation raised `NameError`. The module could
+  not run at all.
+- **LLM JSON retry on a non-user history tail** (`agent/evolution.py`)
+  — `content=finish_reason + ...` referenced a name that does not exist; the
+  retry branch raised `NameError` whenever the message history did not end in a
+  user message.
+- **`DELETE /v1/memory/{id}` deleted nothing** (`routes/memory.py`) — the module
+  imported the `memory_delete` DB helper and then defined an async route of the
+  same name. The handler called the route function, got back an un-awaited
+  coroutine, and answered `{"deleted": true}` while the row survived.
+
+### Changed — swallowed failures are now visible
+
+- Every `except Exception: pass` in the browser session, engine lifecycle,
+  peer discovery, sandbox, goal orchestrator, MCP registry and database layers
+  now logs at `debug` (or `warning` where a leak is possible) with the reason
+  the failure is ignorable. Behaviour is unchanged — still non-fatal — but the
+  failure is no longer invisible. The engine's shutdown path was swallowing
+  everything, which is precisely how a leaked browser or a stuck session becomes
+  undebuggable after the fact.
+- Six modules that had no logger at all (`browser`, `p2p_discovery`, `sandbox`,
+  `goal_orchestrator`, `mcp_server`, `database`) gained one.
+
+### Changed — modularity and measurable gates
+
+- **Step actions split by family** — `browser_agent._run_step` was the repo's
+  longest function at 290 lines: preamble, dialog, navigation, interactions,
+  API calls, file I/O, evaluate, waits, screenshots and assertions in one
+  if-chain. `backend/modules/browser_step_actions.py` now owns four family
+  handlers behind a short dispatcher, each returning `(detail, evidence)` or
+  `None`. `browser_agent.py` is 3,096 → 2,883 lines and `run_flow` is now the
+  longest function left (174 lines).
+- **CI now fails on undefined names** — `ruff check --select F821,F811` is a
+  gate, not a warning.
+- Metrics: `silent_excepts` 71 → 30, `long_functions` 17 → 15,
+  `browser_agent.py` 3,402 → 2,883 lines. Suite: 1943 passed, 9 skipped.
+
 ## [3.4.0] - 2026-10-03
 
 ### Added — dynamic VPN (tunnel + rotating proxy pool)

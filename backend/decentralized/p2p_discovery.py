@@ -20,6 +20,7 @@ Features:
 import asyncio
 import hashlib
 import json
+import logging
 import socket
 import time
 import uuid
@@ -28,6 +29,8 @@ from typing import Optional, List, Dict, Set
 from dataclasses import dataclass, field
 
 import httpx
+
+log = logging.getLogger("jambu.p2p_discovery")
 
 try:
     from backend.core.socks import make_async_client
@@ -134,7 +137,8 @@ class P2PDiscovery:
                 parts = ip.split(".")
                 broadcasts.append(f"{parts[0]}.{parts[1]}.{parts[2]}.255")
         except Exception:
-            pass
+            log.debug("no interface broadcast addresses; using 255.255.255.255",
+                                  exc_info=True)
         return broadcasts
 
     async def _probe_peer(self, ip: str, port: int) -> Optional[dict]:
@@ -148,7 +152,7 @@ class P2PDiscovery:
             if resp.status_code == 200:
                 return resp.json()
         except Exception:
-            pass
+            log.debug("peer probe failed", exc_info=True)
         return None
 
     async def discover_peers(self) -> List[Peer]:
@@ -174,7 +178,7 @@ class P2PDiscovery:
             try:
                 sock.sendto(discovery_msg, (addr, SERVICE_PORT))
             except Exception:
-                pass
+                log.debug(f"discovery broadcast to {addr} failed", exc_info=True)
 
         # Listen for responses
         try:
@@ -298,7 +302,8 @@ class P2PDiscovery:
             try:
                 await self.discover_peers()
             except Exception:
-                pass
+                log.warning("peer discovery cycle failed; continuing to next tick",
+                                        exc_info=True)
             await asyncio.sleep(DISCOVERY_INTERVAL)
 
     def stop(self):

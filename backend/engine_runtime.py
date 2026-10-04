@@ -109,7 +109,7 @@ def _resolve_llm_config(cfg: dict) -> dict:
             if v and k not in merged:
                 merged[k] = v
     except Exception:
-        pass
+        log.debug("engine runtime: ignored failure", exc_info=True)
     # 3. Legacy hardcoded default as last resort
     for k, v in LATEST_LLM_CONFIG.items():
         if k not in merged:
@@ -214,7 +214,7 @@ def _peer_ip(websocket) -> str:
         if websocket.client and isinstance(websocket.client, (list, tuple)) and websocket.client:
             return str(websocket.client[0])
     except Exception:
-        pass
+        log.debug("engine runtime: ignored failure", exc_info=True)
     return "unknown"
 
 
@@ -289,7 +289,7 @@ class ConnectionManager:
             try:
                 await old.close(code=1000, reason="replaced")
             except Exception:
-                pass
+                log.debug("engine runtime: ignored failure", exc_info=True)
             self._release_ip(_peer_ip(old))
 
         await websocket.accept()

@@ -186,6 +186,42 @@ class TestProceduralMemoryRoutes:
         assert response.status_code == 404
 
 
+class TestLegacyMemoryRoutes:
+    """The v1 harness-compat memory endpoints must actually reach the DB.
+
+    ``routes/memory.py`` imported the ``memory_delete`` DB helper and then
+    defined an async route of the same name further down, so the call inside
+    ``v1_memory_delete`` resolved to the route itself: it built a coroutine,
+    never awaited it, deleted nothing, and still answered ``{"deleted": true}``.
+    """
+
+    def test_v1_delete_actually_removes_the_row(self, client):
+        from backend.core.database import get_db_cursor, memory_add
+
+        entry_id = memory_add("test", "delete me", "the removable value")
+        with get_db_cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM memory_entries WHERE id = ?",
+                        (entry_id,))
+            assert cur.fetchone()[0] == 1
+
+        response = client.delete(f"/v1/memory/{entry_id}")
+        assert response.status_code == 200
+        assert response.json()["deleted"] is True
+
+        with get_db_cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM memory_entries WHERE id = ?",
+                        (entry_id,))
+            assert cur.fetchone()[0] == 0
+
+    def test_v1_search_finds_the_entry_it_can_delete(self, client):
+        from backend.core.database import memory_add
+
+        memory_add("test", "needle in the haystack", "searchable value")
+        hits = client.post("/v1/memory/search",
+                           json={"query": "needle"}).json()["results"]
+        assert any("needle" in json.dumps(h) for h in hits)
+
+
 class TestToolManagement:
     """Tests for /tool/save, /tools, /tool/exec endpoints."""
 

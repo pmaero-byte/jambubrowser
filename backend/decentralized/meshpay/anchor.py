@@ -26,7 +26,10 @@ import json
 import time
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:  # solders is an optional dependency, imported lazily below
+    from solders.hash import Hash
 
 MEMO_PROGRAM_ID = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"
 DEVNET_RPC = "https://api.devnet.solana.com"

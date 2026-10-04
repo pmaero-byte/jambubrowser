@@ -226,7 +226,6 @@ class Harness:
 
     async def _execute_simple(self, task: Task) -> TaskResult:
         """Run task with a single LLM call (no agent)."""
-        from backend.llm import ChatMessage, Role
         messages = []
         if task.system:
             messages.append(ChatMessage(role=Role.SYSTEM, content=task.system))
@@ -243,7 +242,6 @@ class Harness:
     async def _execute_agent(self, task: Task) -> tuple[str, int, dict]:
         """Run task with the full ReAct agent loop."""
         from backend.agent import Agent
-        from backend.llm import ChatMessage, Role
         agent = Agent(
             max_steps=task.max_steps,
             max_tokens=8000,

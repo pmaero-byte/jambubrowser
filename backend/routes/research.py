@@ -19,7 +19,6 @@ from backend.core.security import is_safe_url
 log = logging.getLogger("jambu.research")
 from backend.core.privacy import sanitize_content_for_storage
 from backend.core.sandbox import execute_sandboxed
-from backend.core.database import get_db_cursor
 
 try:
     from backend.core.socks import make_async_client
@@ -257,7 +256,6 @@ async def _fetch_github(query: str) -> list:
 @router.post("/interrupt/{task_id}")
 async def interrupt_task(task_id: str, req: InterruptRequest):
     """Cancel the active task and optionally inject a new instruction."""
-    from backend.engine_runtime import cancel_flags
     flag = cancel_flags.get(task_id)
     if flag:
         flag.set()

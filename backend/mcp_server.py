@@ -21,11 +21,14 @@ autonomous research, browser automation, and knowledge management.
 
 import asyncio
 import json
+import logging
 import os
 import httpx
 from mcp.server.fastmcp import FastMCP
 
 from backend import __version__
+
+log = logging.getLogger("jambu.mcp_server")
 
 # Initialize FastMCP server for Jambubrowser
 mcp = FastMCP(f"Jambubrowser Sovereign Engine v{__version__}")
@@ -1862,7 +1865,8 @@ def apply_tool_profile(profile: str) -> list[str]:
                 mcp.remove_tool(name)
                 removed.append(name)
             except Exception:  # tool already absent
-                pass
+                log.debug(f"mcp tool {name} already absent from the registry",
+                                      exc_info=True)
         return removed
     if profile == "developer":
         try:
@@ -1877,7 +1881,8 @@ def apply_tool_profile(profile: str) -> list[str]:
                 mcp.remove_tool(name)
                 removed.append(name)
             except Exception:
-                pass
+                log.debug(f"mcp tool {name} already absent from the registry",
+                                      exc_info=True)
         return removed
     return []
 

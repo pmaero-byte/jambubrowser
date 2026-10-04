@@ -542,3 +542,84 @@ class TestRoutes:
         ).json()
         assert body["delta"]["counts"]["added"] == 1
         assert body["shown"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Regression: latent NameErrors in rarely-taken branches
+# ---------------------------------------------------------------------------
+
+class FakeResponse:
+    """Playwright-APIResponse stand-in (only the attributes http_request reads)."""
+
+    def __init__(self, status, body="{}", headers=None):
+        self.status = status
+        self._body = body
+        self.headers = headers or {}
+        self.ok = 200 <= status < 300
+
+    def json(self):
+        import json as _json
+
+        return _json.loads(self._body)
+
+    @property
+    def text(self):
+        return self._body
+
+
+class FakeRequestContext:
+    """Minimal APIRequestContext stand-in that answers with a redirect chain."""
+
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls: list[str] = []
+
+    async def fetch(self, url, **kwargs):
+        self.calls.append(url)
+        return self.responses.pop(0)
+
+
+class TestLatentNameErrors:
+    """Branches no test used to reach, where the name was never defined.
+
+    Each of these raised NameError instead of doing its job, which is the
+    worst kind of bug: it only appears when the surrounding feature is used
+    with the "unusual" configuration (no network policy, fresh manager,
+    history that does not end in a user message).
+    """
+
+    def test_http_request_follows_redirect_without_a_network_policy(self):
+        # A raw adapter has network_policy=None. The redirect fallback built a
+        # NetworkDecision for "no policy configured" — with the name never
+        # imported, every 3xx became a NameError.
+        from backend.modules.browser_agent import PlaywrightPage
+
+        ctx = FakeRequestContext([
+            FakeResponse(302, headers={"location": "https://example.com/final"}),
+            FakeResponse(200, body='{"ok": true}'),
+        ])
+        raw = FakePage()
+        raw.context = type("Ctx", (), {"request": ctx})()
+        adapter = PlaywrightPage(raw)
+        assert adapter.network_policy is None
+
+        result = run(adapter.http_request("GET", "https://example.com/start"))
+
+        assert result["status"] == 200
+        assert result["ok"] is True
+        assert ctx.calls == [
+            "https://example.com/start",
+            "https://example.com/final",
+        ]
+
+    def test_federated_rag_constructs(self):
+        # Fernet was referenced but never imported, so *every* construction
+        # raised NameError — the module was unusable, not just untested.
+        from backend.decentralized.federated_rag import FederatedRAG
+
+        assert FederatedRAG()._cipher is not None
+        # An explicit key must round-trip through the cipher.
+        from cryptography.fernet import Fernet
+
+        keyed = FederatedRAG(encryption_key=Fernet.generate_key())
+        assert keyed._cipher is not None

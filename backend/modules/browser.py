@@ -15,6 +15,7 @@ Security Features:
 
 import asyncio
 import json
+import logging
 import time
 import base64
 import hashlib
@@ -26,6 +27,8 @@ from enum import Enum
 
 from backend.core.database import get_db, get_db_cursor
 from backend.modules.fingerprint_rotator import get_rotator
+
+log = logging.getLogger("jambu.browser")
 
 
 # Lazy import for Playwright - only imported when first used
@@ -335,7 +338,8 @@ class BrowserSession:
                     }
                 """)
         except Exception:
-            pass  # Best-effort cleanup
+            log.debug("init-script cleanup failed; session may keep patched globals",
+                                  exc_info=True)
 
     async def _ensure_page(self):
         """Ensure we have an active page."""
@@ -399,7 +403,8 @@ class BrowserSession:
                     ),
                 )
         except Exception:
-            pass  # Non-critical
+            log.debug("browser session row not persisted; session stays in-memory",
+                                  exc_info=True)
 
     async def load_state(self):
         """Restore cookies and state from database (persistent mode only)."""
@@ -426,7 +431,7 @@ class BrowserSession:
                     (time.time(), self.session_id),
                 )
         except Exception:
-            pass
+            log.debug("session last_used touch failed", exc_info=True)
 
     def get_privacy_report(self) -> dict:
         """Get a report of privacy protections applied to this session."""
@@ -1016,4 +1021,5 @@ async def cleanup_browser():
         manager = get_browser_manager()
         await manager.close_all()
     except Exception:
-        pass
+        log.warning("browser sessions did not all close; contexts may leak",
+                            exc_info=True)

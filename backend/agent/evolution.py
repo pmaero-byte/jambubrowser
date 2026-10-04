@@ -117,7 +117,9 @@ async def _call_llm_json(
             if msgs and msgs[-1].role == Role.USER:
                 msgs[-1] = ChatMessage(role=Role.USER, content=msgs[-1].content + "\n\n" + hint)
             else:
-                msgs = msgs + [ChatMessage(role=Role.USER, content=finish_reason + "\n\n" + hint)]
+                # History did not end in a user message, so there is nothing to
+                # amend — start a fresh user turn carrying just the hint.
+                msgs = msgs + [ChatMessage(role=Role.USER, content=hint)]
     # All retries exhausted
     assert last_err is not None
     raise last_err

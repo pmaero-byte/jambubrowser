@@ -152,7 +152,7 @@ async def collect_page_data(req: AuditCollectRequest) -> AuditData:
                     "total": t.get("responseEnd", 0) - t.get("startTime", 0) if t.get("responseEnd", -1) >= 0 else -1,
                 }
         except Exception:
-            pass
+            log.debug("audit: ignored failure", exc_info=True)
 
         network_requests.append({
             "url": req.url,
@@ -172,7 +172,7 @@ async def collect_page_data(req: AuditCollectRequest) -> AuditData:
                 page_cookies = await context.cookies()
                 cookies.extend(page_cookies)
             except Exception:
-                pass
+                log.debug("audit: ignored failure", exc_info=True)
 
     console_logs: list[dict] = []
 
@@ -206,7 +206,7 @@ async def collect_page_data(req: AuditCollectRequest) -> AuditData:
         try:
             data.title = await page.title()
         except Exception:
-            pass
+            log.debug("audit: ignored failure", exc_info=True)
 
     data.load_time_ms = (time.time() - start_time) * 1000
     data.viewport_width = req.width
@@ -366,7 +366,7 @@ async def collect_page_data(req: AuditCollectRequest) -> AuditData:
             "requests": len(network_requests), "console": len(console_logs),
         })
     except Exception:
-        pass
+        log.debug("audit: ignored failure", exc_info=True)
 
     return data
 
@@ -688,7 +688,7 @@ async def _audit_event_stream(req: AuditRunRequest, on_collected=None):
             "by_severity": by_severity,
         })
     except Exception:
-        pass
+        log.debug("audit: ignored failure", exc_info=True)
 
     # Record API key usage if authenticated
     if hasattr(req, '_api_key') and req._api_key:
@@ -699,7 +699,7 @@ async def _audit_event_stream(req: AuditRunRequest, on_collected=None):
                 len(active_findings), data.load_time_ms,
             )
         except Exception:
-            pass
+            log.debug("audit: ignored failure", exc_info=True)
 
 
 def _save_audit_history(

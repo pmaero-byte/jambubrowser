@@ -17,6 +17,9 @@ import time
 import shutil
 import hashlib
 from typing import Optional
+import logging
+
+log = logging.getLogger("jambu.sandbox")
 
 
 # Import blocklist - banned modules in sandboxed code
@@ -180,7 +183,7 @@ class SubprocessSandbox:
             try:
                 shutil.rmtree(tmpdir, ignore_errors=True)
             except Exception:
-                pass
+                log.debug("sandbox temp dir cleanup failed", exc_info=True)
 
 
 class DockerSandbox:
@@ -227,7 +230,8 @@ class DockerSandbox:
                 )
                 await pull_proc.wait()
         except Exception:
-            pass
+            log.debug("sandbox image pull failed; using cached image if present",
+                                      exc_info=True)
 
     async def execute(self, code: str) -> dict:
         """
@@ -322,7 +326,7 @@ class DockerSandbox:
             try:
                 shutil.rmtree(tmpdir, ignore_errors=True)
             except Exception:
-                pass
+                log.debug("sandbox temp dir cleanup failed", exc_info=True)
 
 
 # ---- Public API ----
