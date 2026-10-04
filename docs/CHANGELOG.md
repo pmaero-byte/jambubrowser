@@ -227,6 +227,31 @@ Verified by A/B-ing the two versions: the same five scenarios (tool succeeds,
 tool reports failure, tool raises, weak verification, budget exhausted) produce
 **byte-identical event streams** — same event types, same order, same payloads.
 
+### Changed — `/research` is a pipeline of named phases
+
+The endpoint was 218 lines: task bookkeeping, an agent-delegation branch, a
+brain-only branch, provider config, six separate cancellation checks, search,
+dedup-and-rank, a risk screen, scraping, indexing and LLM synthesis — with the
+same seven-line "cancelled → broadcast → return" block written out six times.
+
+The phases are now named functions in the same module: `_agent_response`,
+`_interrupted`, `_search_all`, `_rank_results`, `_screen_sources`,
+`_scrape_sources`, `_index_sources`, `_synthesize_answer`. The endpoint is the
+sequence they imply, and every cancellation point goes through `_interrupted`,
+so "the user pressed stop" looks the same to a client whichever phase it
+happened in.
+
+Two decisions are now documented where they live rather than buried in the
+middle of the function: trust is worth five ranking points per trusted domain
+(so an institutional page outranks a better-scoring blog post), and screening
+runs on the *search* URLs, before anything is fetched, so a hostile page is
+never requested at all.
+
+`tests/test_research_phases.py` (17 tests) covers the phases directly. The
+ranking function is pure, so its ordering is pinned rather than inferred — and
+`top_n` truncating *after* ranking is the kind of thing that silently
+inverts when someone reorders two lines.
+
 ### Changed — modularity and measurable gates
 
 - **Step actions split by family** — `browser_agent._run_step` was the repo's
@@ -247,10 +272,10 @@ tool reports failure, tool raises, weak verification, budget exhausted) produce
   `init_db` is idempotent, and asserts every helper is actually called — so a
   helper that is defined but not invoked, which would silently drop a table
   from a fresh install, fails the suite.
-- Metrics: `silent_excepts` 71 → 0, `long_functions` 17 → 12, `long_files` 4 → 0,
+- Metrics: `silent_excepts` 71 → 0, `long_functions` 17 → 11, `long_files` 4 → 0,
   `docstring_ratio` 0.577 → 0.607, `mcp_server.py` 1,894 → 86 lines,
   `browser_agent.py` 3,402 → 1,370 lines, `cli/jambu.py` 2,108 → 84 lines,
-  `decentralized/simulation.py` 1,542 → 5 modules. Suite: 2032 passed, 9 skipped.
+  `decentralized/simulation.py` 1,542 → 5 modules. Suite: 2049 passed, 9 skipped.
 
 ## [3.4.0] - 2026-10-03
 

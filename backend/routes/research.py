@@ -290,11 +290,222 @@ async def _run_followup(client_id: str, query: str, task_id: str) -> None:
 
 
 # ── Research ──
+#
+# /research phases ──────────────────────────────────────────────────────
+# `research` is the sequence; these are the steps. Each one is a thing you can
+# name in a bug report ("search returned nothing", "everything got screened
+# out"), which a single 218-line function could not do.
+
+#: Domains whose score is bumped when the URL looks institutional. Deliberately
+#: a substring list, not a TLD check: ".gov.uk" and ".edu.au" are the cases that
+#: matter and they are not registrable suffixes.
+TRUSTED_DOMAINS = (".gov", ".edu", ".org", "wikipedia.org", "reuters.com")
+
+INTERRUPTED_RESPONSE = {"answer": "[INTERRUPTED]", "context": "",
+                        "sources": [], "doc_count": 0}
+
+
+async def _interrupted(cid: str, task_id: str) -> dict:
+    """Close out a cancelled run and return its response.
+
+    Written once because the cancellation check appears at six points in the
+    research pipeline — before the fallback, per source while announcing reads,
+    per source while scraping, and after synthesis — and the six copies had to
+    stay in step. Each still returns a *fresh* dict: a module-level constant
+    would be mutated by the first caller that edited the response.
+    """
+    await broadcast_task_end(cid, task_id, status="cancelled")
+    return dict(INTERRUPTED_RESPONSE)
+
+
+async def _agent_response(req: "ResearchRequest", cid: str,
+                          task_id: str) -> Optional[dict]:
+    """Delegate to the ReAct agent when the caller asked for it.
+
+    Returns None when delegation does not apply, so the caller falls through to
+    the pipeline. The agent gets the user's memory profile and retrieved
+    memories as context; its own answer is the response.
+    """
+    if not (req.use_agent and not req.brain_only):
+        return None
+    try:
+        from backend.agent import Agent
+        from backend.memory import get_memory, retrieve_relevant, format_context
+        mem = get_memory()
+        hits = retrieve_relevant(req.query, user_id=cid, k=5)
+        context_str = format_context(hits) if hits else ""
+        profile = mem.get_profile(cid)
+        if profile.work_context or profile.interests:
+            context_str += (("\n\n" if context_str else "") +
+                            f"User: {', '.join(profile.interests) or '(no interests)'}. {profile.work_context}")
+        agent = Agent(max_steps=8, max_tokens=20000, max_seconds=90)
+        result = await agent.run_to_completion(req.query, user_id=cid, context=context_str)
+        await broadcast_task_end(cid, task_id, status="completed", result_preview=result.answer[:200])
+        return {
+            "answer": result.answer,
+            "context": context_str,
+            "sources": result.sources,
+            "doc_count": len(result.sources),
+            "agent_run": {
+                "run_id": result.run_id,
+                "steps": result.steps_executed,
+                "duration_ms": result.duration_ms,
+                "tokens": result.total_usage.total_tokens,
+                "cost_usd": result.total_usage.cost_usd,
+            },
+        }
+    except Exception as e:
+        log.warning("[research] agent delegation failed: %s", e)
+
+
+async def _search_all(req: "ResearchRequest", expanded: list) -> list[dict]:
+    """Run the search phase and return raw results.
+
+    `academic` and `coding` go to a single dedicated source and are scored 100
+    because the source is curated; everything else fans out over the expanded
+    queries through the multi-engine searcher. A failing query is logged and
+    skipped — one dead engine must not lose the results from the others.
+    """
+    all_res: list[dict] = []
+    if req.domain == "academic":
+        for item in await _fetch_arxiv(req.query):
+            all_res.append({"url": item["url"], "content": item["markdown"], "score": 100})
+        return all_res
+    if req.domain == "coding":
+        for item in await _fetch_github(req.query):
+            all_res.append({"url": item["url"], "content": item["markdown"], "score": 100})
+        return all_res
+
+    from backend.modules.search import multi_engine_search
+
+    for q in expanded:
+        try:
+            for r in await multi_engine_search(q):
+                all_res.append({
+                    "url": r.get("url", ""),
+                    "content": r.get("content", ""),
+                    "score": r.get("score", 0),
+                })
+        except Exception as e:
+            log.warning("[search] error for query '%s': %r", q, e)
+            continue
+    return all_res
+
+
+def _rank_results(results: list[dict], top_n: int) -> list[dict]:
+    """Deduplicate by URL, then rank trusted domains above search score.
+
+    Trust is worth five points per matching trusted domain, which is enough to
+    float an institutional page above a higher-scoring blog post while still
+    letting a genuinely better-scoring source win among equals. Pure function —
+    the ordering is the whole behaviour and is worth testing directly.
+    """
+    seen: set[str] = set()
+    unique: list[dict] = []
+    for r in results:
+        url = r.get("url")
+        if not url or url in seen:
+            continue
+        unique.append(r)
+        seen.add(url)
+
+    unique.sort(
+        key=lambda x: (
+            sum(5 for t in TRUSTED_DOMAINS if t in x.get("url", "").lower()),
+            x.get("score", 0),
+        ),
+        reverse=True,
+    )
+    return unique[:top_n]
+
+
+async def _screen_sources(req: "ResearchRequest", results: list[dict],
+                           cid: str) -> list[dict]:
+    """Drop every URL the risk shield flags as risky.
+
+    Runs on the *search* URLs rather than on the scraped content, so a hostile
+    page is never fetched at all. A URL that survives here is not guaranteed
+    safe — it is guaranteed worth reading.
+    """
+    safe_urls = []
+    for r in results:
+        is_risky = await _assess_url_risk(r["url"], cid, req.llm_config)
+        if not is_risky:
+            safe_urls.append(r)
+    return safe_urls
+
+
+async def _scrape_sources(req: "ResearchRequest", sources: list[dict],
+                           cid: str, task_id: str) -> Optional[str]:
+    """Fetch each source's text, or return an interrupt response if cancelled.
+
+    Returns the joined context on success and None when a scrape yielded
+    nothing; the caller checks for cancellation separately because it owns the
+    broadcast. A source that fails to scrape is logged and skipped: a partial
+    answer from nine of ten sources beats no answer.
+    """
+    parts: list[str] = []
+    for src in sources:
+        if is_cancelled(task_id):
+            return None
+        try:
+            await broadcast_agent_telemetry(cid, action="Scraping source", file_path=src.get("url"))
+            scrape_result = await _scrape_source(src["url"])
+            if scrape_result:
+                parts.append(scrape_result)
+        except Exception as e:
+            log.warning("[scrape] error for %s: %r", src["url"], e)
+    return "\n\n".join(parts)
+
+
+def _index_sources(sources: list[dict]) -> None:
+    """Persist each source's snippet so later runs can recall it.
+
+    Best-effort: a row that cannot be written costs this run nothing, and the
+    next run re-searches anyway.
+    """
+    for src in sources:
+        try:
+            with get_db_cursor() as cursor:
+                cursor.execute(
+                    "INSERT OR IGNORE INTO documents (text, url) VALUES (?, ?)",
+                    (src.get("content", "")[:50000], src.get("url", "")),
+                )
+        except Exception:
+            log.debug("source not indexed", exc_info=True)
+
+
+async def _synthesize_answer(req: "ResearchRequest", sources: list[dict],
+                             context_text: str) -> tuple[str, dict]:
+    """Ask the LLM to turn the scraped sources into an answer.
+
+    120s rather than the 60s used elsewhere: this is the one call whose prompt
+    is large (8K of scraped text) and the one that runs last, so a timeout here
+    wastes the whole pipeline.
+    """
+    prompt = (
+        f"Research topic: {req.query}\n\n"
+        f"Sources analyzed ({len(sources)}):\n" + "\n".join(f"- {s['url']}" for s in sources) + "\n\n"
+        f"Scraped content:\n{context_text[:8000]}\n\n"
+        "Provide a comprehensive, well-structured answer."
+    )
+    return await _call_llm(prompt=prompt, max_tokens=2000, temperature=0.3, timeout=120.0)
 
 
 @router.post("/research")
 async def research(req: ResearchRequest):
-    """Primary autonomous research endpoint with swarm, scrape, and RAG."""
+    """Primary autonomous research endpoint with swarm, scrape, and RAG.
+
+    The pipeline, in order: (optional) delegate to the agent, resolve the
+    provider config, expand the query, search, deduplicate and rank, fall back to
+    the local vault if the web returned nothing, screen the survivors for risk,
+    scrape them, index them, and synthesise.
+
+    Cancellation is checked at four points — after the config, before the
+    fallback, before each scrape, and after synthesis — and every one of them
+    ends the run through `_interrupted`, so "the user pressed stop" looks the
+    same to a client whichever phase it happened in.
+    """
     cid = req.client_id
     global last_activity_local
     last_activity_local = time.time()
@@ -302,39 +513,11 @@ async def research(req: ResearchRequest):
     task_id = _new_task_id()
     await broadcast_task_start(cid, req.query, task_id)
 
-    # V2 Agent Delegation
-    if req.use_agent and not req.brain_only:
-        try:
-            from backend.agent import Agent
-            from backend.memory import get_memory, retrieve_relevant, format_context
-            mem = get_memory()
-            hits = retrieve_relevant(req.query, user_id=cid, k=5)
-            context_str = format_context(hits) if hits else ""
-            profile = mem.get_profile(cid)
-            if profile.work_context or profile.interests:
-                context_str += (("\n\n" if context_str else "") +
-                                f"User: {', '.join(profile.interests) or '(no interests)'}. {profile.work_context}")
-            agent = Agent(max_steps=8, max_tokens=20000, max_seconds=90)
-            result = await agent.run_to_completion(req.query, user_id=cid, context=context_str)
-            await broadcast_task_end(cid, task_id, status="completed", result_preview=result.answer[:200])
-            return {
-                "answer": result.answer,
-                "context": context_str,
-                "sources": result.sources,
-                "doc_count": len(result.sources),
-                "agent_run": {
-                    "run_id": result.run_id,
-                    "steps": result.steps_executed,
-                    "duration_ms": result.duration_ms,
-                    "tokens": result.total_usage.total_tokens,
-                    "cost_usd": result.total_usage.cost_usd,
-                    "plan": result.plan.to_dict(),
-                },
-            }
-        except Exception as e:
-            log.warning("[research] agent delegation failed, falling back: %s", e)
-
     try:
+        delegated = await _agent_response(req, cid, task_id)
+        if delegated is not None:
+            return delegated
+
         if req.llm_provider and req.llm_provider != "ollama":
             preset = CLOUD_PROVIDERS.get(req.llm_provider, {})
             global LATEST_LLM_CONFIG
@@ -343,8 +526,7 @@ async def research(req: ResearchRequest):
             LATEST_LLM_CONFIG = {**LATEST_LLM_CONFIG, **(req.llm_config or {})}
 
         if is_cancelled(task_id):
-            await broadcast_task_end(cid, task_id, status="cancelled")
-            return {"answer": "[INTERRUPTED]", "context": "", "sources": [], "doc_count": 0}
+            return await _interrupted(cid, task_id)
 
         await broadcast_agent_state(cid, "thinking")
         await broadcast_agent_telemetry(cid, action="Planning research approach")
@@ -354,64 +536,20 @@ async def research(req: ResearchRequest):
             await broadcast_agent_telemetry(cid, action="Searching local knowledge vault")
             result = await _brain_only_research(req.query)
             if is_cancelled(task_id):
-                await broadcast_task_end(cid, task_id, status="cancelled")
-                return {"answer": "[INTERRUPTED]", "context": "", "sources": [], "doc_count": 0}
+                return await _interrupted(cid, task_id)
             await broadcast_task_end(cid, task_id, status="completed", result_preview=result.get("answer"))
             return result
 
         await broadcast_agent_state(cid, "searching", zone="pile")
 
-        # Expand search queries
         expanded = await _expand_query(req.query, cid, req.llm_config)
-
-        # Multi-engine search with fallback
-        all_res = []
-        if req.domain == "academic":
-            arxiv_data = await _fetch_arxiv(req.query)
-            for item in arxiv_data:
-                all_res.append({"url": item["url"], "content": item["markdown"], "score": 100})
-        elif req.domain == "coding":
-            github_data = await _fetch_github(req.query)
-            for item in github_data:
-                all_res.append({"url": item["url"], "content": item["markdown"], "score": 100})
-        else:
-            from backend.modules.search import multi_engine_search
-
-            for q in expanded:
-                try:
-                    results = await multi_engine_search(q)
-                    for r in results:
-                        all_res.append({
-                            "url": r.get("url", ""),
-                            "content": r.get("content", ""),
-                            "score": r.get("score", 0),
-                        })
-                except Exception as e:
-                    log.warning("[search] error for query '%s': %r", q, e)
-                    continue
-
-        # Deduplicate and rank
-        seen = set()
-        unique = []
-        for r in all_res:
-            url = r.get("url")
-            if not url or url in seen:
-                continue
-            unique.append(r)
-            seen.add(url)
-
-        trusted = [".gov", ".edu", ".org", "wikipedia.org", "reuters.com"]
-        unique.sort(
-            key=lambda x: (sum(5 for t in trusted if t in x.get("url", "").lower()), x.get("score", 0)),
-            reverse=True,
-        )
-        search_results = unique[:req.top_n]
+        search_results = _rank_results(await _search_all(req, expanded), req.top_n)
 
         if is_cancelled(task_id):
-            await broadcast_task_end(cid, task_id, status="cancelled")
-            return {"answer": "[INTERRUPTED]", "context": "", "sources": [], "doc_count": 0}
+            return await _interrupted(cid, task_id)
 
         if not search_results:
+            # Nothing on the web: the local vault is still worth reading.
             await broadcast_agent_state(cid, "reading", zone="cabinet")
             await broadcast_agent_telemetry(cid, action="No web results — falling back to local knowledge vault")
             brain_result = await _brain_only_research(req.query)
@@ -429,73 +567,27 @@ async def research(req: ResearchRequest):
             action=f"Reading {len(search_results)} web sources",
             file_path=search_results[0].get("url") if search_results else None,
         )
-
         for r in search_results:
             if is_cancelled(task_id):
-                await broadcast_task_end(cid, task_id, status="cancelled")
-                return {"answer": "[INTERRUPTED]", "context": "", "sources": [], "doc_count": 0}
+                return await _interrupted(cid, task_id)
             await broadcast_agent_telemetry(cid, action="Reading source", file_path=r.get("url"))
 
-        # Security screening
-        safe_urls = []
-        for r in search_results:
-            is_risky = await _assess_url_risk(r["url"], cid, req.llm_config)
-            if not is_risky:
-                safe_urls.append(r)
-
+        safe_urls = await _screen_sources(req, search_results, cid)
         sources = safe_urls[:req.top_n]
 
-        # Scrape each source
-        context_parts = []
-        for src in sources:
-            if is_cancelled(task_id):
-                await broadcast_task_end(cid, task_id, status="cancelled")
-                return {"answer": "[INTERRUPTED]", "context": "", "sources": [], "doc_count": 0}
-            try:
-                await broadcast_agent_telemetry(cid, action="Scraping source", file_path=src.get("url"))
-                scrape_result = await _scrape_source(src["url"])
-                if scrape_result:
-                    context_parts.append(scrape_result)
-            except Exception as e:
-                log.warning("[scrape] error for %s: %r", src["url"], e)
+        context_text = await _scrape_sources(req, sources, cid, task_id)
+        if context_text is None:
+            return await _interrupted(cid, task_id)
 
-        context_text = "\n\n".join(context_parts)
+        _index_sources(sources)
 
-        # Save scraped content to DB
-        for src in sources:
-            try:
-                with get_db_cursor() as cursor:
-                    cursor.execute(
-                        "INSERT OR IGNORE INTO documents (text, url) VALUES (?, ?)",
-                        (src.get("content", "")[:50000], src.get("url", "")),
-                    )
-            except Exception:
-                log.debug("source not indexed", exc_info=True)
-
-        # LLM synthesis
         await broadcast_agent_state(cid, "reasoning", zone="reason")
         await broadcast_agent_telemetry(cid, action="Synthesizing research findings")
 
-        synthesis_prompt = (
-            f"Research topic: {req.query}\n\n"
-            f"Sources analyzed ({len(sources)}):\n" + "\n".join(f"- {s['url']}" for s in sources) + "\n\n"
-            f"Scraped content:\n{context_text[:8000]}\n\n"
-            "Provide a comprehensive, well-structured answer."
-        )
-
-        answer, usage = await _call_llm(
-            prompt=synthesis_prompt,
-            max_tokens=2000,
-            temperature=0.3,
-            # 60s was too tight when the LLM is slow under load (we saw
-            # 'MiniMax timeout' errors with the 8K-char synthesis prompt).
-            # Bump to 120s for the synthesis step specifically.
-            timeout=120.0,
-        )
+        answer, usage = await _synthesize_answer(req, sources, context_text)
 
         if is_cancelled(task_id):
-            await broadcast_task_end(cid, task_id, status="cancelled")
-            return {"answer": "[INTERRUPTED]", "context": "", "sources": [], "doc_count": 0}
+            return await _interrupted(cid, task_id)
 
         completion = usage.get("completion_tokens", 0) or len(answer.split())
         _task_token_counts[task_id] = _task_token_counts.get(task_id, 0) + completion

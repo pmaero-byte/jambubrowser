@@ -3168,11 +3168,11 @@
       "debug_prints": 0,
       "documented_defs": 5,
       "duplicate_definitions": [],
-      "functions": 18,
-      "lines": 676,
-      "long_functions": 1,
+      "functions": 26,
+      "lines": 768,
+      "long_functions": 0,
       "longest_function": "research",
-      "longest_function_loc": 218,
+      "longest_function_loc": 110,
       "path": "backend/routes/research.py",
       "public_defs": 11,
       "silent_excepts": 0,
@@ -3466,9 +3466,9 @@
     "duplicate_definitions": 0,
     "files": 247,
     "long_files": 0,
-    "long_functions": 12,
+    "long_functions": 11,
     "public_defs": 1945,
     "silent_excepts": 0,
-    "total_lines": 63594
+    "total_lines": 63686
   }
 }
