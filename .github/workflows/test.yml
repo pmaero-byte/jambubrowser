@@ -34,6 +34,16 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt || pip install fastapi uvicorn[standard] pydantic httpx psutil pycryptodome sentence-transformers sqlite-vec pytest pytest-asyncio anyio websockets
 
+      - name: Code-health gate (no regressions vs baseline)
+        run: |
+          # Reports file size / docstring / duplicate-definition / silent-except
+          # metrics and fails if any of them got worse. Refactors are only
+          # worth doing if the numbers move, so the gate is what makes them
+          # verifiable. See tools/code_health.py.
+          python tools/code_health.py --baseline docs/code_health_baseline.json || true
+          python tools/code_health.py --baseline docs/code_health_baseline.json
+          python -m pytest tests/test_code_health.py -q
+
       - name: Run unit + integration tests
         env:
           JAMBU_DB_PATH: ":memory:"
