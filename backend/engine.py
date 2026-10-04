@@ -73,7 +73,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 try:
                     await manager.broadcast("all", "🧹 Periodic memory audit complete.")
                 except Exception:
-                    pass
+                    # A closed websocket cannot broadcast; the audit still
+                    # ran, so this must not fail the sweep.
+                    log.debug("memory-audit broadcast failed", exc_info=True)
         except asyncio.CancelledError:
             pass
 
@@ -161,23 +163,29 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Shutdown cleanup. Inlined in the post-yield for-loop because
     # @asynccontextmanager wraps this async generator and Python's parser
     # accepts `await` only inside try/loop bodies in that context.
+    #
+    # Every step below is individually best-effort: one broken subsystem must
+    # not prevent the rest from closing, or the process hangs on exit. Each one
+    # still *logs* — a silent `pass` here used to hide leaks and stuck
+    # sessions entirely, which is exactly the class of bug you cannot debug
+    # after the fact.
     for task in tasks:
         task.cancel()
     try:
         from backend.modules.audit_monitor import get_monitor_scheduler
         get_monitor_scheduler().stop()
     except Exception:
-        pass
+        log.debug("audit monitor scheduler already stopped or failed", exc_info=True)
     try:
         from backend.modules.flow_monitor import get_flow_monitor_scheduler
         await get_flow_monitor_scheduler().stop()
     except Exception:
-        pass
+        log.debug("flow monitor scheduler already stopped or failed", exc_info=True)
     if sim_worker is not None:
         try:
             await sim_worker.stop()
         except Exception:
-            pass
+            log.warning("simulation worker failed to stop cleanly", exc_info=True)
     # Dynamic VPN: stop the health sweeper and drop the tunnel interface so
     # a restart does not leave a stale one behind.
     try:
@@ -186,7 +194,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         if vpn_manager.active:
             await vpn_manager.stop()
     except Exception:
-        pass
+        log.warning("vpn tunnel failed to stop cleanly; interface may persist",
+                    exc_info=True)
     for mod_name in ["browser", "missions", "shadow_browser", "risk_shield"]:
         try:
             mod = __import__(f"backend.modules.{mod_name}", fromlist=["cleanup"])
@@ -199,13 +208,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             elif mod_name == "risk_shield":
                 await mod.get_shield().close()
         except Exception:
-            pass
+            # Per-module cleanup is noisy in normal shutdowns (already-closed
+            # singletons), so this logs at debug and stays non-fatal.
+            log.debug(f"{mod_name} cleanup skipped", exc_info=True)
 
     # Close the MCP session manager last (mounted app may still be draining).
     try:
         await mcp_session_stack.aclose()
     except Exception:
-        pass
+        log.warning("mcp session manager failed to close cleanly", exc_info=True)
 
 
 # (The previous _shutdown_modules helper was removed because the bare

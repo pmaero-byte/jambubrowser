@@ -1083,13 +1083,13 @@
       "documented_defs": 1,
       "duplicate_definitions": [],
       "functions": 7,
-      "lines": 467,
+      "lines": 478,
       "long_functions": 1,
       "longest_function": "lifespan",
-      "longest_function_loc": 151,
+      "longest_function_loc": 162,
       "path": "backend/engine.py",
       "public_defs": 4,
-      "silent_excepts": 7,
+      "silent_excepts": 0,
       "todos": 0
     },
     {
@@ -1713,13 +1713,13 @@
       "documented_defs": 45,
       "duplicate_definitions": [],
       "functions": 151,
-      "lines": 3096,
-      "long_functions": 2,
-      "longest_function": "_run_step",
-      "longest_function_loc": 290,
+      "lines": 2891,
+      "long_functions": 1,
+      "longest_function": "run_flow",
+      "longest_function_loc": 174,
       "path": "backend/modules/browser_agent.py",
       "public_defs": 117,
-      "silent_excepts": 7,
+      "silent_excepts": 0,
       "todos": 0
     },
     {
@@ -1789,6 +1789,20 @@
       "longest_function_loc": 38,
       "path": "backend/modules/browser_plan.py",
       "public_defs": 3,
+      "silent_excepts": 0,
+      "todos": 0
+    },
+    {
+      "debug_prints": 0,
+      "documented_defs": 4,
+      "duplicate_definitions": [],
+      "functions": 4,
+      "lines": 274,
+      "long_functions": 0,
+      "longest_function": "run_interaction",
+      "longest_function_loc": 101,
+      "path": "backend/modules/browser_step_actions.py",
+      "public_defs": 4,
       "silent_excepts": 0,
       "todos": 0
     },
@@ -2999,14 +3013,14 @@
   ],
   "summary": {
     "debug_prints": 15,
-    "docstring_ratio": 0.5765,
-    "documented_defs": 1097,
+    "docstring_ratio": 0.5773,
+    "documented_defs": 1101,
     "duplicate_definitions": 0,
-    "files": 214,
+    "files": 215,
     "long_files": 4,
-    "long_functions": 16,
-    "public_defs": 1903,
-    "silent_excepts": 71,
-    "total_lines": 61816
+    "long_functions": 15,
+    "public_defs": 1907,
+    "silent_excepts": 57,
+    "total_lines": 61896
   }
 }
