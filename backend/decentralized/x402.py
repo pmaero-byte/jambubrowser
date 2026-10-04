@@ -562,6 +562,170 @@ def _release_nonce(nonce: Optional[str], status: str) -> None:
     except Exception:
         log.warning("x402 claim release failed for %s", nonce, exc_info=True)
 
+class _SettlementBridge:
+    """Runs the paid resource and settles its authorization.
+
+    Constructed only after the payment has been verified and the nonce claimed.
+    Everything about *this request's* money lives here, so the middleware above
+    reads as a decision and this reads as a mechanism.
+
+    The interesting problem is ordering. A non-streaming response is buffered so
+    settlement happens **before** the first byte reaches the client — otherwise
+    the client would have a successful response for work that was never paid
+    for. Streaming responses cannot wait, so they forward immediately and settle
+    when the body completes. And if the buffer overflows, the response degrades
+    to streaming mid-flight: partial work is better than a truncated body, and
+    the receipt records what actually happened.
+    """
+
+    def __init__(self, app, scope, receive, send, *, facilitator, payload,
+                 requirements, verify, nonce, resource_url, buffer_limit):
+        self.app = app
+        self.scope = scope
+        self.receive = receive
+        self.send = send
+        self.facilitator = facilitator
+        self.payload = payload
+        self.requirements = requirements
+        self.verify = verify
+        self.nonce = nonce
+        self.resource_url = resource_url
+        self.buffer_limit = buffer_limit
+        # The response start message is held until we know whether the payment
+        # settled; chunks accumulate while buffering is on.
+        self.start: Optional[dict] = None
+        self.chunks: list[bytes] = []
+        self.buffering = True
+        self.settled = False
+
+    async def run(self) -> None:
+        """Call the app with the send-wrapper installed, then settle or release."""
+        try:
+            await self.app(self.scope, self.receive, self.send_wrapper)
+        finally:
+            if not self.settled:
+                # The resource crashed (or the client vanished) before the
+                # response completed: the authorization was never settled, so
+                # release the claim and let a legitimate retry use it — but
+                # keep the audit trail complete.
+                await self._record_receipt(status="error_skipped", transaction=None)
+                _release_nonce(self.nonce, "abandoned")
+
+    async def settle_and_record(self, status_code: int):
+        """Settle the authorization and write its receipt. At most once.
+
+        A 4xx/5xx means the resource refused the work, so nothing is charged
+        and the claim is released — a legitimate retry must be able to use that
+        authorization. Anything else settles: a settled *or* attempted-and-failed
+        authorization keeps its claim blocking, because a nonce that can be
+        replayed after a failed settlement is a double-charge waiting to happen.
+        """
+        if self.settled:
+            return None
+        self.settled = True
+        if status_code >= 400:
+            await self._record_receipt(status="error_skipped", transaction=None)
+            _release_nonce(self.nonce, "abandoned")
+            return None
+
+        settle = await self.facilitator.settle(self.payload, self.requirements)
+        await self._record_receipt(
+            status="settled" if settle.success else "settle_failed",
+            transaction=settle.transaction,
+            payer=settle.payer,
+        )
+        _release_nonce(self.nonce,
+                       "settled" if settle.success else "settle_failed")
+        if not settle.success:
+            log.warning(
+                "x402 settle failed for %s: %s", self.resource_url,
+                settle.error_reason,
+            )
+        return settle
+
+    async def _record_receipt(self, *, status: str, transaction,
+                              payer: Optional[str] = None) -> None:
+        """Write the receipt; never let a receipt failure change the response."""
+        try:
+            record_receipt(
+                resource=self.resource_url, requirements=self.requirements,
+                payer=payer or self.verify.payer, transaction=transaction,
+                nonce=self.nonce, status=status,
+                facilitator_mode=self.facilitator.mode,
+            )
+        except Exception:
+            log.warning("x402 receipt write failed", exc_info=True)
+
+    async def flush_start(self, extra: Optional[dict] = None) -> None:
+        """Send the held response-start message, plus any extra headers."""
+        message = self.start
+        headers = {
+            k.decode("latin-1").lower(): v.decode("latin-1")
+            for k, v in message.get("headers", [])
+        }
+        headers.update(extra or {})
+        await self.send({
+            "type": "http.response.start",
+            "status": message["status"],
+            "headers": _asgi_headers(headers),
+        })
+
+    async def send_wrapper(self, message):
+        """Buffer or forward each ASGI message, settling at the right moment."""
+        if message["type"] == "http.response.start":
+            self.start = message
+            is_stream = any(
+                k.decode("latin-1").lower() == "content-type"
+                and v.decode("latin-1").startswith("text/event-stream")
+                for k, v in message.get("headers", [])
+            )
+            if is_stream:
+                # Streams cannot wait for settlement: forward immediately and
+                # settle when the body completes (receipts record it).
+                self.buffering = False
+                return await self.send(message)
+            return  # buffered: hold the start until the body completes
+
+        if message["type"] != "http.response.body":
+            return await self.send(message)
+
+        status = (self.start or {}).get("status", 200)
+
+        # Already streaming (SSE, or the buffer overflowed below).
+        if not self.buffering:
+            await self.send(message)
+            if not message.get("more_body"):
+                await self.settle_and_record(status)
+            return
+
+        self.chunks.append(message.get("body", b""))
+        total = sum(len(c) for c in self.chunks)
+        if message.get("more_body") and total > self.buffer_limit:
+            # Too big to buffer: flush what we have and stream the rest.
+            self.buffering = False
+            await self.flush_start()
+            for chunk in self.chunks:
+                await self.send({
+                    "type": "http.response.body", "body": chunk, "more_body": True,
+                })
+            self.chunks = []
+            return
+        if message.get("more_body"):
+            return
+
+        # Buffered body complete: settle, then send with the settlement header.
+        settle = await self.settle_and_record(status)
+        extra = (
+            {"PAYMENT-RESPONSE": settlement_header(settle)}
+            if settle and settle.success else None
+        )
+        await self.flush_start(extra)
+        await self.send({
+            "type": "http.response.body",
+            "body": b"".join(self.chunks),
+            "more_body": False,
+        })
+
 
 class X402Middleware:
     """Charge configured routes per call, settling after the work completes."""
@@ -573,6 +737,13 @@ class X402Middleware:
         self.buffer_limit = buffer_limit
 
     async def __call__(self, scope, receive, send):
+        """Charge for a paid route, or pass the request straight through.
+
+        The decision is: is this a paid route, is the caller exempt (x402
+        disabled, or an engine API key on the account path), and does the
+        payment verify? Everything after that — settlement, receipts, nonce
+        lifetime — belongs to `_SettlementBridge`, which owns the money.
+        """
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
 
@@ -600,14 +771,10 @@ class X402Middleware:
         resource_url = f"{scheme}://{host}{scope.get('path', '')}"
 
         def payment_required(error: str):
+            body = build_payment_required(cfg, price_key, resource_url, error=error)
             return _send_json(
-                send, 402,
-                build_payment_required(cfg, price_key, resource_url, error=error),
-                headers={
-                    "PAYMENT-REQUIRED": encode_header(build_payment_required(
-                        cfg, price_key, resource_url, error=error,
-                    )),
-                },
+                send, 402, body,
+                headers={"PAYMENT-REQUIRED": encode_header(body)},
             )
 
         payload = decode_payment_signature(header_map.get("payment-signature"))
@@ -631,127 +798,13 @@ class X402Middleware:
         # Downstream routes (A2A) can see that the paywall already collected.
         scope.setdefault("state", {})["x402_paid"] = True
 
-        state = {"start": None, "chunks": [], "buffering": True}
-        settled = {"done": False}
-
-        async def settle_and_record(status_code: int) -> Optional["SettleResult"]:
-            if settled["done"]:
-                return None
-            settled["done"] = True
-            if status_code >= 400:
-                try:
-                    record_receipt(
-                        resource=resource_url, requirements=requirements,
-                        payer=verify.payer, transaction=None, nonce=nonce,
-                        status="error_skipped", facilitator_mode=facilitator.mode,
-                    )
-                except Exception:
-                    log.warning("x402 receipt write failed", exc_info=True)
-                # The authorization was never settled → allow a legitimate retry.
-                _release_nonce(nonce, "abandoned")
-                return None
-            settle = await facilitator.settle(payload, requirements)
-            try:
-                record_receipt(
-                    resource=resource_url, requirements=requirements,
-                    payer=settle.payer or verify.payer,
-                    transaction=settle.transaction, nonce=nonce,
-                    status="settled" if settle.success else "settle_failed",
-                    facilitator_mode=facilitator.mode,
-                )
-            except Exception:
-                log.warning("x402 receipt write failed", exc_info=True)
-            # Settled (or attempted-and-failed) authorizations must not be
-            # reusable: keep the claim blocking either way.
-            _release_nonce(nonce, "settled" if settle.success else "settle_failed")
-            if not settle.success:
-                log.warning(
-                    "x402 settle failed for %s: %s", resource_url, settle.error_reason,
-                )
-            return settle
-
-        async def flush_start(extra: Optional[dict] = None) -> None:
-            message = state["start"]
-            headers = {
-                k.decode("latin-1").lower(): v.decode("latin-1")
-                for k, v in message.get("headers", [])
-            }
-            headers.update(extra or {})
-            await send({
-                "type": "http.response.start",
-                "status": message["status"],
-                "headers": _asgi_headers(headers),
-            })
-
-        async def send_wrapper(message):
-            if message["type"] == "http.response.start":
-                state["start"] = message
-                is_stream = any(
-                    k.decode("latin-1").lower() == "content-type"
-                    and v.decode("latin-1").startswith("text/event-stream")
-                    for k, v in message.get("headers", [])
-                )
-                if is_stream:
-                    # Streams cannot wait for settlement: forward immediately
-                    # and settle when the body completes (receipts record it).
-                    state["buffering"] = False
-                    return await send(message)
-                return  # buffered: hold the start until the body completes
-
-            if message["type"] != "http.response.body":
-                return await send(message)
-
-            status = (state["start"] or {}).get("status", 200)
-            if not state["buffering"]:
-                await send(message)
-                if not message.get("more_body"):
-                    await settle_and_record(status)
-                return
-
-            state["chunks"].append(message.get("body", b""))
-            total = sum(len(c) for c in state["chunks"])
-            if message.get("more_body") and total > self.buffer_limit:
-                # Too big to buffer: flush what we have and stream the rest.
-                state["buffering"] = False
-                await flush_start()
-                for chunk in state["chunks"]:
-                    await send({
-                        "type": "http.response.body", "body": chunk, "more_body": True,
-                    })
-                state["chunks"] = []
-                return
-            if message.get("more_body"):
-                return
-            # Buffered body complete: settle, then send with settlement header.
-            settle = await settle_and_record(status)
-            extra = (
-                {"PAYMENT-RESPONSE": settlement_header(settle)}
-                if settle and settle.success else None
-            )
-            await flush_start(extra)
-            await send({
-                "type": "http.response.body",
-                "body": b"".join(state["chunks"]),
-                "more_body": False,
-            })
-
-        try:
-            await self.app(scope, receive, send_wrapper)
-        finally:
-            if not settled["done"]:
-                # The resource crashed (or the client vanished) before the
-                # response completed: the authorization was never settled, so
-                # release the claim and let a legitimate retry use it — but
-                # keep the audit trail complete.
-                try:
-                    record_receipt(
-                        resource=resource_url, requirements=requirements,
-                        payer=verify.payer, transaction=None, nonce=nonce,
-                        status="error_skipped", facilitator_mode=facilitator.mode,
-                    )
-                except Exception:
-                    log.warning("x402 receipt write failed", exc_info=True)
-                _release_nonce(nonce, "abandoned")
+        bridge = _SettlementBridge(
+            app=self.app, scope=scope, receive=receive, send=send,
+            facilitator=facilitator, payload=payload, requirements=requirements,
+            verify=verify, nonce=nonce, resource_url=resource_url,
+            buffer_limit=self.buffer_limit,
+        )
+        return await bridge.run()
 
 
 def _header_api_key(header_map: dict) -> bool:

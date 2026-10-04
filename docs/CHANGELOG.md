@@ -325,6 +325,31 @@ pins both directions — the blockers must be gone **and** the permissive values
 must be present, not merely absent. Confirmed to fail when either half is
 changed to `setdefault` or when the upstream CSP is left in place.
 
+### Changed — x402 settlement is a testable object
+
+`X402Middleware.__call__` was 180 lines holding the paywall decision, the
+settlement logic and an ASGI send-wrapper state machine — interleaved, which is
+the worst place for money decisions to live. Settlement and the wrapper are now
+`_SettlementBridge`; the middleware is the decision.
+
+The bridge exists so the three rules that decide whether a payer can be
+double-charged or wrongly blocked from retrying are testable without a route, an
+HTTP client or a network facilitator — `tests/test_x402_settlement.py` (18
+tests):
+
+- a **settled** authorization keeps its nonce claim blocking, *including* when
+  settlement failed (a nonce replayable after a failed settle is a double-charge
+  waiting to happen);
+- an **unsettled** one is released — a 4xx/5xx or a crashed resource frees the
+  claim, and the receipt is still written, so a legitimate retry works and the
+  audit trail stays complete;
+- settlement happens **before the first byte** of a buffered response, so a
+  client never sees success for work that was not paid for. Streams cannot wait,
+  so they forward immediately and settle on completion; a buffer overflow
+  degrades to streaming mid-flight rather than truncating the body.
+
+Each was confirmed to fail when the corresponding release path is changed.
+
 ### Changed — modularity and measurable gates
 
 - **Step actions split by family** — `browser_agent._run_step` was the repo's
@@ -345,10 +370,10 @@ changed to `setdefault` or when the upstream CSP is left in place.
   `init_db` is idempotent, and asserts every helper is actually called — so a
   helper that is defined but not invoked, which would silently drop a table
   from a fresh install, fails the suite.
-- Metrics: `silent_excepts` 71 → 0, `long_functions` 17 → 7, `long_files` 4 → 0,
+- Metrics: `silent_excepts` 71 → 0, `long_functions` 17 → 6, `long_files` 4 → 0,
   `docstring_ratio` 0.577 → 0.607, `mcp_server.py` 1,894 → 86 lines,
   `browser_agent.py` 3,402 → 1,370 lines, `cli/jambu.py` 2,108 → 84 lines,
-  `decentralized/simulation.py` 1,542 → 5 modules. Suite: 2137 passed, 9 skipped.
+  `decentralized/simulation.py` 1,542 → 5 modules. Suite: 2155 passed, 9 skipped.
 
 ## [3.4.0] - 2026-10-03
 

@@ -982,15 +982,15 @@
     },
     {
       "debug_prints": 0,
-      "documented_defs": 4,
+      "documented_defs": 9,
       "duplicate_definitions": [],
-      "functions": 37,
-      "lines": 771,
-      "long_functions": 1,
+      "functions": 40,
+      "lines": 824,
+      "long_functions": 0,
       "longest_function": "__call__",
-      "longest_function_loc": 180,
+      "longest_function_loc": 69,
       "path": "backend/decentralized/x402.py",
-      "public_defs": 26,
+      "public_defs": 28,
       "silent_excepts": 0,
       "todos": 0
     },
@@ -3461,14 +3461,14 @@
   ],
   "summary": {
     "debug_prints": 15,
-    "docstring_ratio": 0.6083,
-    "documented_defs": 1185,
+    "docstring_ratio": 0.6103,
+    "documented_defs": 1190,
     "duplicate_definitions": 0,
     "files": 247,
     "long_files": 0,
-    "long_functions": 7,
-    "public_defs": 1948,
+    "long_functions": 6,
+    "public_defs": 1950,
     "silent_excepts": 0,
-    "total_lines": 63944
+    "total_lines": 63997
   }
 }
