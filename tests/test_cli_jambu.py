@@ -9,12 +9,13 @@ from unittest.mock import patch
 def _run_argv(argv: list, mock_responses: dict) -> str:
     """Run cli.jambu.main() with patched api_request that returns mock_responses."""
     from cli import jambu
+    from cli.jambu_cli import core
 
     def fake_api_request(method, path, data=None, stream=False):
         return mock_responses.get(path)
 
     captured = io.StringIO()
-    with patch.object(jambu, "api_request", side_effect=fake_api_request), \
+    with patch.object(core, "api_request", side_effect=fake_api_request), \
          patch.object(sys, "argv", ["jambu"] + argv), \
          patch.object(sys, "stdout", captured):
         try:
@@ -261,13 +262,14 @@ def _employee_done() -> tuple[str, dict]:
 def _run_audit(argv: list, response) -> tuple[str, int]:
     """Run `jambu <argv>` with api_request patched; returns (stdout, code)."""
     from cli import jambu
+    from cli.jambu_cli import core
 
     def fake_api_request(method, path, data=None, stream=False):
         return response
 
     captured = io.StringIO()
     code = 0
-    with patch.object(jambu, "api_request", side_effect=fake_api_request), \
+    with patch.object(core, "api_request", side_effect=fake_api_request), \
          patch.object(sys, "argv", ["jambu"] + argv), \
          patch.object(sys, "stdout", captured):
         try:
@@ -528,12 +530,15 @@ class TestJambuDcm:
     def _run_dcm(self, argv, responses):
         """Run `jambu dcm ...` with _dcm_request patched to a response map."""
         from cli import jambu
+        from cli.jambu_cli import core
+        from cli.jambu_cli.commands import qa as qa_cmds
+        from cli.jambu_cli.commands import qa as qa_cmds
 
         def fake_dcm(method, path, data=None, timeout=30.0):
             return responses.get((method, path), (0, None))
 
         captured = io.StringIO()
-        with patch.object(jambu, "_dcm_request", side_effect=fake_dcm), \
+        with patch.object(core, "_dcm_request", side_effect=fake_dcm), \
              patch.object(sys, "argv", ["jambu"] + argv), \
              patch.object(sys, "stdout", captured):
             try:
@@ -607,12 +612,15 @@ class TestJambuDcm:
 
     def test_screenshot_writes_png(self, tmp_path):
         from cli import jambu
+        from cli.jambu_cli import core
+        from cli.jambu_cli.commands import qa as qa_cmds
+        from cli.jambu_cli.commands import qa as qa_cmds
 
         png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
         out = tmp_path / "shot.png"
         captured = io.StringIO()
         argv = ["monitor", "screenshot", "7", "42", "--out", str(out)]
-        with patch.object(jambu, "api_request_bytes", return_value=png), \
+        with patch.object(core, "api_request_bytes", return_value=png), \
              patch.object(sys, "argv", ["jambu"] + argv), \
              patch.object(sys, "stdout", captured):
             try:
@@ -625,10 +633,13 @@ class TestJambuDcm:
 
     def test_screenshot_engine_error(self):
         from cli import jambu
+        from cli.jambu_cli import core
+        from cli.jambu_cli.commands import qa as qa_cmds
+        from cli.jambu_cli.commands import qa as qa_cmds
 
         captured = io.StringIO()
         argv = ["monitor", "screenshot", "7", "42"]
-        with patch.object(jambu, "api_request_bytes", return_value=None), \
+        with patch.object(core, "api_request_bytes", return_value=None), \
              patch.object(sys, "argv", ["jambu"] + argv), \
              patch.object(sys, "stdout", captured):
             try:
@@ -639,12 +650,15 @@ class TestJambuDcm:
 
     def test_diff_writes_heatmap_png(self, tmp_path):
         from cli import jambu
+        from cli.jambu_cli import core
+        from cli.jambu_cli.commands import qa as qa_cmds
+        from cli.jambu_cli.commands import qa as qa_cmds
 
         png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
         out = tmp_path / "diff.png"
         captured = io.StringIO()
         argv = ["monitor", "diff", "7", "42", "--out", str(out)]
-        with patch.object(jambu, "api_request_bytes", return_value=png) as dl, \
+        with patch.object(core, "api_request_bytes", return_value=png) as dl, \
              patch.object(sys, "argv", ["jambu"] + argv), \
              patch.object(sys, "stdout", captured):
             try:
@@ -664,10 +678,13 @@ class TestJambuDcm:
 class TestJambuReport:
     def _run_report(self, argv: list, html: str | None) -> tuple[str, int]:
         from cli import jambu
+        from cli.jambu_cli import core
+        from cli.jambu_cli.commands import qa as qa_cmds
+        from cli.jambu_cli.commands import qa as qa_cmds
 
         captured = io.StringIO()
         code = 0
-        with patch.object(jambu, "api_request_text", return_value=html), \
+        with patch.object(core, "api_request_text", return_value=html), \
              patch.object(sys, "argv", ["jambu"] + argv), \
              patch.object(sys, "stdout", captured):
             try:
@@ -709,13 +726,16 @@ class TestJambuBrowserCommands:
     @staticmethod
     def _run(argv: list, response) -> tuple[str, int]:
         from cli import jambu
+        from cli.jambu_cli import core
+        from cli.jambu_cli.commands import qa as qa_cmds
+        from cli.jambu_cli.commands import qa as qa_cmds
 
         def fake_api_request(method, path, data=None, stream=False):
             return response
 
         captured = io.StringIO()
         code = 0
-        with patch.object(jambu, "api_request", side_effect=fake_api_request), \
+        with patch.object(core, "api_request", side_effect=fake_api_request), \
              patch.object(sys, "argv", ["jambu"] + argv), \
              patch.object(sys, "stdout", captured):
             try:
@@ -765,6 +785,9 @@ class TestJambuBrowserCommands:
 
     def test_plan_command(self):
         from cli import jambu
+        from cli.jambu_cli import core
+        from cli.jambu_cli.commands import qa as qa_cmds
+        from cli.jambu_cli.commands import qa as qa_cmds
 
         response = {"kind": "login", "source": "template",
                     "steps": [{"action": "navigate", "url": "http://x"}],
@@ -824,6 +847,9 @@ class TestJambuBrowserCommands:
 
     def test_watch_reruns_on_change(self, tmp_path, monkeypatch):
         from cli import jambu
+        from cli.jambu_cli import core
+        from cli.jambu_cli.commands import qa as qa_cmds
+        from cli.jambu_cli.commands import qa as qa_cmds
 
         flow = tmp_path / "flow.json"
         flow.write_text(json.dumps({"url": "http://x", "steps": []}))
@@ -844,8 +870,10 @@ class TestJambuBrowserCommands:
             else:
                 raise KeyboardInterrupt
 
-        monkeypatch.setattr(jambu, "api_request", fake_api_request)
-        monkeypatch.setattr(jambu.time, "sleep", fake_sleep)
+        monkeypatch.setattr(core, "api_request", fake_api_request)
+        # cmd_watch sleeps in a loop; patching the module it lives in keeps the
+        # test instant instead of waiting out the real interval.
+        monkeypatch.setattr(qa_cmds.time, "sleep", fake_sleep)
         captured = io.StringIO()
         with patch.object(sys, "argv",
                           ["jambu", "watch", str(flow), "--interval", "0.01",

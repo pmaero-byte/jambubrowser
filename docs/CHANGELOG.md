@@ -86,6 +86,31 @@ interpreter so that class of bug cannot come back, and pins the public names
 `__getattr__`, so `from backend.modules.browser_agent import
 BrowserAgentService` keeps working).
 
+### Changed — the CLI is a package, and `--help` is grouped by area
+
+`cli/jambu.py` was 2,108 lines: shared transport, 20 command handlers, and a
+389-line `main()` that both declared 49 subparsers *and* dispatched them — so
+adding a command meant editing two places in the same very large file. It is now
+an 84-line entry point over `cli/jambu_cli/`:
+
+| module | lines | owns |
+| --- | --- | --- |
+| `jambu_cli/core.py` | 291 | config file, engine HTTP, exit codes, severity tables, the shared formatters |
+| `jambu_cli/__init__.py` | 92 | `build_parser()` and the subcommand → handler dispatch table |
+| `commands/audit.py` | 385 | audit, quick, history, share, report, tiers, diff |
+| `commands/qa.py` | 673 | qa, test, export, import, plan, record, watch, dev-servers |
+| `commands/mesh.py` | 381 | dcm, sim, vpn |
+| `commands/monitors.py` | 209 | monitor |
+| `commands/status.py` | 159 | auth, health, status |
+
+Every command module contributes `register(subparsers)`, so a new command is
+one module and one dispatch entry instead of two edits in a 2,000-line file.
+The engine call is reached as `core.api_request(...)`, which makes
+`cli.jambu_cli.core` the single patch point — the CLI tests now patch it there.
+Verified behaviour-preserving: all 22 per-command `--help` outputs are
+byte-identical to the pre-split CLI. The only user-visible change is that the
+top-level command list is now grouped by area rather than interleaved.
+
 ### Changed — modularity and measurable gates
 
 - **Step actions split by family** — `browser_agent._run_step` was the repo's
@@ -106,9 +131,9 @@ BrowserAgentService` keeps working).
   `init_db` is idempotent, and asserts every helper is actually called — so a
   helper that is defined but not invoked, which would silently drop a table
   from a fresh install, fails the suite.
-- Metrics: `silent_excepts` 71 → 0, `long_functions` 17 → 14, `long_files` 4 → 2,
-  `mcp_server.py` 1,894 → 86 lines, `browser_agent.py` 3,402 → 1,370 lines.
-  Suite: 1975 passed, 9 skipped.
+- Metrics: `silent_excepts` 71 → 0, `long_functions` 17 → 14, `long_files` 4 → 1,
+  `mcp_server.py` 1,894 → 86 lines, `browser_agent.py` 3,402 → 1,370 lines,
+  `cli/jambu.py` 2,108 → 84 lines. Suite: 1975 passed, 9 skipped.
 
 ## [3.4.0] - 2026-10-03
 
