@@ -3138,15 +3138,15 @@
     },
     {
       "debug_prints": 0,
-      "documented_defs": 4,
+      "documented_defs": 7,
       "duplicate_definitions": [],
-      "functions": 14,
-      "lines": 635,
-      "long_functions": 1,
-      "longest_function": "web_proxy",
-      "longest_function_loc": 161,
+      "functions": 17,
+      "lines": 685,
+      "long_functions": 0,
+      "longest_function": "_inject_spa_shim",
+      "longest_function_loc": 116,
       "path": "backend/routes/proxy.py",
-      "public_defs": 4,
+      "public_defs": 7,
       "silent_excepts": 0,
       "todos": 0
     },
@@ -3461,14 +3461,14 @@
   ],
   "summary": {
     "debug_prints": 15,
-    "docstring_ratio": 0.6077,
-    "documented_defs": 1182,
+    "docstring_ratio": 0.6083,
+    "documented_defs": 1185,
     "duplicate_definitions": 0,
     "files": 247,
     "long_files": 0,
-    "long_functions": 8,
-    "public_defs": 1945,
+    "long_functions": 7,
+    "public_defs": 1948,
     "silent_excepts": 0,
-    "total_lines": 63894
+    "total_lines": 63944
   }
 }

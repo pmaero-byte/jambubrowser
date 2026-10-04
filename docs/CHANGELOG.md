@@ -305,6 +305,26 @@ careless edit that dropped either would make the registry approve it — and
 are asserted to be disjoint and to partition the surface, so a copy-paste that
 registers `vault_get` in the web group fails (confirmed).
 
+### Changed — the iframe proxy's header policy is named and pinned
+
+`web_proxy` was 161 lines mixing three concerns: fetching upstream (with the
+response cache and the transport-failure mapping), deciding what headers come
+back, and rewriting the body for same-origin embedding.
+
+It is now `fetch_upstream`, `build_proxy_headers` and `rewrite_body`, with
+`web_proxy` as the 45-line sequence. The proxy log is written inside
+`fetch_upstream` for every outcome — hit, miss, success or failure — because a
+proxy whose hit rate you cannot see is a proxy you cannot tune.
+
+The header policy is the part worth isolating: it strips `X-Frame-Options` and
+CSP (the endpoint's entire reason to exist) and then *sets* permissive values,
+because `SecurityHeadersMiddleware` only adds headers that are absent and would
+otherwise re-add `DENY`. That looks exactly like a mistake, so it is now a
+function whose docstring says so, and `tests/test_proxy_headers.py` (12 tests)
+pins both directions — the blockers must be gone **and** the permissive values
+must be present, not merely absent. Confirmed to fail when either half is
+changed to `setdefault` or when the upstream CSP is left in place.
+
 ### Changed — modularity and measurable gates
 
 - **Step actions split by family** — `browser_agent._run_step` was the repo's
@@ -325,10 +345,10 @@ registers `vault_get` in the web group fails (confirmed).
   `init_db` is idempotent, and asserts every helper is actually called — so a
   helper that is defined but not invoked, which would silently drop a table
   from a fresh install, fails the suite.
-- Metrics: `silent_excepts` 71 → 0, `long_functions` 17 → 8, `long_files` 4 → 0,
+- Metrics: `silent_excepts` 71 → 0, `long_functions` 17 → 7, `long_files` 4 → 0,
   `docstring_ratio` 0.577 → 0.607, `mcp_server.py` 1,894 → 86 lines,
   `browser_agent.py` 3,402 → 1,370 lines, `cli/jambu.py` 2,108 → 84 lines,
-  `decentralized/simulation.py` 1,542 → 5 modules. Suite: 2125 passed, 9 skipped.
+  `decentralized/simulation.py` 1,542 → 5 modules. Suite: 2137 passed, 9 skipped.
 
 ## [3.4.0] - 2026-10-03
 

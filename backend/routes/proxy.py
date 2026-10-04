@@ -50,13 +50,84 @@ def get_proxy_cache() -> ResponseCache:
 
 
 @router.get("/proxy/{url:path}")
-async def web_proxy(url: str, request: Request):
-    """
-    Fetch the upstream *url* and return its content stripped of
-    X-Frame-Options and CSP ``frame-ancestors``.
+def build_proxy_headers(upstream_headers: dict) -> dict:
+    """Decide the headers the proxied response is served with.
 
-    The *url* is taken from the path after ``/proxy/`` so that the path tree
-    is preserved for relative module / CSS URL resolution.
+    Three jobs, in order:
+
+    1. **Drop what would break the response.** ``content-encoding`` and
+       ``content-length`` describe the *upstream* body, which this function may
+       rewrite, and sending them with rewritten bytes produces a truncated or
+       undecodable response.
+    2. **Drop the iframe blockers.** ``X-Frame-Options`` and
+       ``Content-Security-Policy`` from the target site would make the proxied
+       page refuse to render inside our iframe — which is the entire reason
+       this endpoint exists.
+    3. **Set the permissive values explicitly**, because
+       ``SecurityHeadersMiddleware`` only adds headers that are absent. If this
+       did not set them, the app's own middleware would re-add
+       ``X-Frame-Options: DENY`` and ``frame-ancestors 'none'`` and the proxy
+       would appear broken with no error anywhere.
+
+    That third point is the reason this is a function with a docstring and not
+    three lines inline: it is a deliberate security decision that looks exactly
+    like a mistake.
+    """
+    # Headers that describe the upstream body or block framing.
+    blocklist = {"content-encoding", "content-length",
+                 "x-frame-options", "content-security-policy"}
+    headers = {k: v for k, v in upstream_headers.items()
+               if k.lower() not in blocklist}
+
+    headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    headers["Pragma"] = "no-cache"
+    headers["Expires"] = "0"
+
+    # See docstring point 3: these must be set, not merely absent.
+    headers["X-Frame-Options"] = "SAMEORIGIN"
+    headers["Content-Security-Policy"] = (
+        "default-src * 'unsafe-inline' data: blob:; "
+        "script-src * 'unsafe-inline' 'unsafe-eval'; "
+        "style-src * 'unsafe-inline' blob:; "
+        "img-src * data: blob:; "
+        "connect-src *; "
+        "font-src * data: blob:; "
+        "frame-src *; "
+        "frame-ancestors *"
+    )
+    return headers
+
+
+def rewrite_body(body: bytes, content_type: str, upstream_url: str):
+    """Rewrite a body for same-origin embedding, or hand it back untouched.
+
+    HTML gets a ``<base>`` tag and rewritten resource URLs; CSS gets its
+    ``url()`` references rewritten. Everything else — images, fonts, JSON — is
+    returned as-is, because rewriting it would corrupt it for no benefit.
+
+    Returns bytes, so the caller has one type to deal with.
+    """
+    if content_type.startswith(_PASSTHROUGH_PREFIXES):
+        return body
+    text = body.decode("utf-8", errors="replace")
+    if "text/html" in content_type:
+        text = _rewrite_html(text, upstream_url)
+    elif "text/css" in content_type:
+        text = _rewrite_css(text, upstream_url)
+    return text.encode("utf-8")
+
+async def web_proxy(url: str, request: Request):
+    """Fetch the upstream *url* and serve it stripped of iframe blockers.
+
+    The upstream URL comes from the path after ``/proxy/`` so the path tree is
+    preserved, which is what makes relative module and CSS URLs resolve through
+    the rewrite helpers below.
+
+    Three steps, each in its own function: validate and reconstruct the URL,
+    fetch (with the response cache and the transport-failure mapping), then
+    build the response headers and rewrite the body. The header policy in
+    particular is documented in `build_proxy_headers` because it looks like a
+    mistake and is not.
     """
     if not url or not url.strip():
         raise HTTPException(400, "Missing URL in path (use /proxy/{url})")
@@ -75,142 +146,121 @@ async def web_proxy(url: str, request: Request):
     if not is_safe_url(upstream_url):
         raise HTTPException(400, "Blocked or invalid URL")
 
-    # ── Response cache (TTL 60 s, LRU, 50 MB budget) ──
-    cache = get_proxy_cache()
-    proxy_log = get_proxy_log()
-    cache_hit = False
-    upstream_start = time.monotonic()
-    cached = cache.get(upstream_url)
+    resp_body, resp_content_type, resp_status, resp_headers = \
+        await fetch_upstream(upstream_url)
 
-    if cached is not None:
-        resp_body = cached.body
-        resp_content_type = cached.content_type
-        resp_status = cached.status_code
-        resp_headers = cached.headers
-        cache_hit = True
-        log.debug("proxy cache hit for %s (%d bytes)", upstream_url, len(resp_body))
-    else:
-        try:
-            async with httpx.AsyncClient(
-                follow_redirects=True,
-                timeout=30.0,
-                headers={
-                    "User-Agent": (
-                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/125.0.0.0 Safari/537.36"
-                    ),
-                },
-            ) as client:
-                upstream = await client.get(upstream_url)
-
-            resp_body = upstream.content
-            resp_content_type = upstream.headers.get("content-type", "").lower()
-            resp_status = upstream.status_code
-            # Snapshot headers as a plain dict so they're serialisable.
-            resp_headers = dict(upstream.headers)
-
-            cache.set(upstream_url, CachedResponse(
-                body=resp_body,
-                content_type=resp_content_type,
-                status_code=resp_status,
-                headers=resp_headers,
-            ))
-            log.debug("proxy cache miss + store for %s (%d bytes)", upstream_url, len(resp_body))
-
-        except httpx.TimeoutException:
-            duration_ms = (time.monotonic() - upstream_start) * 1000
-            proxy_log.record(
-                upstream_url,
-                status_code=504,
-                cache_hit=False,
-                duration_ms=duration_ms,
-                content_length=0,
-                error="upstream_timeout",
-            )
-            raise HTTPException(504, f"Upstream timeout fetching {upstream_url}")
-        except httpx.ConnectError:
-            duration_ms = (time.monotonic() - upstream_start) * 1000
-            proxy_log.record(
-                upstream_url,
-                status_code=502,
-                cache_hit=False,
-                duration_ms=duration_ms,
-                content_length=0,
-                error="connect_error",
-            )
-            raise HTTPException(502, f"Could not connect to {upstream_url}")
-        except Exception as exc:
-            duration_ms = (time.monotonic() - upstream_start) * 1000
-            log.error("proxy error for %s: %s", upstream_url, exc)
-            proxy_log.record(
-                upstream_url,
-                status_code=502,
-                cache_hit=False,
-                duration_ms=duration_ms,
-                content_length=0,
-                error=str(exc),
-            )
-            raise HTTPException(502, f"Proxy error: {exc}")
-
-    proxy_log.record(
-        upstream_url,
-        status_code=resp_status,
-        cache_hit=cache_hit,
-        duration_ms=(time.monotonic() - upstream_start) * 1000,
-        content_length=len(resp_body),
-        content_type=resp_content_type,
-    )
-
-    # ── Build response headers (override iframe-blockers) ──
-    BLOCKLIST = {"content-encoding", "content-length",
-                  "x-frame-options", "content-security-policy"}
-    headers = {}
-    for key, value in resp_headers.items():
-        lkey = key.lower()
-        if lkey in BLOCKLIST:
-            continue
-        headers[key] = value
-
-    headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    headers["Pragma"] = "no-cache"
-    headers["Expires"] = "0"
-
-    # Explicitly set permissive values so SecurityHeadersMiddleware
-    # (which only adds headers that don't already exist) doesn't inject
-    # X-Frame-Options: DENY / CSP frame-ancestors 'none'.
-    headers["X-Frame-Options"] = "SAMEORIGIN"
-    headers["Content-Security-Policy"] = (
-        "default-src * 'unsafe-inline' data: blob:; "
-        "script-src * 'unsafe-inline' 'unsafe-eval'; "
-        "style-src * 'unsafe-inline' blob:; "
-        "img-src * data: blob:; "
-        "connect-src *; "
-        "font-src * data: blob:; "
-        "frame-src *; "
-        "frame-ancestors *"
-    )
-
-    if resp_content_type.startswith(_PASSTHROUGH_PREFIXES):
-        return Response(
-            content=resp_body,
-            status_code=resp_status,
-            headers=headers,
-            media_type=resp_content_type,
-        )
-
-    body = resp_body.decode("utf-8", errors="replace")
-    if "text/html" in resp_content_type:
-        body = _rewrite_html(body, upstream_url)
-    elif "text/css" in resp_content_type:
-        body = _rewrite_css(body, upstream_url)
+    headers = build_proxy_headers(resp_headers)
+    body = rewrite_body(resp_body, resp_content_type, upstream_url)
 
     return Response(
-        content=body.encode("utf-8") if isinstance(body, str) else body,
+        content=body,
         status_code=resp_status,
         headers=headers,
         media_type=resp_content_type,
     )
+
+
+async def fetch_upstream(upstream_url: str):
+    """Fetch an upstream URL through the cache.
+
+    Returns ``(body, content_type, status, headers)``.
+
+    Two things happen here that the route should not have to know about. The
+    proxy log is written for **every** outcome, hit or miss, success or
+    failure, because a proxy whose hit rate you cannot see is a proxy you
+    cannot tune. And transport failures become HTTP codes rather than bubbling
+    as httpx exceptions, because the caller is a route and the client deserves
+    a 502 or a 504 rather than a stack trace.
+    """
+    cache = get_proxy_cache()
+    proxy_log = get_proxy_log()
+    started = time.monotonic()
+
+    cached = cache.get(upstream_url)
+    if cached is not None:
+        log.debug("proxy cache hit for %s (%d bytes)", upstream_url,
+                  len(cached.body))
+        proxy_log.record(
+            upstream_url,
+            status_code=cached.status_code,
+            cache_hit=True,
+            duration_ms=(time.monotonic() - started) * 1000,
+            content_length=len(cached.body),
+            content_type=cached.content_type,
+        )
+        return (cached.body, cached.content_type, cached.status_code,
+                cached.headers)
+
+
+    try:
+        async with httpx.AsyncClient(
+            follow_redirects=True,
+            timeout=30.0,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/125.0.0.0 Safari/537.36"
+                ),
+            },
+        ) as client:
+            upstream = await client.get(upstream_url)
+
+        body = upstream.content
+        content_type = upstream.headers.get("content-type", "").lower()
+        # Snapshot headers as a plain dict so they're serialisable.
+        headers = dict(upstream.headers)
+
+        cache.set(upstream_url, CachedResponse(
+            body=body,
+            content_type=content_type,
+            status_code=upstream.status_code,
+            headers=headers,
+        ))
+        log.debug("proxy cache miss + store for %s (%d bytes)", upstream_url,
+                  len(body))
+        proxy_log.record(
+            upstream_url,
+            status_code=upstream.status_code,
+            cache_hit=False,
+            duration_ms=(time.monotonic() - started) * 1000,
+            content_length=len(body),
+            content_type=content_type,
+        )
+        return body, content_type, upstream.status_code, headers
+
+    except httpx.TimeoutException:
+        proxy_log.record(
+            upstream_url,
+            status_code=504,
+            cache_hit=False,
+            duration_ms=(time.monotonic() - started) * 1000,
+            content_length=0,
+            error="upstream_timeout",
+        )
+        raise HTTPException(504, f"Upstream timeout fetching {upstream_url}")
+    except httpx.ConnectError:
+        proxy_log.record(
+            upstream_url,
+            status_code=502,
+            cache_hit=False,
+            duration_ms=(time.monotonic() - started) * 1000,
+            content_length=0,
+            error="connect_error",
+        )
+        raise HTTPException(502, f"Could not connect to {upstream_url}")
+    except Exception as exc:
+        duration_ms = (time.monotonic() - started) * 1000
+        log.error("proxy error for %s: %s", upstream_url, exc)
+        proxy_log.record(
+            upstream_url,
+            status_code=502,
+            cache_hit=False,
+            duration_ms=duration_ms,
+            content_length=0,
+            error=str(exc),
+        )
+        raise HTTPException(502, f"Proxy error: {exc}")
 
 
 # ── URL rewriting helpers ────────────────────────────────────────────────
