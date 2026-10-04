@@ -163,6 +163,39 @@ snapshots — confirmed to fail when a cycle is reintroduced.
 **`long_files` is now 0** — no file in `backend/`, `cli/` or `scripts/` is over
 1,500 lines.
 
+### Changed — audit page collection is phases, not one 268-line function
+
+`collect_page_data` in `backend/routes/audit.py` launched a browser, attached
+four listener closures, navigated, took two screenshots, pulled an
+accessibility tree with a DOM fallback, grabbed the page source, ran a
+hand-rolled "lighthouse-lite", tore everything down and wrote the audit trail —
+one function, one traceback, and no way to re-run a single phase.
+
+The phases now live in `backend/routes/audit_collect.py`: `attach_collectors`,
+`navigate_and_time`, `collect_screenshots`, `collect_dom_snapshot`,
+`collect_page_source`, `attach_network_to_data`, `collect_performance` and
+`log_collection`, plus the four scoring/formatting helpers they call.
+`collect_page_data` is 55 lines and owns only the order and the teardown —
+which is the part that has to be readable in one screen, because it decides
+what a failed audit contains.
+
+Two things changed beyond the move:
+
+- The listeners are a `NetworkCapture` record instead of three lists plus a
+  `nonlocal`, so teardown (`capture.detach`) is built beside attach and cannot
+  drift from it, and the counts the audit trail writes come off the same object
+  the handlers fill.
+- A dead `on_request` closure — defined, never attached, never called — is gone.
+
+`tests/test_audit_collect_phases.py` (16 tests, no browser) pins the two
+properties nothing checked: listeners attach before navigation and detach before
+close, and each phase's failure leaves the rest of the audit intact.
+
+The import is aliased (`audit_collect as page_collect`) because the module
+already defines a route handler named `audit_collect` — a plain import would
+have shadowed it at import time, the same collision class as the
+`memory_delete` bug fixed above.
+
 ### Changed — modularity and measurable gates
 
 - **Step actions split by family** — `browser_agent._run_step` was the repo's
@@ -183,10 +216,10 @@ snapshots — confirmed to fail when a cycle is reintroduced.
   `init_db` is idempotent, and asserts every helper is actually called — so a
   helper that is defined but not invoked, which would silently drop a table
   from a fresh install, fails the suite.
-- Metrics: `silent_excepts` 71 → 0, `long_functions` 17 → 14, `long_files` 4 → 0,
-  `docstring_ratio` 0.577 → 0.605, `mcp_server.py` 1,894 → 86 lines,
+- Metrics: `silent_excepts` 71 → 0, `long_functions` 17 → 13, `long_files` 4 → 0,
+  `docstring_ratio` 0.577 → 0.607, `mcp_server.py` 1,894 → 86 lines,
   `browser_agent.py` 3,402 → 1,370 lines, `cli/jambu.py` 2,108 → 84 lines,
-  `decentralized/simulation.py` 1,542 → 5 modules. Suite: 1989 passed, 9 skipped.
+  `decentralized/simulation.py` 1,542 → 5 modules. Suite: 2006 passed, 9 skipped.
 
 ## [3.4.0] - 2026-10-03
 

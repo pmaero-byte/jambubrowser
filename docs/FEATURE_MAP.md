@@ -136,9 +136,12 @@ the page being audited.
   detection, screen verification.
 - **Computer use** (vision + `backend/modules/multimodal_input.py`) —
   macOS screen capture, mouse, keyboard.
-- **Audit engine integration** (`backend/routes/audit.py`, 731 LOC) —
+- **Audit engine integration** (`backend/routes/audit.py` for the routes,
+  `backend/routes/audit_collect.py` for the collection phases) —
   Playwright-based data collection (network, console, DOM, a11y tree)
-  feeds the 6 employees.
+  feeds the 6 employees. Each phase (listeners, navigation, screenshots, DOM,
+  page source, performance) is a separate function and individually
+  best-effort, so a failed phase never fails the audit.
 - **HTML reports + share links** (2026-09) — `findings_to_html` renders a
   self-contained, escaped, print-friendly report; `GET /audit/report/{id}`
   and `GET /audit/shared/{token}/report` serve it; the AuditPanel shows

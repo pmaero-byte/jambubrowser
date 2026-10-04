@@ -20,6 +20,9 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, validator
 
 from backend.core.audit import get_audit_logger, ActionCategory
+# Aliased: this module already defines a route handler named `audit_collect`,
+# and a plain import would shadow it.
+from backend.routes import audit_collect as page_collect
 from backend.core.security import is_safe_url
 from backend.employees import (
     ALL_EMPLOYEES,
@@ -102,7 +105,17 @@ async def _get_playwright():
 
 
 async def collect_page_data(req: AuditCollectRequest) -> AuditData:
-    """Navigate to URL and collect full-spectrum data via Playwright/CDP."""
+    """Navigate to the URL and collect the full spectrum of data for one audit.
+
+    The phases live in `page_collect.py` — collectors, navigation, screenshots,
+    DOM, page source, performance — and each one is best-effort: it logs its own
+    failure and leaves the rest of the audit intact. This function owns only the
+    order and the teardown, which is what a reader needs in one screen.
+
+    Launch order matters in two places. The listeners are attached *before*
+    navigation or the initial document response is missed, and teardown detaches
+    them *before* closing the context so no handler fires against a dead page.
+    """
     pw = await _get_playwright()
     data = AuditData(url=req.url, collected_at=datetime.now(timezone.utc).isoformat())
 
@@ -128,246 +141,23 @@ async def collect_page_data(req: AuditCollectRequest) -> AuditData:
 
     page = await context.new_page()
     start_time = time.time()
+    capture = await page_collect.attach_collectors(page, context)
 
-    # ── Collectors (attach before navigation) ──────────────────────────
+    await page_collect.navigate_and_time(page, data, req, capture, start_time)
+    await page_collect.collect_screenshots(page, data, req)
+    await page_collect.collect_dom_snapshot(page, data)
+    await page_collect.collect_page_source(page, data)
+    page_collect.attach_network_to_data(data, capture)
+    await page_collect.collect_performance(page, data)
 
-    network_requests: list[dict] = []
-    response_headers: dict[str, str] = {}
-    cookies: list[dict] = []
-
-    async def on_request(request):
-        pass  # tracked on response
-
-    async def on_response(response):
-        req = response.request
-        timing = {}
-        try:
-            t = response.request.timing
-            if t:
-                timing = {
-                    "start_time": t.get("startTime", 0),
-                    "dns": t.get("dnsEnd", 0) - t.get("dnsStart", 0) if t.get("dnsEnd", -1) >= 0 else -1,
-                    "connect": t.get("connectEnd", 0) - t.get("connectStart", 0) if t.get("connectEnd", -1) >= 0 else -1,
-                    "ttfb": t.get("receiveHeadersEnd", 0) - t.get("sendEnd", 0) if t.get("receiveHeadersEnd", -1) >= 0 else -1,
-                    "total": t.get("responseEnd", 0) - t.get("startTime", 0) if t.get("responseEnd", -1) >= 0 else -1,
-                }
-        except Exception:
-            log.debug("audit: ignored failure", exc_info=True)
-
-        network_requests.append({
-            "url": req.url,
-            "method": req.method,
-            "status": response.status,
-            "status_text": response.status_text,
-            "resource_type": req.resource_type,
-            "transfer_size": int(response.headers.get("content-length", 0) or 0),
-            "timing": timing,
-        })
-
-    async def on_main_response(response):
-        nonlocal response_headers
-        if response.request.resource_type == "document":
-            response_headers = dict(response.headers)
-            try:
-                page_cookies = await context.cookies()
-                cookies.extend(page_cookies)
-            except Exception:
-                log.debug("audit: ignored failure", exc_info=True)
-
-    console_logs: list[dict] = []
-
-    async def on_console(msg):
-        console_logs.append({
-            "level": msg.type,
-            "text": msg.text,
-            "location": f"{msg.location.get('url','')}:{msg.location.get('lineNumber','')}" if msg.location else "",
-        })
-
-    page.on("response", on_response)
-    page.on("response", on_main_response)
-    page.on("console", on_console)
-
-    # ── Navigate ───────────────────────────────────────────────────────
-
-    try:
-        main_response = await page.goto(
-            req.url,
-            wait_until="networkidle",
-            timeout=req.timeout_ms,
-        )
-        if main_response:
-            response_headers.update(dict(main_response.headers))
-            data.title = await page.title()
-
-        # Small extra wait for late-loading resources
-        await asyncio.sleep(1.0)
-    except Exception as e:
-        log.warning("Navigation to %s had issues: %s", req.url, e)
-        try:
-            data.title = await page.title()
-        except Exception:
-            log.debug("audit: ignored failure", exc_info=True)
-
-    data.load_time_ms = (time.time() - start_time) * 1000
-    data.viewport_width = req.width
-    data.viewport_height = req.height
-
-    # ── Screenshots ────────────────────────────────────────────────────
-
-    if req.capture_screenshot:
-        try:
-            screenshot_bytes = await page.screenshot(type="png", full_page=False)
-            data.screenshot_base64 = base64.b64encode(screenshot_bytes).decode()
-        except Exception as e:
-            log.warning("Screenshot failed: %s", e)
-
-    if req.capture_fullpage:
-        try:
-            fp_bytes = await page.screenshot(type="png", full_page=True)
-            data.fullpage_screenshot_base64 = base64.b64encode(fp_bytes).decode()
-        except Exception as e:
-            log.warning("Fullpage screenshot failed: %s", e)
-
-    # ── DOM / Accessibility Snapshot ───────────────────────────────────
-
-    try:
-        snapshot = await page.accessibility.snapshot()
-        if snapshot:
-            data.dom_snapshot = _format_accessibility_tree(snapshot)
-    except Exception as e:
-        log.warning("Accessibility snapshot failed: %s", e)
-
-    # Fallback: extract basic DOM structure if accessibility tree is empty
-    if not data.dom_snapshot:
-        try:
-            dom_info = await page.evaluate("""() => {
-                const headings = Array.from(document.querySelectorAll('h1,h2,h3,h4,h5,h6')).map(
-                    h => h.tagName + ': ' + (h.textContent || '').trim().substring(0, 80)
-                );
-                const links = Array.from(document.querySelectorAll('a[href]')).map(
-                    a => a.textContent.trim().substring(0, 60) + ' → ' + a.href.substring(0, 100)
-                );
-                const buttons = Array.from(document.querySelectorAll('button,input[type=submit],input[type=button]')).map(
-                    b => (b.textContent || b.value || b.id || 'unnamed').trim().substring(0, 50)
-                );
-                const inputs = Array.from(document.querySelectorAll('input,textarea,select')).map(
-                    i => `${i.tagName}[type=${i.type || 'text'}] name=${i.name || '?'} id=${i.id || '?'}`.substring(0, 80)
-                );
-                const images = Array.from(document.querySelectorAll('img')).map(
-                    img => `src=${img.src.substring(0, 60)} alt=\"${(img.alt || '').substring(0, 40)}\"`
-                );
-                const forms = Array.from(document.querySelectorAll('form')).map(
-                    f => `action=${f.action.substring(0, 60)} method=${f.method}`
-                );
-                const meta = Array.from(document.querySelectorAll('meta[name],meta[property]')).map(
-                    m => (m.name || m.getAttribute('property')) + '=' + m.content.substring(0, 80)
-                );
-                return {
-                    headings, links, buttons, inputs, images, forms, meta,
-                    totalNodes: document.querySelectorAll('*').length,
-                    lang: document.documentElement.lang || 'not set',
-                };
-            }""")
-            data.dom_snapshot = _format_dom_fallback(dom_info)
-        except Exception as e:
-            log.warning("DOM fallback failed: %s", e)
-
-    # ── Page Source ────────────────────────────────────────────────────
-
-    try:
-        data.page_source = await page.content()
-    except Exception as e:
-        log.warning("Page source capture failed: %s", e)
-
-    # ── Network + Cookies ──────────────────────────────────────────────
-
-    data.network_requests = network_requests
-    data.response_headers = response_headers
-    data.cookies = cookies
-    data.console_logs = console_logs
-
-    # ── Lighthouse-lite (Performance API metrics) ──────────────────────
-
-    try:
-        perf_data = await page.evaluate("""() => {
-            const nav = performance.getEntriesByType('navigation')[0];
-            const paint = performance.getEntriesByType('paint');
-            const lcpEntry = performance.getEntriesByType('largest-contentful-paint');
-            const clsValue = (performance.getEntriesByType('layout-shift') || []).reduce(
-                (sum, e) => sum + (e.value || 0), 0
-            );
-
-            let lcp = lcpEntry.length > 0 ? lcpEntry[lcpEntry.length - 1].startTime : null;
-            let fcp = paint.find(p => p.name === 'first-contentful-paint');
-            let fp = paint.find(p => p.name === 'first-paint');
-
-            return {
-                fcp: fcp ? Math.round(fcp.startTime) : null,
-                fp: fp ? Math.round(fp.startTime) : null,
-                lcp: lcp ? Math.round(lcp) : null,
-                cls: clsValue ? Math.round(clsValue * 10000) / 10000 : null,
-                dom_content_loaded: nav ? Math.round(nav.domContentLoadedEventEnd) : null,
-                load_complete: nav ? Math.round(nav.loadEventEnd) : null,
-                ttfb: nav ? Math.round(nav.responseStart - nav.requestStart) : null,
-                dom_nodes: document.querySelectorAll('*').length,
-            }
-        }""")
-
-        data.lighthouse_report = {
-            "source": "Performance API (Lighthouse not available — install lighthouse for full audits)",
-            "categories": {
-                "performance": {"score": _estimate_perf_score(perf_data), "title": "Performance"},
-            },
-            "audits": {
-                "first-contentful-paint": {
-                    "title": "First Contentful Paint",
-                    "score": _score_metric(perf_data.get("fcp"), [1800, 3000]),
-                    "displayValue": f"{perf_data.get('fcp', 'N/A')}ms" if perf_data.get("fcp") else "N/A",
-                },
-                "largest-contentful-paint": {
-                    "title": "Largest Contentful Paint",
-                    "score": _score_metric(perf_data.get("lcp"), [2500, 4000]),
-                    "displayValue": f"{perf_data.get('lcp', 'N/A')}ms" if perf_data.get("lcp") else "N/A",
-                },
-                "cumulative-layout-shift": {
-                    "title": "Cumulative Layout Shift",
-                    "score": _score_metric(perf_data.get("cls"), [0.1, 0.25], lower_is_better=True),
-                    "displayValue": str(perf_data.get("cls", "N/A")),
-                },
-                "dom-size": {
-                    "title": "DOM Size",
-                    "score": _score_metric(perf_data.get("dom_nodes"), [800, 1500]),
-                    "displayValue": f"{perf_data.get('dom_nodes', 'N/A')} nodes",
-                },
-                "server-response-time": {
-                    "title": "Server Response Time (TTFB)",
-                    "score": _score_metric(perf_data.get("ttfb"), [600, 1000]),
-                    "displayValue": f"{perf_data.get('ttfb', 'N/A')}ms" if perf_data.get("ttfb") else "N/A",
-                },
-            },
-            "raw_metrics": perf_data,
-        }
-    except Exception as e:
-        log.warning("Performance metrics collection failed: %s", e)
-
-    # ── Cleanup ────────────────────────────────────────────────────────
-
-    page.remove_listener("response", on_response)
-    page.remove_listener("response", on_main_response)
-    page.remove_listener("console", on_console)
+    # Detach before closing: a listener firing into a closed context is the kind
+    # of teardown race that only shows up under load.
+    if capture.detach is not None:
+        capture.detach()
     await context.close()
     await browser.close()
 
-    # Log to audit trail
-    try:
-        audit = get_audit_logger()
-        audit.log(ActionCategory.RESEARCH, "audit_collect", details={
-            "url": req.url, "load_ms": data.load_time_ms,
-            "requests": len(network_requests), "console": len(console_logs),
-        })
-    except Exception:
-        log.debug("audit: ignored failure", exc_info=True)
-
+    page_collect.log_collection(req, data, capture)
     return data
 
 
