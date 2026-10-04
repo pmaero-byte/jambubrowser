@@ -1150,15 +1150,15 @@
     },
     {
       "debug_prints": 0,
-      "documented_defs": 1,
+      "documented_defs": 4,
       "duplicate_definitions": [],
-      "functions": 7,
-      "lines": 478,
-      "long_functions": 1,
-      "longest_function": "lifespan",
-      "longest_function_loc": 162,
+      "functions": 9,
+      "lines": 519,
+      "long_functions": 0,
+      "longest_function": "start_subsystems",
+      "longest_function_loc": 118,
       "path": "backend/engine.py",
-      "public_defs": 4,
+      "public_defs": 6,
       "silent_excepts": 0,
       "todos": 0
     },
@@ -3461,14 +3461,14 @@
   ],
   "summary": {
     "debug_prints": 15,
-    "docstring_ratio": 0.6103,
-    "documented_defs": 1190,
+    "docstring_ratio": 0.6112,
+    "documented_defs": 1193,
     "duplicate_definitions": 0,
     "files": 247,
     "long_files": 0,
-    "long_functions": 6,
-    "public_defs": 1950,
+    "long_functions": 5,
+    "public_defs": 1952,
     "silent_excepts": 0,
-    "total_lines": 63997
+    "total_lines": 64038
   }
 }

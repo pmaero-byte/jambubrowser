@@ -54,9 +54,23 @@ log = logging.getLogger("jambu.engine")
 _SEARXNG_URL = os.environ.get("SEARXNG_URL", "http://localhost:8888/search")
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Modern lifespan context manager — replaces deprecated on_event."""
+async def start_subsystems() -> dict:
+    """Bring up every long-lived subsystem and return the shutdown handles.
+
+    Two rules, and they are the whole contract:
+
+    * **optional subsystems are optional.** The simulation queue, the VPN tunnel
+      and the remote MCP session manager all fail soft: a failure is logged and
+      the engine starts without that feature. A misconfigured tunnel is not a
+      reason the audit API should be unreachable.
+    * **required wiring is not skipped.** The mission scheduler's research
+      handler and the monitor schedulers are set up unconditionally, because
+      without them those endpoints accept work that then fails at run time —
+      a much worse failure mode than a startup error.
+
+    Returns a dict of the handles `stop_subsystems` needs, rather than a tuple,
+    so adding a subsystem does not silently unpair its cleanup.
+    """
     from backend.core.database import init_db
     init_db()
     _warn_missing_runtime_deps()
@@ -66,6 +80,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     tasks = []
 
     async def memory_audit():
+        """Every 10 minutes: collect garbage, then tell connected clients."""
         try:
             while True:
                 await asyncio.sleep(600)
@@ -98,8 +113,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # crash must not take the engine down, so failures are logged only.
     sim_worker = None
     try:
-        import os
-
         if (
             os.environ.get("JAMBU_SIM_QUEUE") == "1"
             and os.environ.get("JAMBU_ENABLE_DECENTRALIZED") == "1"
@@ -132,10 +145,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         log.warning("Dynamic VPN failed to start; continuing without it",
                     exc_info=True)
 
-    # Mission scheduler: register a research handler so missions can
-    # actually execute when the loop is started (POST
-    # /mission/start-scheduler). Without this every due mission failed
-    # with "no research handler".
+    # Mission scheduler: register a research handler so missions can actually
+    # execute when the loop is started (POST /mission/start-scheduler). Without
+    # this every due mission failed with "no research handler".
     from backend.modules.missions import get_scheduler as get_mission_scheduler
 
     async def _mission_research(query: str) -> str:
@@ -146,8 +158,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     get_mission_scheduler().set_research_handler(_mission_research)
 
     # Remote MCP (Streamable HTTP) is mounted at /mcp; its session manager
-    # needs to run for the lifetime of the app (Starlette does not run
-    # lifespans of mounted sub-apps).
+    # needs to run for the lifetime of the app (Starlette does not run lifespans
+    # of mounted sub-apps).
     from backend.mcp_http import current_session_manager
 
     mcp_session_stack = AsyncExitStack()
@@ -158,17 +170,27 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception:
         log.warning("MCP session manager failed to start", exc_info=True)
 
-    yield  # Application runs here
+    return {"tasks": tasks, "sim_worker": sim_worker,
+            "mcp_session_stack": mcp_session_stack}
 
-    # Shutdown cleanup. Inlined in the post-yield for-loop because
-    # @asynccontextmanager wraps this async generator and Python's parser
-    # accepts `await` only inside try/loop bodies in that context.
-    #
-    # Every step below is individually best-effort: one broken subsystem must
-    # not prevent the rest from closing, or the process hangs on exit. Each one
-    # still *logs* — a silent `pass` here used to hide leaks and stuck
-    # sessions entirely, which is exactly the class of bug you cannot debug
-    # after the fact.
+
+async def stop_subsystems(handles: dict) -> None:
+    """Tear down what `start_subsystems` brought up.
+
+    Every step is individually best-effort and every step logs. One broken
+    subsystem must not prevent the rest from closing, or the process hangs on
+    exit — and a silent `pass` here used to hide leaked browsers and stuck
+    sessions entirely, which is exactly the class of bug you cannot debug after
+    the fact.
+
+    Order is not arbitrary: the MCP session manager closes last, because a
+    mounted app may still be draining, and the VPN tunnel stops after the
+    monitors so no monitor can start a fetch through a dying tunnel.
+    """
+    tasks = handles.get("tasks") or []
+    sim_worker = handles.get("sim_worker")
+    mcp_session_stack = handles.get("mcp_session_stack")
+
     for task in tasks:
         task.cancel()
     try:
@@ -186,8 +208,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             await sim_worker.stop()
         except Exception:
             log.warning("simulation worker failed to stop cleanly", exc_info=True)
-    # Dynamic VPN: stop the health sweeper and drop the tunnel interface so
-    # a restart does not leave a stale one behind.
+
+    # Dynamic VPN: stop the health sweeper and drop the tunnel interface so a
+    # restart does not leave a stale one behind.
     try:
         from backend.core.vpn import get_vpn_manager
         vpn_manager = get_vpn_manager()
@@ -196,6 +219,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception:
         log.warning("vpn tunnel failed to stop cleanly; interface may persist",
                     exc_info=True)
+
     for mod_name in ["browser", "missions", "shadow_browser", "risk_shield"]:
         try:
             mod = __import__(f"backend.modules.{mod_name}", fromlist=["cleanup"])
@@ -213,10 +237,27 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             log.debug(f"{mod_name} cleanup skipped", exc_info=True)
 
     # Close the MCP session manager last (mounted app may still be draining).
+    if mcp_session_stack is not None:
+        try:
+            await mcp_session_stack.aclose()
+        except Exception:
+            log.warning("mcp session manager failed to close cleanly", exc_info=True)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Modern lifespan context manager — replaces deprecated on_event.
+
+    A thin sequence: bring subsystems up, serve, tear them down. The two halves
+    live in `start_subsystems` / `stop_subsystems`, which is what makes them
+    readable — and readable, here, means a reviewer can confirm that every
+    subsystem started is also stopped.
+    """
+    handles = await start_subsystems()
     try:
-        await mcp_session_stack.aclose()
-    except Exception:
-        log.warning("mcp session manager failed to close cleanly", exc_info=True)
+        yield
+    finally:
+        await stop_subsystems(handles)
 
 
 # (The previous _shutdown_modules helper was removed because the bare

@@ -350,6 +350,31 @@ tests):
 
 Each was confirmed to fail when the corresponding release path is changed.
 
+### Changed — engine startup and shutdown are readable in one screen each
+
+`lifespan` was 162 lines with the shutdown half hiding *after* the `yield`, in
+the body of an async generator — easy to overlook, and a missed step there is
+exactly how a browser context or a VPN interface survives a restart. It is now
+`start_subsystems()` returning the handles shutdown needs, `stop_subsystems()`
+taking them back, and a 15-line `lifespan` that reads: start, serve, stop.
+
+Two rules are now structural rather than commented, and
+`tests/test_engine_lifespan.py` (12 tests) pins both with the subsystem
+modules stubbed:
+
+* **optional subsystems fail soft** — the simulation queue, the VPN tunnel and
+  the MCP session manager are logged and skipped, because one misconfigured
+  feature must not make the audit API unreachable;
+* **required wiring does not** — the mission research handler and the monitor
+  schedulers are set up unconditionally, because without them those endpoints
+  accept work that then fails at run time.
+
+Also pinned: a failing subsystem never blocks the rest of shutdown (that is how
+the process hangs on exit), the simulation worker really is opt-in behind *both*
+flags, and a failing MCP close is the last thing logged because it is closed
+last. The symmetry test fails if a subsystem is dropped from the cleanup loop —
+confirmed by dropping two.
+
 ### Changed — modularity and measurable gates
 
 - **Step actions split by family** — `browser_agent._run_step` was the repo's
@@ -370,10 +395,10 @@ Each was confirmed to fail when the corresponding release path is changed.
   `init_db` is idempotent, and asserts every helper is actually called — so a
   helper that is defined but not invoked, which would silently drop a table
   from a fresh install, fails the suite.
-- Metrics: `silent_excepts` 71 → 0, `long_functions` 17 → 6, `long_files` 4 → 0,
+- Metrics: `silent_excepts` 71 → 0, `long_functions` 17 → 5, `long_files` 4 → 0,
   `docstring_ratio` 0.577 → 0.607, `mcp_server.py` 1,894 → 86 lines,
   `browser_agent.py` 3,402 → 1,370 lines, `cli/jambu.py` 2,108 → 84 lines,
-  `decentralized/simulation.py` 1,542 → 5 modules. Suite: 2155 passed, 9 skipped.
+  `decentralized/simulation.py` 1,542 → 5 modules. Suite: 2167 passed, 9 skipped.
 
 ## [3.4.0] - 2026-10-03
 
