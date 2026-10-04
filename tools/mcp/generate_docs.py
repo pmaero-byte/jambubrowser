@@ -3,8 +3,9 @@ Generate docs/MCP_TOOLS.md from the live MCP tool registry.
 
 Why this exists
 ---------------
-The MCP server in backend/mcp_server.py registers 21+ tools with
-``@mcp.tool()``. Without this generator, the only way to learn what
+The MCP server (``backend/mcp_server.py`` plus the ``backend/mcp_tools/``
+family modules) registers 52 tools. Without this generator, the only way
+to learn what
 tools are available is to read the source. This script introspects the
 module at import time and emits a Markdown reference so:
 
@@ -107,7 +108,7 @@ def render_markdown(mcp_server_module) -> str:
     lines.append("# MCP Tools Reference")
     lines.append("")
     lines.append(
-        "Auto-generated from `backend/mcp_server.py` by "
+        "Auto-generated from the `backend/mcp_tools/` family modules by "
         "`tools/mcp/generate_docs.py`. Do not edit by hand — re-run the "
         "generator after adding or renaming a tool."
     )

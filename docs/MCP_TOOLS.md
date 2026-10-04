@@ -1,6 +1,6 @@
 # MCP Tools Reference
 
-Auto-generated from `backend/mcp_server.py` by `tools/mcp/generate_docs.py`. Do not edit by hand — re-run the generator after adding or renaming a tool.
+Auto-generated from the `backend/mcp_tools/` family modules by `tools/mcp/generate_docs.py`. Do not edit by hand — re-run the generator after adding or renaming a tool.
 
 **Total tools:** 52
 

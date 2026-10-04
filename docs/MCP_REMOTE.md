@@ -71,7 +71,8 @@ Client configuration (Claude, Cursor, any MCP client with remote support):
   `check_engine_health`) so an agent pays the smallest selection cost.
 
 The exact membership lives in `CURATED_EXCLUDES` / `DEVELOPER_TOOLS` in
-`backend/mcp_server.py`; `tests/test_mcp_docs_generator.py` keeps the counts
+`backend/mcp_server.py` (the profile filter; the tools themselves are in
+`backend/mcp_tools/`); `tests/test_mcp_docs_generator.py` keeps the counts
 above in sync with the registry.
 
 ## Discovery / registry

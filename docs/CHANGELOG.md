@@ -42,6 +42,24 @@ on `F821`/`F811` so the next one cannot land.
   asserts no module contains a bare `except Exception: pass`, and the
   baseline gate fails if the count ever rises.
 
+### Changed — the MCP server is now a registry, not a 1,894-line file
+
+`backend/mcp_server.py` held all 52 tools, their renderers and their section
+banners in one namespace, so "which module owns the VPN tool" meant scrolling.
+It is now 86 lines that build the FastMCP server, register 13 family modules
+from `backend/mcp_tools/` (research, browser actions, vision, memory, skills,
+system, DCM, simulation, VPN, MeshPay, browser sessions, browser testing,
+agent eval), apply the tool profile and run. Each family module owns plain
+async functions plus a `register(mcp)`, so a tool can be imported and tested
+without an MCP server in the loop.
+
+The engine-call seam moved to `backend/mcp_tools/_shared.py::call_engine`,
+reached by module attribute access rather than a from-import — that keeps a
+single patch point for tests, the way `mcp_server._call_engine` was one.
+Verified identical surface before committing: 52 tools, same order, same
+resolved type hints, same docstrings; `docs/MCP_TOOLS.md` regenerates with only
+its provenance line changed.
+
 ### Changed — modularity and measurable gates
 
 - **Step actions split by family** — `browser_agent._run_step` was the repo's
@@ -62,8 +80,9 @@ on `F821`/`F811` so the next one cannot land.
   `init_db` is idempotent, and asserts every helper is actually called — so a
   helper that is defined but not invoked, which would silently drop a table
   from a fresh install, fails the suite.
-- Metrics: `silent_excepts` 71 → 0, `long_functions` 17 → 14,
-  `browser_agent.py` 3,402 → 2,883 lines. Suite: 1947 passed, 9 skipped.
+- Metrics: `silent_excepts` 71 → 0, `long_functions` 17 → 14, `long_files` 4 → 3,
+  `mcp_server.py` 1,894 → 86 lines, `browser_agent.py` 3,402 → 2,883 lines.
+  Suite: 1962 passed, 9 skipped.
 
 ## [3.4.0] - 2026-10-03
 

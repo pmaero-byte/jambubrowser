@@ -243,7 +243,7 @@ class TestDcmMcpFormatting:
     """Formatter regressions found by calling the tools against a real node."""
 
     def test_status_shows_moe_ready_when_default_runtime_errors(self, monkeypatch):
-        import backend.mcp_server as mcp_server
+        from backend.mcp_tools import _shared, mesh_dcm
 
         async def fake_call(method, path, json_data=None, timeout=60.0):
             return {
@@ -261,14 +261,14 @@ class TestDcmMcpFormatting:
                 "mesh_status": {"nodeId": "n1", "peers": []},
             }
 
-        monkeypatch.setattr(mcp_server, "_call_engine", fake_call)
-        out = asyncio.run(mcp_server.dcm_status())
+        monkeypatch.setattr(_shared, "call_engine", fake_call)
+        out = asyncio.run(mesh_dcm.dcm_status())
         assert "python-moe ready" in out
         assert "dcm-infer-candle" in out
         assert "1/2 available" in out
 
     def test_settlement_log_reads_nested_verification(self, monkeypatch):
-        import backend.mcp_server as mcp_server
+        from backend.mcp_tools import _shared, mesh_dcm
 
         async def fake_call(method, path, json_data=None, timeout=60.0):
             return {
@@ -281,15 +281,15 @@ class TestDcmMcpFormatting:
                 },
             }
 
-        monkeypatch.setattr(mcp_server, "_call_engine", fake_call)
-        out = asyncio.run(mcp_server.dcm_settlement_log(3))
+        monkeypatch.setattr(_shared, "call_engine", fake_call)
+        out = asyncio.run(mesh_dcm.dcm_settlement_log(3))
         assert "chain valid: True" in out
         assert "totalMinted=0" in out
 
     def test_call_engine_surfaces_non_200_detail(self, monkeypatch):
         """Engine 502s must carry their detail (e.g. DCM's missing-runtime
         explanation) instead of a bare status code."""
-        import backend.mcp_server as mcp_server
+        from backend.mcp_tools import _shared
 
         class FakeResponse:
             status_code = 502
@@ -313,9 +313,9 @@ class TestDcmMcpFormatting:
             async def get(self, *a, **k):
                 return FakeResponse()
 
-        monkeypatch.setattr(mcp_server.httpx, "AsyncClient", FakeClient)
+        monkeypatch.setattr(_shared.httpx, "AsyncClient", FakeClient)
         result = asyncio.run(
-            mcp_server._call_engine("POST", "/dcm/infer", {"prompt": "hi"})
+            _shared.call_engine("POST", "/dcm/infer", {"prompt": "hi"})
         )
         assert "Engine HTTP 502" in result["error"]
         assert "dcm-infer-candle ENOENT" in result["error"]

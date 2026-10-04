@@ -1,5 +1,5 @@
 """
-MCP server tests — verify the FastMCP server in backend/mcp_server.py boots,
+MCP server tests — verify the registry in backend/mcp_server.py boots,
 exposes the expected tool surface, and (with the engine up) actually returns
 engine-shaped data through the MCP protocol.
 
@@ -376,7 +376,7 @@ def test_render_compact_surfaces_omissions():
     Silently trimming rows would let a model believe it saw the whole page.
     """
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from backend.mcp_server import _render_compact
+    from backend.mcp_tools.browser_sessions import _render_compact
 
     rows_view = _render_compact({
         "url": "https://example.com/", "title": "Page",
