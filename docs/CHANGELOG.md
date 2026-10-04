@@ -60,6 +60,32 @@ Verified identical surface before committing: 52 tools, same order, same
 resolved type hints, same docstrings; `docs/MCP_TOOLS.md` regenerates with only
 its provenance line changed.
 
+### Changed — the browser agent is four focused modules
+
+`backend/modules/browser_agent.py` was 2,892 lines holding three unrelated
+things: the Playwright adapter (701 lines, 62 methods), the agent session
+(1,058 lines) and the session registry (293 lines). Session logic and
+driver logic change for different reasons and are read from different
+tracebacks, so they now live apart:
+
+| module | lines | owns |
+| --- | --- | --- |
+| `browser_page.py` | 999 | `PlaywrightPage`, `Telemetry`, `PageAdapter`, the catalog JS, the CDP coverage arithmetic |
+| `browser_agent.py` | 1,370 | `BrowserAgentSession` — approvals, receipts, allowlists, the step loop, upload/download paths |
+| `browser_flow.py` | 359 | the pure flow functions — step/dialog normalisation, cost and token estimation, status classification, diagnostics, the Markdown report renderer |
+| `browser_agent_service.py` | 344 | the session registry the routes, MCP tools and monitors talk to |
+
+The flow vocabulary (`MAX_FLOW_STEPS`, `MUTATING_ACTIONS`,
+`FLOW_BLOCKED_REASONS`, `host_of`, `estimate_tokens`) moved into
+`browser_flow.py`, which removes a cycle that only worked when
+`browser_agent` happened to be imported first — importing `browser_flow` on its
+own raised a partial-initialisation `ImportError`.
+`tests/test_browser_module_graph.py` imports each module first in a fresh
+interpreter so that class of bug cannot come back, and pins the public names
+`browser_agent` still exports (the service resolves through a PEP 562 module
+`__getattr__`, so `from backend.modules.browser_agent import
+BrowserAgentService` keeps working).
+
 ### Changed — modularity and measurable gates
 
 - **Step actions split by family** — `browser_agent._run_step` was the repo's
@@ -80,9 +106,9 @@ its provenance line changed.
   `init_db` is idempotent, and asserts every helper is actually called — so a
   helper that is defined but not invoked, which would silently drop a table
   from a fresh install, fails the suite.
-- Metrics: `silent_excepts` 71 → 0, `long_functions` 17 → 14, `long_files` 4 → 3,
-  `mcp_server.py` 1,894 → 86 lines, `browser_agent.py` 3,402 → 2,883 lines.
-  Suite: 1962 passed, 9 skipped.
+- Metrics: `silent_excepts` 71 → 0, `long_functions` 17 → 14, `long_files` 4 → 2,
+  `mcp_server.py` 1,894 → 86 lines, `browser_agent.py` 3,402 → 1,370 lines.
+  Suite: 1975 passed, 9 skipped.
 
 ## [3.4.0] - 2026-10-03
 
