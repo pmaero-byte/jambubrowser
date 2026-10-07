@@ -15,9 +15,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
 import logging
 import os
+import re
+import tempfile
 import time
 from typing import Any, Optional, Protocol
 from urllib.parse import urljoin
@@ -40,10 +43,17 @@ log = logging.getLogger("jambu.browser_page")
 # a flow step that does not set one. Owned here because the adapter is what
 # the timeout applies to; the session imports it rather than redefining it.
 DEFAULT_STEP_TIMEOUT_MS = 5000
+# Default budget for a click/type/hover on a specific element. Distinct from
+# DEFAULT_STEP_TIMEOUT_MS: this used to be a literal 10000 baked into every
+# selector dispatch, which is why a step asking for 1500ms still waited 10s.
+DEFAULT_ACTION_TIMEOUT_MS = 10000
 MAX_ELEMENTS = 200
 MAX_FRAMES = 12
 MAX_TELEMETRY = 100
 MAX_TEXT_CHARS = 4000
+# A request body larger than this is recorded as a size, never kept: a file
+# upload must not end up in a test report.
+MAX_CAPTURED_BODY_BYTES = 64 * 1024
 
 
 class PageAdapter(Protocol):
@@ -52,6 +62,161 @@ class PageAdapter(Protocol):
     async def click(self, ref: str) -> None: ...
     async def type_text(self, ref: str, text: str) -> None: ...
     async def current_url(self) -> str: ...
+
+
+# -- diagnostics JS ---------------------------------------------------------
+#
+# Injected into the page to answer "could this element have been clicked?".
+# Both are read-only: a diagnosis must never change the state it is diagnosing.
+
+DESCRIBE_SELECTOR_JS = r"""
+(sel) => {
+  const engine = (s) => (s.startsWith('xpath=') ? s : null);
+  let el = null, viaXPath = false;
+  const isX = sel.startsWith('xpath=') || sel.startsWith('//') || sel.startsWith('(//');
+  if (isX) {
+    viaXPath = true;
+    try { el = document.evaluate(sel.startsWith('xpath=') ? sel.slice(6) : sel,
+                                document, null, 9, null).singleNodeValue; }
+    catch (e) { return {found: false, error: 'bad xpath: ' + e.message}; }
+  } else {
+    try { el = document.querySelector(sel); } catch (e) {
+      return {found: false, error: 'bad selector: ' + e.message};
+    }
+  }
+  if (!el) return {found: false, selector: sel};
+
+  const rect = el.getBoundingClientRect();
+  const style = window.getComputedStyle(el);
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+
+  const displayed = rect.width > 0 && rect.height > 0
+    && style.visibility !== 'hidden' && style.display !== 'none';
+  // Off-screen is the single most common cause of "click timed out" on a
+  // responsive layout: the element is in the DOM and "visible" per CSS, but
+  // its centre sits outside the viewport, so it was never clickable.
+  const inViewport = rect.bottom > 0 && rect.right > 0
+    && rect.top < vh && rect.left < vw
+    && cx >= 0 && cy >= 0 && cx <= vw && cy <= vh;
+  const coveredBy = (displayed && inViewport) ? (document.elementFromPoint(cx, cy)) : null;
+  const covered = coveredBy && coveredBy !== el && !el.contains(coveredBy)
+    && !coveredBy.contains(el) ? coveredBy : null;
+
+  const disabled = el.disabled === true
+    || el.getAttribute('aria-disabled') === 'true'
+    || (typeof el.matches === 'function' && el.matches(':disabled'));
+
+  // What actually sits on top, described well enough to act on.
+  const describe = (node) => {
+    if (!node) return null;
+    const tag = node.tagName.toLowerCase();
+    const id = node.id ? '#' + node.id : '';
+    const cls = node.className && typeof node.className === 'string'
+      ? '.' + node.className.trim().split(/\s+/).slice(0, 2).join('.') : '';
+    const label = (node.getAttribute && (node.getAttribute('aria-label')
+      || node.getAttribute('data-testid') || node.id || '')) || '';
+    return {selector: tag + id + cls, tag: tag, label: label.slice(0, 60),
+            text: ((node.innerText || '').trim().slice(0, 40))};
+  };
+
+  return {
+    found: true,
+    selector: sel,
+    matched_via: viaXPath ? 'xpath' : 'css',
+    tag: el.tagName.toLowerCase(),
+    text: ((el.innerText || el.textContent || '').trim().slice(0, 80)),
+    rect: {x: Math.round(rect.x), y: Math.round(rect.y),
+           width: Math.round(rect.width), height: Math.round(rect.height),
+           bottom: Math.round(rect.bottom), right: Math.round(rect.right)},
+    center: {x: Math.round(cx), y: Math.round(cy)},
+    viewport: {width: vw, height: vh},
+    displayed: displayed,
+    visible: displayed && inViewport,
+    in_viewport: inViewport,
+    enabled: !disabled,
+    hidden_by_css: style.display === 'none' ? 'display:none'
+      : (style.visibility === 'hidden' ? 'visibility:hidden'
+      : (style.opacity === '0' ? 'opacity:0' : null)),
+    off_screen: displayed && !inViewport,
+    covered_by: describe(covered),
+    // A short verdict beats four booleans at 3am.
+    likely_cause: !displayed ? 'not rendered (display/visibility/size)'
+      : (disabled ? 'disabled (aria-disabled or [disabled])'
+      : (!inViewport ? 'rendered but outside the ' + vw + 'x' + vh + ' viewport'
+      : (covered ? 'another element is on top at its centre point'
+      : 'element looks clickable; the selector may have resolved elsewhere'))),
+  };
+}
+"""
+
+SUGGEST_SELECTORS_JS = r"""
+(sel) => {
+  const isX = sel.startsWith('xpath=') || sel.startsWith('//') || sel.startsWith('(//');
+  let el = null;
+  if (isX) {
+    try { el = document.evaluate(sel.startsWith('xpath=') ? sel.slice(6) : sel,
+                                document, null, 9, null).singleNodeValue; }
+    catch (e) { return []; }
+  } else { try { el = document.querySelector(sel); } catch (e) { return []; } }
+  if (!el) return [];
+
+  const esc = (v) => (window.CSS && CSS.escape) ? CSS.escape(v) : String(v).replace(/["\\\]]/g, '\\$&');
+  const out = [];
+  const push = (v) => { if (v && out.length < 3 && !out.includes(v)) out.push(v); };
+
+  // data-testid first: it is the only spelling that survives a redesign.
+  const testid = el.getAttribute('data-testid') || el.getAttribute('data-test');
+  if (testid) push('[data-testid="' + esc(testid) + '"]');
+  if (el.id) push('#' + esc(el.id));
+
+  const name = (el.getAttribute('aria-label') || el.getAttribute('name')
+    || (el.textContent || '').trim().slice(0, 40));
+  if (name) {
+    const role = el.getAttribute('role')
+      || ({BUTTON: 'button', A: 'link', SELECT: 'combobox', INPUT: 'textbox'}[el.tagName]
+          || null);
+    push(role ? '[aria-label="' + esc(name) + '"]' : '[name="' + esc(name) + '"]');
+  }
+  const label = el.tagName.toLowerCase();
+  if (el.className && typeof el.className === 'string' && el.className.trim()) {
+    push(label + '.' + esc(el.className.trim().split(/\s+/)[0]));
+  }
+  return out;
+}
+"""
+
+
+def _is_signature_error(exc: TypeError, fn, name: str) -> bool:
+    """True when *exc* is "this callable does not accept these arguments".
+
+    Distinguishes that from a TypeError raised *inside* the adapter (a bug we
+    must not swallow or retry).
+    """
+    message = str(exc)
+    markers = (
+        "unexpected keyword argument", "takes no arguments", "positional argument",
+        "required positional", "got multiple values", "argument after",
+    )
+    if not any(marker in message for marker in markers):
+        return False
+    return name in message or "argument" in message
+
+
+def _accepted_keywords(fn) -> set[str]:
+    """Keyword names *fn* accepts, or an empty set if it takes ``**kwargs``."""
+    try:
+        signature = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return set()
+    names: set[str] = set()
+    for param in signature.parameters.values():
+        if param.kind is inspect.Parameter.VAR_KEYWORD:
+            return set()  # accepts anything; do not trim
+        if param.kind in (inspect.Parameter.KEYWORD_ONLY,
+                          inspect.Parameter.POSITIONAL_OR_KEYWORD):
+            names.add(param.name)
+    return names
 
 
 class Telemetry:
@@ -149,9 +314,22 @@ class PlaywrightPage:
     """
 
     def __init__(self, page, network: Optional[dict] = None,
-                 network_policy: Optional[NetworkPolicy] = None):
+                 network_policy: Optional[NetworkPolicy] = None,
+                 artifacts_dir: Optional[str] = None):
         self._page = page
         self.telemetry = Telemetry()
+        self._capture_request_bodies = False
+        self._capture_tasks: set = set()
+        # Console messages attributed to the step that caused them. Playwright
+        # reports "The script has an unsupported MIME type ('text/html')" with no
+        # URL, so a failure cannot be traced to a file without this.
+        self._console_owner: Optional[str] = None
+        self._step_console: list[dict] = []
+        self._worker_errors: list[dict] = []
+        self._workers: list[dict] = []
+        # Where screenshot baselines and failing diff frames are written, so they
+        # land next to that run's trace/HAR rather than in a random temp dir.
+        self.artifacts_dir = artifacts_dir or tempfile.gettempdir()
         self._network = network or {}
         self._network_rules = compile_network(network)
         self.network_policy = network_policy
@@ -161,13 +339,12 @@ class PlaywrightPage:
         # explicitly rather than reaching through page.context every call.
         self._context = getattr(page, "context", None)
         self.requests: list[dict] = []
+        # Request bodies/status/timings, captured only when a flow asks.
+        self.captured_requests: list[dict] = []
         try:
-            page.on("console", lambda msg: self.telemetry.add_console(
-                msg.type, msg.text,
-                getattr(msg, "location", None) if isinstance(
-                    getattr(msg, "location", None), dict) else None,
-            ))
-            page.on("pageerror", lambda exc: self.telemetry.add_page_error(str(exc)))
+            page.on("console", self._on_console)
+            page.on("pageerror", self._on_page_error)
+            page.on("worker", self._on_worker)
             page.on("requestfailed", lambda req: self.telemetry.add_failed_request(
                 req.method, req.url,
                 (req.failure or "") if isinstance(req.failure, str) else str(req.failure or ""),
@@ -176,6 +353,10 @@ class PlaywrightPage:
                 resp.request.method, resp.url, resp.status,
             ) if resp.status >= 400 else None)
             page.on("request", lambda req: self._track_request(req.method, req.url))
+            # Bodies are captured only when asked for: reading every request
+            # body on every session is work most flows do not need.
+            if self._capture_request_bodies:
+                page.on("request", lambda req: self._enqueue_capture(req))
         except Exception:  # adapters/fakes without event support
                 log.debug("page event listeners unavailable on this adapter",
                           exc_info=True)
@@ -220,13 +401,162 @@ class PlaywrightPage:
         """Arm the *next* dialog raised by a subsequent action."""
         self._dialog_policy = {"accept": bool(accept), "text": text or ""}
 
+    def _on_console(self, msg) -> None:
+        location = getattr(msg, "location", None)
+        if not isinstance(location, dict):
+            location = {}
+        self.telemetry.add_console(
+            getattr(msg, "type", "log"), getattr(msg, "text", "") or "", location,
+        )
+        self._attribute_console(msg)
+
+    def _on_page_error(self, exc) -> None:
+        text = str(exc)
+        self.telemetry.add_page_error(text)
+        self._attribute_text("pageerror", text)
+
+    def _attribute_console(self, msg) -> None:
+        """Record a console message against the step that is running now.
+
+        The report already groups messages by flow, but "an error happened
+        somewhere" is much weaker than "this error happened while step 7 ran".
+        """
+        location = getattr(msg, "location", None)
+        if not isinstance(location, dict):
+            location = {}
+        self._step_console.append({
+            "step": self._console_owner, "level": getattr(msg, "type", "log"),
+            "text": (getattr(msg, "text", "") or "")[:300],
+            "url": location.get("url", ""), "line": location.get("lineNumber"),
+        })
+        if len(self._step_console) > MAX_TELEMETRY:
+            del self._step_console[: len(self._step_console) - MAX_TELEMETRY]
+
+    def _attribute_text(self, kind: str, text: str) -> None:
+        self._step_console.append({
+            "step": self._console_owner, "level": "error",
+            "text": (text or "")[:300], "url": "", "line": None,
+        })
+
+    def begin_step(self, step_label: str) -> None:
+        """Mark the start of a step so later console output is attributable."""
+        self._console_owner = step_label
+
+    def end_step(self) -> list[dict]:
+        """Return and clear the messages attributed to the step just ended."""
+        self._console_owner = None
+        owned = [c for c in self._step_console if c.get("step") is not None]
+        return owned
+
+    def _on_worker(self, worker) -> None:
+        """Track workers so their failures surface.
+
+        An in-browser solver runs in a Web Worker. A worker that throws takes
+        the computation with it and the page looks fine -- the result simply
+        never arrives -- so "did a worker die" is a question the report has to
+        answer rather than one the caller has to guess at.
+        """
+        entry = {"url": str(getattr(worker, "url", "") or "")[:300],
+                 "errors": []}
+        self._workers.append(entry)
+        try:
+            worker.on("close", lambda w=worker, e=entry: self._workers.remove(e)
+                      if e in self._workers else None)
+        except Exception:
+            log.debug("worker close event unavailable", exc_info=True)
+        try:
+            worker.on("pageerror", lambda exc, e=entry: e["errors"].append(str(exc)[:300]))
+        except Exception:
+            log.debug("worker error event unavailable", exc_info=True)
+
+    def worker_errors(self) -> list[dict]:
+        return [{"url": w["url"], "errors": w["errors"]}
+                for w in self._workers if w["errors"]]
+
     def _track_request(self, method: str, url: str) -> None:
         self.requests.append({"method": method, "url": (url or "")[:300]})
         if len(self.requests) > MAX_TELEMETRY:
             del self.requests[: len(self.requests) - MAX_TELEMETRY]
 
+    def _enqueue_capture(self, request) -> None:
+        """Schedule the body capture without blocking the event emitter."""
+        try:
+            task = asyncio.ensure_future(self.capture_request(request))
+        except RuntimeError:
+            return
+        self._capture_tasks.add(task)
+        task.add_done_callback(self._capture_tasks.discard)
+
+    def enable_request_capture(self, enabled: bool = True) -> bool:
+        """Turn on/off body capture for the rest of the session.
+
+        Installed the first time it is switched on; the Playwright ``request``
+        event does not carry a body synchronously, so each captured request
+        needs a task awaiting its response.
+        """
+        self._capture_request_bodies = bool(enabled)
+        return self._capture_request_bodies
+
     def made_request(self, pattern: str) -> bool:
         return any(pattern in r["url"] for r in self.requests)
+
+    async def capture_request(self, request) -> None:
+        """Record a request's body, response status and timing (best-effort).
+
+        ``made_request`` answers *whether* a call happened. It cannot answer
+        *what was sent*, which is what an agent-bridge or solver-dispatch test
+        actually asserts on ("the payload named solver.run and the response
+        said ok"). The body is read from Playwright's buffer and dropped unless
+        it is small and JSON, so an upload is never retained.
+
+        Never raises: this is diagnostic data collected on a hot path, and a
+        failure to read it must not turn a working page into a broken test.
+        """
+        entry: dict = {
+            "method": getattr(request, "method", ""),
+            "url": str(getattr(request, "url", ""))[:300],
+            "status": None, "body": None, "ms": None,
+        }
+        try:
+            post_data = getattr(request, "post_data", None)
+        except Exception:
+            post_data = None
+        if post_data:
+            if len(post_data) <= MAX_CAPTURED_BODY_BYTES:
+                try:
+                    entry["body"] = json.loads(post_data)
+                except (ValueError, TypeError):
+                    entry["body_preview"] = post_data[:300]
+            else:
+                entry["body_omitted"] = f"{len(post_data)} bytes"
+        try:
+            response = await request.response()
+            entry["status"] = response.status
+            timing = getattr(request, "timing", None)
+            if callable(timing):
+                data = timing() or {}
+                start, end = data.get("requestStart"), data.get("responseEnd")
+                if isinstance(start, (int, float)) and isinstance(end, (int, float)):
+                    entry["ms"] = int(end - start)
+        except Exception:
+            log.debug("could not capture response details", exc_info=True)
+        self.captured_requests.append(entry)
+        if len(self.captured_requests) > MAX_TELEMETRY:
+            del self.captured_requests[: len(self.captured_requests) - MAX_TELEMETRY]
+
+    def captured_matching(self, pattern: str) -> list[dict]:
+        """Captured requests whose url, method or body mention *pattern*."""
+        out = []
+        for entry in self.captured_requests:
+            body = entry.get("body")
+            haystack = " ".join([
+                entry.get("url", ""), entry.get("method", ""),
+                json.dumps(body, default=str) if body is not None else "",
+                str(entry.get("body_preview", "")),
+            ])
+            if pattern in haystack:
+                out.append(entry)
+        return out
 
     def drain_requests(self) -> list[dict]:
         out = list(self.requests)
@@ -626,11 +956,18 @@ class PlaywrightPage:
         self._ref_frames = ref_frames
         return out
 
-    async def click(self, ref: str) -> None:
-        await self._target_frame(ref).click(self._ref_selector(ref), timeout=10000)
+    async def click(self, ref: str, timeout_ms: int = DEFAULT_ACTION_TIMEOUT_MS) -> None:
+        await self._target_frame(ref).click(self._ref_selector(ref), timeout=timeout_ms)
 
-    async def type_text(self, ref: str, text: str) -> None:
-        await self._target_frame(ref).fill(self._ref_selector(ref), text, timeout=10000)
+    async def type_text(self, ref: str, text: str,
+                        timeout_ms: int = DEFAULT_ACTION_TIMEOUT_MS) -> None:
+        await self._target_frame(ref).fill(self._ref_selector(ref), text,
+                                           timeout=timeout_ms)
+
+    async def dblclick(self, ref: str,
+                       timeout_ms: int = DEFAULT_ACTION_TIMEOUT_MS) -> None:
+        await self._target_frame(ref).dblclick(self._ref_selector(ref),
+                                               timeout=timeout_ms)
 
     async def current_url(self) -> str:
         return self._page.url
@@ -710,6 +1047,57 @@ class PlaywrightPage:
                                 timeout_ms: int = DEFAULT_STEP_TIMEOUT_MS) -> None:
         await self._page.wait_for_function(script, timeout=timeout_ms)
 
+    async def wait_for_visible_selector(
+        self, selector: str, timeout_ms: int = DEFAULT_STEP_TIMEOUT_MS,
+    ) -> None:
+        """Wait for an element that is *rendered*, not merely present.
+
+        ``wait_for_selector`` defaults to ``state="attached"``, which matches
+        nodes that are laid out but not shown and elements inside a collapsed
+        container. A flow waiting for those resumes on a page whose visible
+        content is still rendering, so the next step reads a half-built DOM.
+        """
+        await self._page.wait_for_selector(
+            self._engine_selector(selector), state="visible", timeout=timeout_ms,
+        )
+
+    async def wait_for_visible_text(
+        self, text: str, timeout_ms: int = DEFAULT_STEP_TIMEOUT_MS,
+    ) -> None:
+        """Wait for text that is actually rendered on screen.
+
+        Playwright's ``get_by_text`` matches hidden text too -- the document
+        title, ``<script>`` contents, ``display:none`` copy and offscreen
+        nodes. Waiting on ``"workbench"`` therefore returns while the page still
+        says "Loading module…", because the title already contained the word.
+        """
+        await self._page.wait_for_function(
+            """([needle]) => {
+                const hit = document.createTreeWalker(
+                    document.body || document.documentElement,
+                    NodeFilter.SHOW_TEXT,
+                );
+                const want = needle.trim().toLowerCase();
+                let node;
+                while ((node = hit.nextNode())) {
+                    const text = (node.nodeValue || '').trim().toLowerCase();
+                    if (!text.includes(want)) continue;
+                    const el = node.parentElement;
+                    if (!el) continue;
+                    const r = el.getBoundingClientRect();
+                    const s = window.getComputedStyle(el);
+                    if (r.width > 0 && r.height > 0
+                        && s.visibility !== 'hidden' && s.display !== 'none'
+                        && Number(s.opacity || '1') > 0.01
+                        && r.bottom > 0 && r.top < window.innerHeight) {
+                        return true;
+                    }
+                }
+                return false;
+            }""",
+            [text], timeout=timeout_ms,
+        )
+
     # -- selector dispatch (CSS/XPath direct addressing) ---------------------
 
     @staticmethod
@@ -721,23 +1109,336 @@ class PlaywrightPage:
             return f"xpath={selector}"
         return selector
 
-    async def click_selector(self, selector: str) -> None:
-        await self._page.click(self._engine_selector(selector), timeout=10000)
+    async def click_selector(self, selector: str, *,
+                             timeout_ms: int = DEFAULT_ACTION_TIMEOUT_MS) -> None:
+        await self._page.click(self._engine_selector(selector), timeout=timeout_ms)
 
-    async def fill_selector(self, selector: str, text: str) -> None:
-        await self._page.fill(self._engine_selector(selector), text, timeout=10000)
+    async def dblclick_selector(self, selector: str, *,
+                                timeout_ms: int = DEFAULT_ACTION_TIMEOUT_MS) -> None:
+        await self._page.dblclick(self._engine_selector(selector), timeout=timeout_ms)
 
-    async def press_selector(self, selector: str, key: str) -> None:
-        await self._page.press(self._engine_selector(selector), key, timeout=10000)
+    async def fill_selector(self, selector: str, text: str, *,
+                            timeout_ms: int = DEFAULT_ACTION_TIMEOUT_MS) -> None:
+        await self._page.fill(self._engine_selector(selector), text, timeout=timeout_ms)
 
-    async def hover_selector(self, selector: str) -> None:
-        await self._page.hover(self._engine_selector(selector), timeout=10000)
+    async def press_selector(self, selector: str, key: str, *,
+                             timeout_ms: int = DEFAULT_ACTION_TIMEOUT_MS) -> None:
+        await self._page.press(self._engine_selector(selector), key, timeout=timeout_ms)
 
-    async def select_selector(self, selector: str, value: str) -> None:
-        await self._page.select_option(self._engine_selector(selector), value, timeout=10000)
+    async def hover_selector(self, selector: str, *,
+                             timeout_ms: int = DEFAULT_ACTION_TIMEOUT_MS) -> None:
+        await self._page.hover(self._engine_selector(selector), timeout=timeout_ms)
 
-    async def check_selector(self, selector: str, checked: bool = True) -> None:
-        await self._page.set_checked(self._engine_selector(selector), checked, timeout=10000)
+    async def select_selector(self, selector: str, value: str, *,
+                              timeout_ms: int = DEFAULT_ACTION_TIMEOUT_MS) -> None:
+        await self._page.select_option(self._engine_selector(selector), value,
+                                       timeout=timeout_ms)
+
+    async def check_selector(self, selector: str, checked: bool = True, *,
+                             timeout_ms: int = DEFAULT_ACTION_TIMEOUT_MS) -> None:
+        await self._page.set_checked(self._engine_selector(selector), checked,
+                                     timeout=timeout_ms)
+
+    # -- pointer gestures -----------------------------------------------------
+    #
+    # Everything above addresses an element. A 3D viewport, a slider, a map and
+    # a native `<input type=range>` are all defined by *movement*, and none of
+    # them can be driven by click/hover: "drag to rotate, scroll to zoom,
+    # right-drag to pan" is the interaction contract of the whole component.
+    # These primitives are what makes that testable, so they mirror Playwright's
+    # mouse API rather than inventing a gesture vocabulary.
+
+    @staticmethod
+    def _point(source: dict) -> dict:
+        """Read an ``{x, y}`` (or ``{from: {x, y}}``) point from a step.
+
+        Accepts CSS lengths as a convenience only for the fixed-viewport case;
+        a point is a point.
+        """
+        x = source.get("x", source.get("left", 0))
+        y = source.get("y", source.get("top", 0))
+        return {"x": float(x or 0), "y": float(y or 0)}
+
+    async def _element_center(self, selector: str) -> dict:
+        """Centre point of the element *selector* resolves to.
+
+        A drag described by an element ("drag across the viewport") has to be
+        anchored to where that element actually is, which moves with layout.
+        """
+        box = await self._page.locator(self._engine_selector(selector)).first.bounding_box()
+        if not box:
+            raise SessionRefused(
+                "target_not_found", f"selector {selector!r} has no bounding box",
+            )
+        return {"x": box["x"] + box["width"] / 2,
+                "y": box["y"] + box["height"] / 2,
+                "width": box["width"], "height": box["height"]}
+
+    async def mouse_drag(self, start: dict, end: dict, *,
+                         steps: int = 20, button: str = "left",
+                         modifiers: Optional[list] = None,
+                         timeout_ms: int = DEFAULT_ACTION_TIMEOUT_MS) -> dict:
+        """Press at *start*, move through *steps* intermediate points, release.
+
+        ``steps`` matters: a single jump is not a drag. Orbit controls, sliders
+        with inertia and drag-to-resize all read the movement stream, so a
+        one-shot move is often silently ignored.
+        """
+        mouse = self._page.mouse
+        for key in modifiers or []:
+            await mouse.down(key=str(key))
+        await mouse.move(start["x"], start["y"])
+        await mouse.down(button=button)
+        try:
+            await mouse.move(end["x"], end["y"], steps=max(1, int(steps)))
+            await mouse.up(button=button)
+        except Exception:
+            # Never leave a button held: a stuck left button poisons every
+            # later click in the session and looks like a hung page.
+            try:
+                await mouse.up(button=button)
+            except Exception:
+                log.debug("mouse.up during drag cleanup failed", exc_info=True)
+            raise
+        finally:
+            for key in modifiers or []:
+                try:
+                    await mouse.up(key=str(key))
+                except Exception:
+                    log.debug("modifier release failed", exc_info=True)
+        return {"from": start, "to": end, "steps": max(1, int(steps)),
+                "button": button}
+
+    async def mouse_wheel(self, x: float, y: float, dx: float = 0, dy: float = 0,
+                          *, timeout_ms: int = DEFAULT_ACTION_TIMEOUT_MS) -> dict:
+        """Scroll/zoom at a viewport position.
+
+        The position is required because zoom-to-cursor reads it: wheeling at
+        the middle of the canvas and at the corner are different assertions.
+        """
+        await self._page.mouse.move(float(x), float(y))
+        await self._page.mouse.wheel(float(dx), float(dy))
+        return {"x": float(x), "y": float(y), "dx": float(dx), "dy": float(dy)}
+
+    async def mouse_button(self, event: str, *, button: str = "left",
+                           x: Optional[float] = None, y: Optional[float] = None,
+                           selector: Optional[str] = None,
+                           steps: int = 10,
+                           modifiers: Optional[list] = None) -> dict:
+        """``down`` / ``move`` / ``up`` -- a gesture assembled across steps.
+
+        Needed for press-and-hold and for gestures that must straddle several
+        flow steps (press, act, release) such as a right-drag that pauses.
+        """
+        if event not in ("down", "up", "move"):
+            raise SessionRefused(
+                "invalid_step", f"mouse event must be down/move/up, got {event!r}",
+            )
+        if selector:
+            point = await self._element_center(selector)
+            x, y = point["x"], point["y"]
+        elif x is not None and y is not None:
+            x, y = float(x), float(y)
+        else:
+            raise SessionRefused("target_required", "mouse move needs x/y or a selector")
+
+        mouse = self._page.mouse
+        if event == "move":
+            await mouse.move(x, y, steps=max(1, int(steps)))
+        elif event == "down":
+            for key in modifiers or []:
+                await mouse.down(key=str(key))
+            if x is not None:
+                await mouse.move(x, y)
+            await mouse.down(button=button)
+        else:
+            await mouse.up(button=button)
+            for key in modifiers or []:
+                await mouse.up(key=str(key))
+        return {"event": event, "button": button, "x": x, "y": y}
+
+    async def drag_selector(self, selector: str, to: dict, *,
+                            steps: int = 20, button: str = "left",
+                            modifiers: Optional[list] = None,
+                            timeout_ms: int = DEFAULT_ACTION_TIMEOUT_MS) -> dict:
+        """Drag from the centre of *selector* to a point (or an offset)."""
+        start = await self._element_center(selector)
+        end = dict(self._point(to))
+        # An offset ({"dx": 40, "dy": 0}) is relative; an absolute point is not.
+        if "dx" in to or "dy" in to:
+            end = {"x": start["x"] + float(to.get("dx", 0)),
+                   "y": start["y"] + float(to.get("dy", 0))}
+        return await self.mouse_drag(start, end, steps=steps, button=button,
+                                     modifiers=modifiers, timeout_ms=timeout_ms)
+
+    async def set_range_value(self, selector: str, value: Any, *,
+                              press: bool = True, steps: int = 1,
+                              timeout_ms: int = DEFAULT_ACTION_TIMEOUT_MS) -> dict:
+        """Set an ``<input type=range>`` and make it observable.
+
+        Assigning ``.value`` silently does nothing to what the user sees: React
+        and most slider widgets track internal state, so the handle does not
+        move and the change event does not fire. This sets the value *and*
+        dispatches ``input`` + ``change``, then (when ``press``) performs a real
+        pointer drag across the track so the app's own gesture handler runs.
+        """
+        engine_selector = self._engine_selector(selector)
+        raw = float(value)
+        element = self._page.locator(engine_selector).first
+        min_attr = await element.get_attribute("min")
+        max_attr = await element.get_attribute("max")
+        step_attr = await element.get_attribute("step")
+        low = float(min_attr) if min_attr not in (None, "") else 0.0
+        high = float(max_attr) if max_attr not in (None, "") else 100.0
+        if not (low <= raw <= high):
+            raise SessionRefused(
+                "invalid_step",
+                f"{raw:g} is outside the slider range {low:g}..{high:g}",
+            )
+        await self._page.evaluate(
+            """([sel, val]) => {
+                const el = document.querySelector(sel);
+                if (!el) return false;
+                const setter = Object.getOwnPropertyDescriptor(
+                    window.HTMLInputElement.prototype, 'value');
+                if (setter && setter.set) setter.set.call(el, String(val));
+                else el.value = String(val);
+                el.dispatchEvent(new Event('input', {bubbles: true}));
+                el.dispatchEvent(new Event('change', {bubbles: true}));
+                return true;
+            }""",
+            [engine_selector, raw],
+        )
+        dragged = False
+        if press:
+            box = await element.bounding_box()
+            if box and box["width"] > 0:
+                span = max(0.0, high - low)
+                fraction = (raw - low) / span if span else 0.0
+                y = box["y"] + box["height"] / 2
+                await self.mouse_drag(
+                    {"x": box["x"], "y": y},
+                    {"x": box["x"] + box["width"] * fraction, "y": y},
+                    steps=max(1, int(steps)), timeout_ms=timeout_ms,
+                )
+                dragged = True
+        return {
+            "selector": selector, "value": raw, "min": low, "max": high,
+            "step": float(step_attr) if step_attr not in (None, "") else None,
+            "dragged": dragged,
+        }
+
+    # -- diagnostics ----------------------------------------------------------
+
+    async def describe_selector(self, selector: str) -> dict:
+        """Everything worth knowing about a selector, for a failure report.
+
+        The question behind most red flows is "was it there and could I have
+        hit it?". Answered in one round trip: existence, geometry against the
+        viewport, what is painted on top at that point, and whether the element
+        would accept input at all.
+        """
+        return await self._page.evaluate(DESCRIBE_SELECTOR_JS,
+                                         self._engine_selector(selector)) or {}
+
+    async def suggest_selectors(self, selector: str) -> list[str]:
+        """Up to three alternative spellings for the same element."""
+        return await self._page.evaluate(SUGGEST_SELECTORS_JS,
+                                         self._engine_selector(selector)) or []
+
+    # -- visual assertions ----------------------------------------------------
+
+    async def screenshot_clip(self, selector: str = "", *,
+                              timeout_ms: int = DEFAULT_ACTION_TIMEOUT_MS) -> dict:
+        """PNG of one element (or the viewport), plus its geometry.
+
+        Visual assertions go through a screenshot rather than reading pixels out
+        of the page: a WebGL canvas has no readable backing store after the frame
+        is presented (``toDataURL`` returns a cleared, all-zero buffer), so the
+        only way to know the viewport rendered *something* is to capture what the
+        compositor actually showed.
+        """
+        if not (selector or "").strip():
+            return {"png_base64": await self.screenshot(False)}
+        box = await self._element_center(selector)
+        clip = {
+            "x": box["x"] - box["width"] / 2, "y": box["y"] - box["height"] / 2,
+            "width": box["width"], "height": box["height"],
+        }
+        png = await self._page.screenshot(clip=clip, timeout=timeout_ms)
+        return {"png_base64": png, "clip": clip,
+                "viewport": await self._viewport_size()}
+
+    async def _viewport_size(self) -> dict:
+        size = await self._page.evaluate(
+            "() => ({width: window.innerWidth, height: window.innerHeight})",
+        )
+        return size or {}
+
+    async def diff_screenshot(self, name: str, selector: str = "",
+                              threshold: float = 0.005,
+                              masks: Optional[list] = None) -> dict:
+        """Compare the live frame to a stored baseline; create it if absent.
+
+        Baselines live under ``<artifacts>/baselines/`` so a session with
+        artifacts configured keeps them with its traces and HAR, and one
+        without still gets a temp dir rather than writing into the repo.
+        ``threshold`` is the allowed fraction of differing pixels.
+        """
+        import base64
+
+        directory = os.path.join(self.artifacts_dir or tempfile.gettempdir(),
+                                 "baselines")
+        safe = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-") or "baseline"
+        baseline_path = os.path.join(directory, f"{safe}.png")
+
+        live = await self.screenshot_clip(selector)
+        current_b64 = live.get("png_base64") or ""
+        if not current_b64:
+            return {"error": "no pixels captured", "diff_pct": 100.0}
+
+        if not os.path.exists(baseline_path):
+            os.makedirs(directory, exist_ok=True)
+            with open(baseline_path, "wb") as handle:
+                handle.write(base64.b64decode(current_b64))
+            return {"baseline_created": True, "baseline_path": baseline_path,
+                    "diff_pct": 0.0, "threshold": threshold}
+
+        with open(baseline_path, "rb") as handle:
+            baseline_b64 = base64.b64encode(handle.read()).decode("ascii")
+
+        from backend.modules.browser_assertions import diff_png
+
+        result = diff_png(baseline_b64, current_b64)
+        result["baseline_path"] = baseline_path
+        result["threshold"] = threshold
+        if float(result.get("diff_pct", 0.0)) > threshold:
+            # Keep the frame that failed: it is the only evidence of what
+            # actually rendered.
+            try:
+                out_dir = os.path.join(self.artifacts_dir or tempfile.gettempdir(),
+                                       "diffs")
+                os.makedirs(out_dir, exist_ok=True)
+                out_path = os.path.join(out_dir, f"{safe}.png")
+                with open(out_path, "wb") as handle:
+                    handle.write(base64.b64decode(current_b64))
+                result["diff_path"] = out_path
+            except Exception:
+                log.debug("could not persist the failing diff frame", exc_info=True)
+        return result
+
+
+
+    async def set_viewport(self, width: int, height: int) -> dict:
+        """Resize an already-open context.
+
+        Playwright fixes the viewport at context creation, so the only way to
+        change an existing session's geometry is to override it per page. This
+        is what makes "screenshot this persistent session at 390x844" possible
+        at all instead of spawning a second session.
+        """
+        await self._page.set_viewport_size({"width": int(width), "height": int(height)})
+        return await self._viewport_size()
 
     async def is_visible_selector(self, selector: str) -> bool:
         return bool(await self._page.evaluate(

@@ -8,7 +8,7 @@ with machine-readable reasons (``blocked_domain``, ``approval_required``,
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, validator
@@ -29,12 +29,59 @@ def _refusal_to_http(refusal: SessionRefused) -> HTTPException:
     )
 
 
-class OpenRequest(BaseModel):
+class ViewportOptions(BaseModel):
+    """Viewport / device emulation, accepted on every entry point.
+
+    Geometry used to be settable only through ``/matrix``, so a persistent
+    session could never be taken to a phone width and the default size drifted
+    with the session's fingerprint. These fields make it explicit everywhere,
+    and ``context_options()`` folds them into Playwright options -- defaults
+    included, so the default viewport is a fixed 1440x900 rather than
+    whatever the fingerprint rotator picked.
+    """
+
+    viewport: Optional[Any] = None          # "1280x800", [w, h] or {width, height}
+    device: Optional[str] = None            # preset: mobile, tablet, laptop, ...
+    viewport_width: Optional[int] = None
+    viewport_height: Optional[int] = None
+    device_scale_factor: Optional[Any] = None
+    is_mobile: Optional[bool] = None
+    has_touch: Optional[bool] = None
+    color_scheme: Optional[str] = None      # light | dark | no-preference | null
+    reduced_motion: Optional[str] = None    # reduce | no-preference | null
+    screen: Optional[Any] = None            # viewport-sized emulation screen
+
+    def resolved_context_options(self, base: Optional[dict] = None,
+                                 **overrides) -> dict:
+        """Fold the viewport knobs plus *base* into Playwright context options.
+
+        Named to avoid colliding with the ``context_options`` *field* the two
+        request models carry (the caller's own dict).
+        """
+        from backend.modules.browser_context_options import normalize_context_options
+
+        kwargs = dict(
+            viewport=self.viewport, device=self.device,
+            viewport_width=self.viewport_width, viewport_height=self.viewport_height,
+            device_scale_factor=self.device_scale_factor,
+            is_mobile=self.is_mobile, has_touch=self.has_touch,
+            color_scheme=self.color_scheme, reduced_motion=self.reduced_motion,
+            screen=self.screen,
+        )
+        kwargs.update(overrides)
+        return normalize_context_options(base, **kwargs)
+
+
+class OpenRequest(ViewportOptions):
     allow_domains: list[str]
     require_approval: bool = True
-    scrub_pii: bool = True
+    # None means "use the policy default": off for local targets, on for public
+    # hosts. Pass true/false to force it either way.
+    scrub_pii: Optional[bool] = None
     privacy_level: Optional[str] = None
     allow_private: bool = False
+    storage_state: Optional[dict] = None
+    context_options: Optional[dict] = None
 
     @validator("allow_domains")
     def validate_domains(cls, v):
@@ -56,6 +103,10 @@ class ActRequest(BaseModel):
     selector: str = ""
     files: Optional[list[str]] = None
     dialog: Optional[str] = None
+    # Per-step wait budget in ms. Previously read and then ignored by every
+    # action except wait/api/download, so a "this must not be here" assertion
+    # always cost the full default.
+    timeout: Optional[int] = None
 
 
 class ActBatchRequest(BaseModel):
@@ -91,13 +142,16 @@ class RunFlowRequest(BaseModel):
     clock: Optional[dict] = None
     throttle: Optional[dict] = None
     coverage: bool = False
+    # Wait for pending requests to go quiet before the first step reads state.
+    network_idle: bool = False
+    wait_network_idle_ms: int = 15000
 
 
 class RecordRequest(BaseModel):
     active: bool = True
 
 
-class TestFlowRequest(BaseModel):
+class TestFlowRequest(ViewportOptions):
     url: str
     steps: list[dict] = []
     allow_domains: list[str] = []
@@ -105,7 +159,9 @@ class TestFlowRequest(BaseModel):
     approve: bool = False
     stop_on_failure: bool = False
     privacy_level: Optional[str] = None
-    scrub_pii: bool = True
+    # None means "use the policy default": off for local targets, on for public
+    # hosts. Pass true/false to force it either way.
+    scrub_pii: Optional[bool] = None
     network: Optional[dict] = None
     resolve_sources: bool = False
     freeze_animations: bool = True
@@ -121,6 +177,8 @@ class TestFlowRequest(BaseModel):
     clock: Optional[dict] = None
     throttle: Optional[dict] = None
     coverage: bool = False
+    network_idle: bool = False
+    wait_network_idle_ms: int = 15000
 
 
 class PlanRequest(BaseModel):
@@ -168,15 +226,26 @@ class ImportRequest(BaseModel):
 
 @router.post("")
 async def open_session(req: OpenRequest):
-    """Open an isolated browser session for an agent."""
+    """Open an isolated browser session for an agent.
+
+    ``scrub_pii`` left unset is resolved by policy (off for local targets), and
+    viewport/device options may be set here so a persistent session renders at
+    a known size instead of whatever the fingerprint picked.
+    """
     try:
+        context_options = req.resolved_context_options(req.context_options)
         session = await get_browser_agent_service().open(
             allow_domains=req.allow_domains,
             require_approval=req.require_approval,
             scrub_pii=req.scrub_pii,
             privacy_level=req.privacy_level,
             allow_private=req.allow_private,
+            storage_state=req.storage_state,
+            context_options=context_options,
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"reason": "invalid_viewport",
+                                                     "message": str(exc)})
     except SessionRefused as refusal:
         raise _refusal_to_http(refusal)
     return session.info()
@@ -260,6 +329,7 @@ async def act(session_id: str, req: ActRequest):
         return await session.act(
             req.action, req.ref, text=req.text, approve=req.approve,
             selector=req.selector, files=req.files, dialog=req.dialog,
+            timeout=req.timeout,
         )
     except SessionRefused as refusal:
         raise _refusal_to_http(refusal)
@@ -410,6 +480,7 @@ async def test_flow(req: TestFlowRequest):
     navigation, intent-based interactions, assertions and telemetry.
     """
     try:
+        context_options = req.resolved_context_options(req.context_options)
         return await get_browser_agent_service().run_test(
             url=req.url,
             steps=req.steps or None,
@@ -423,7 +494,7 @@ async def test_flow(req: TestFlowRequest):
             resolve_sources=req.resolve_sources,
             freeze_animations=req.freeze_animations,
             storage_state=req.storage_state,
-            context_options=req.context_options,
+            context_options=context_options,
             trace=req.trace,
             har=req.har,
             video=req.video,
@@ -434,7 +505,12 @@ async def test_flow(req: TestFlowRequest):
             throttle=req.throttle,
             coverage=req.coverage,
             forbid_evaluate=req.forbid_evaluate,
+            network_idle=req.network_idle,
+            wait_network_idle_ms=req.wait_network_idle_ms,
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"reason": "invalid_viewport",
+                                                     "message": str(exc)})
     except SessionRefused as refusal:
         raise _refusal_to_http(refusal)
 
@@ -451,6 +527,8 @@ async def run_flow(session_id: str, req: RunFlowRequest):
             freeze_animations=req.freeze_animations, settle_ms=req.settle_ms,
             forbid_evaluate=req.forbid_evaluate,
             clock=req.clock, throttle=req.throttle, coverage=req.coverage,
+            network_idle=req.network_idle,
+            wait_network_idle_ms=req.wait_network_idle_ms,
         )
     except SessionRefused as refusal:
         raise _refusal_to_http(refusal)

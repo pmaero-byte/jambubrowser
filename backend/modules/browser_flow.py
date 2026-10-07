@@ -337,6 +337,11 @@ MAX_BATCH_ACTS = 25
 MUTATING_ACTIONS = frozenset({
     "click", "type", "press", "select", "hover", "navigate", "reload",
     "back", "forward", "check", "uncheck", "evaluate", "upload", "download",
+    # Pointer gestures move real input events, so they gate the same way a click
+    # does (human_takeover must refuse them too).
+    "dblclick", "click_at", "drag", "wheel", "mouse", "set_range",
+    # Reading a downloaded file touches the disk, like uploading does.
+    "expect_download", "assert_download",
 })
 
 # Refusal reasons that mean "we stopped on purpose", not "the step failed".

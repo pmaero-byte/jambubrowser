@@ -20,12 +20,17 @@ import time
 import uuid
 from typing import Any, Optional
 
+from backend.core.privacy import default_scrub_pii
 from backend.modules.browser_agent import (
     MAX_SESSIONS,
     SESSION_TTL_SECONDS,
     BrowserAgentSession,
 )
 from backend.modules.browser_agent_errors import SessionRefused
+from backend.modules.browser_context_options import (
+    DEFAULT_VIEWPORT,
+    normalize_context_options,
+)
 from backend.modules.browser_flow import host_of, normalize_flow_steps
 from backend.modules.browser_page import NetworkPolicy, PlaywrightPage
 
@@ -55,7 +60,7 @@ class BrowserAgentService:
 
     async def open(
         self, *, allow_domains: list[str], require_approval: bool = True,
-        scrub_pii: bool = True, privacy_level: Optional[str] = None,
+        scrub_pii: Optional[bool] = None, privacy_level: Optional[str] = None,
         allow_private: bool = False, storage_state: Any = None,
         context_options: Optional[dict] = None, trace: bool = False,
         har: bool = False, video: bool = False,
@@ -70,10 +75,24 @@ class BrowserAgentService:
         session_id = f"bs-{uuid.uuid4().hex[:10]}"
 
         from backend.modules.browser import (
-            BrowserManager, PrivacyLevel, SessionMode,
+            BrowserManager,
+            PrivacyLevel,
+            SessionMode,
+        )
+
+        # Scrubbing stays opt-in for local targets: an explicit scrub_pii from
+        # the caller wins, otherwise the policy decides from the allowlist.
+        effective_scrub = (
+            default_scrub_pii(allow_private=allow_private, allow_domains=allow_domains)
+            if scrub_pii is None else bool(scrub_pii)
         )
 
         opts = dict(context_options or {})
+        # Geometry must always be explicit: without this the viewport comes from
+        # the rotated fingerprint and changes run to run, which is what made
+        # layout assertions irreproducible. Callers that want a device pass
+        # their own viewport and win.
+        opts.setdefault("viewport", dict(DEFAULT_VIEWPORT))
         if storage_state:
             opts["storage_state"] = storage_state
         # Prevent service workers from creating an out-of-band network path.
@@ -104,7 +123,8 @@ class BrowserAgentService:
                 except Exception:
                     log.warning("failed to start trace for %s", session_id, exc_info=True)
         policy = NetworkPolicy(allow_domains, allow_private=allow_private)
-        adapter = PlaywrightPage(page, network_policy=policy)
+        adapter = PlaywrightPage(page, network_policy=policy,
+                                artifacts_dir=artifacts_dir)
         try:
             network_info = await adapter.setup_network({})
             if callable(getattr(page, "route", None)):
@@ -127,7 +147,7 @@ class BrowserAgentService:
             raise
         agent = BrowserAgentSession(
             session_id, adapter, allow_domains=allow_domains,
-            require_approval=require_approval, scrub_pii=scrub_pii,
+            require_approval=require_approval, scrub_pii=effective_scrub,
             allow_private=allow_private, artifacts_dir=artifacts_dir,
         )
         self._sessions[session_id] = agent
@@ -147,7 +167,7 @@ class BrowserAgentService:
     async def run_test(
         self, *, url: str, steps=None, allow_domains: Optional[list[str]] = None,
         local: bool = False, approve: bool = False, stop_on_failure: bool = False,
-        privacy_level: Optional[str] = None, scrub_pii: bool = True,
+        privacy_level: Optional[str] = None, scrub_pii: Optional[bool] = None,
         network: Optional[dict] = None, resolve_sources: bool = False,
         freeze_animations: bool = True, storage_state: Any = None,
         context_options: Optional[dict] = None, trace: bool = False,
@@ -155,7 +175,8 @@ class BrowserAgentService:
         artifacts_dir: Optional[str] = None, settle_ms: int = 0,
         detect_dev_server: bool = False, forbid_evaluate: bool = False,
         clock: Optional[dict] = None, throttle: Optional[dict] = None,
-        coverage: bool = False,
+        coverage: bool = False, network_idle: bool = False,
+        wait_network_idle_ms: int = 15000,
     ) -> dict:
         """One-shot: open an ephemeral session, run a flow, close, return report.
 
@@ -163,6 +184,11 @@ class BrowserAgentService:
         allowlist defaults to the target URL's host; ``local=True`` additionally
         permits loopback/private hosts (the dev server case). ``trace``/``har``/
         ``video`` capture debugging artifacts whose paths are returned.
+
+        ``scrub_pii`` unset means "policy": off for a local target, so the
+        numbers a solver reports survive to the assertion. ``context_options``
+        carries the viewport/device the caller wants; the routes fill in the
+        fixed 1440x900 default when they are not supplied.
         """
         host = host_of(url).lower()
         if not host:
@@ -171,8 +197,12 @@ class BrowserAgentService:
         if local or not domains:
             if host not in domains:
                 domains.append(host)
+        effective_scrub = (
+            default_scrub_pii(host=host, allow_private=local, allow_domains=domains)
+            if scrub_pii is None else bool(scrub_pii)
+        )
         session = await self.open(
-            allow_domains=domains, require_approval=False, scrub_pii=scrub_pii,
+            allow_domains=domains, require_approval=False, scrub_pii=effective_scrub,
             privacy_level=privacy_level, allow_private=local,
             storage_state=storage_state, context_options=context_options,
             trace=trace, har=har, video=video, artifacts_dir=artifacts_dir,
@@ -188,10 +218,12 @@ class BrowserAgentService:
                 freeze_animations=freeze_animations, settle_ms=settle_ms,
                 forbid_evaluate=forbid_evaluate,
                 clock=clock, throttle=throttle, coverage=coverage,
+                network_idle=network_idle, wait_network_idle_ms=wait_network_idle_ms,
             )
             receipts = session.receipts()
         finally:
             closed = await self.close(session.id)
+        report["scrub_pii"] = effective_scrub
         report["session_id"] = session.id
         report["allow_domains"] = domains
         report["receipts"] = {
@@ -221,9 +253,18 @@ class BrowserAgentService:
     ) -> dict:
         """Run the same flow across viewports/locales concurrently.
 
-        Each matrix entry may set ``name`` plus any Playwright context option
-        (``viewport``, ``locale``, ``user_agent``, ``device_scale_factor``,
-        ``timezone_id``). Concurrency is capped at the session limit.
+        Each matrix entry may set ``name``, a ``device`` preset, plus any
+        Playwright context option (``viewport``, ``locale``, ``user_agent``,
+        ``device_scale_factor``, ``timezone_id``, ``color_scheme``,
+        ``reduced_motion``, ``is_mobile``, ``has_touch``). Concurrency is
+        capped at the session limit.
+
+        Each variant returns a compact digest *and* the full ``report``, plus
+        ``evaluated`` (the values every ``evaluate`` step produced) and
+        ``screenshots``. The digest alone was not enough to write a responsive
+        assertion -- it carried pass/fail and console text but neither the
+        numbers a step read nor the image a human needed, so anyone checking
+        "does this break at 390px" had to re-run the variant by hand.
         """
         variants = matrix or [
             {"name": "desktop", "viewport": {"width": 1280, "height": 800}},
@@ -231,13 +272,22 @@ class BrowserAgentService:
         ]
         semaphore = asyncio.Semaphore(max(1, self.max_sessions))
         option_keys = ("viewport", "locale", "user_agent", "device_scale_factor",
-                       "timezone_id", "color_scheme", "is_mobile", "has_touch")
+                       "timezone_id", "color_scheme", "is_mobile", "has_touch",
+                       "reduced_motion", "screen")
 
         async def one(index: int, variant: dict) -> dict:
             name = variant.get("name") or f"variant-{index}"
-            context_options = {
+            base_options = {
                 k: variant[k] for k in option_keys if variant.get(k) is not None
             }
+            try:
+                context_options = normalize_context_options(
+                    base_options, device=variant.get("device"),
+                    viewport_matrix=True,
+                )
+            except ValueError as exc:
+                return {"variant": name, "ok": False, "error": str(exc)[:300],
+                        "context_options": base_options}
             async with semaphore:
                 try:
                     report = await self.run_test(
@@ -247,21 +297,27 @@ class BrowserAgentService:
                         trace=trace, har=har, video=video,
                     )
                 except Exception as exc:
-                    return {"variant": name, "ok": False, "error": str(exc)[:300]}
+                    return {"variant": name, "ok": False, "error": str(exc)[:300],
+                            "context_options": context_options}
             failed_steps = [
                 {"i": s.get("i"), "action": s.get("action"),
-                 "reason": s.get("reason"), "error": s.get("error")}
+                 "reason": s.get("reason"), "error": s.get("error"),
+                 "cause": s.get("cause")}
                 for s in report.get("steps") or [] if s.get("status") == "failed"
             ]
             return {
                 "variant": name,
+                "context_options": context_options,
                 "ok": report.get("ok"),
                 "passed": report.get("passed"),
                 "failed": report.get("failed"),
                 "total": report.get("total"),
                 "failed_steps": failed_steps[:5],
                 "console_errors": (report.get("console_errors") or [])[:5],
+                "evaluated": report.get("evaluated") or [],
+                "screenshots": report.get("screenshots") or [],
                 "artifacts": report.get("artifacts") or {},
+                "report": report,
             }
 
         results = await asyncio.gather(

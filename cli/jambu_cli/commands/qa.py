@@ -6,11 +6,7 @@ is exercising.
 """
 from __future__ import annotations
 
-import argparse
-import glob
 import json
-import os
-import sys
 import time
 from pathlib import Path
 
@@ -405,6 +401,15 @@ def cmd_test(args) -> int:
         payload["throttle"] = core._json_load_arg(args.throttle)
     if getattr(args, "coverage", False):
         payload["coverage"] = True
+    # Geometry and scrubbing flags pass straight through: the flags are omitted
+    # when unset so the engine's policy decides (fixed 1440x900 default; no
+    # scrubbing for a local target), rather than the CLI hardcoding a default
+    # that then differs from the API's.
+    for flag in ("viewport", "device", "color_scheme", "reduced_motion",
+                 "scrub_pii", "network_idle"):
+        value = getattr(args, flag, None)
+        if value is not None and value is not False:
+            payload[flag] = value
     result = core.api_request("POST", "/browser/sessions/run", payload)
     if result is None:
         return core.EXIT_ENGINE_ERROR
@@ -423,6 +428,15 @@ def cmd_test(args) -> int:
             line += f" — {step['detail']}"
         if step.get("status") == "failed":
             line += f" — {step.get('reason')}: {step.get('error')}"
+            cause = step.get("failure_cause") or {}
+            if cause.get("likely_cause"):
+                line += f"\n         why: {cause['likely_cause']}"
+            if cause.get("covered_by"):
+                covering = cause["covered_by"]
+                line += (f"\n         covered by: {covering.get('selector')}"
+                         f" {covering.get('text', '')!r}")
+            for hint in (cause.get("suggestions") or [])[:3]:
+                line += f"\n         try: {hint}"
         print(line)
     for err in (result.get("console_errors") or [])[:5]:
         print(f"  console: {err[:160]}")
@@ -438,6 +452,50 @@ def cmd_test(args) -> int:
     det = result.get("determinism") or {}
     if det:
         print(f"  determinism: {json.dumps(det)}")
+    _print_failure_causes(result)
+    for evaluated in (result.get("evaluated") or [])[:10]:
+        print(f"  step #{evaluated.get('i')} evaluated: "
+              f"{str(evaluated.get('value', ''))[:120]}")
+    return _emit_json_and_exports(args, result)
+
+
+def _print_failure_causes(result: dict) -> None:
+    """Explain each failed step in DOM terms, above the raw JSON.
+
+    A failed step used to report only a reason and a Playwright call log. The
+    engine now also says whether the element was found, on screen, and what was
+    covering it; printing it here answers the common "why did this time out?"
+    without opening the JSON by hand.
+    """
+    for step in result.get("steps") or []:
+        cause = step.get("failure_cause") or {}
+        if not cause:
+            continue
+        bits = []
+        if cause.get("found") is not None:
+            bits.append("found" if cause["found"] else "NOT FOUND")
+        if cause.get("enabled") is not None:
+            bits.append("enabled" if cause["enabled"] else "DISABLED")
+        if cause.get("in_viewport") is not None:
+            bits.append("in viewport" if cause["in_viewport"] else "OFF-SCREEN")
+        if cause.get("hidden_by_css"):
+            bits.append(f"hidden by {cause['hidden_by_css']}")
+        if cause.get("viewport") and not cause.get("in_viewport"):
+            view, rect = cause["viewport"], cause.get("rect") or {}
+            bits.append(f"element at y={rect.get('y')} in {view.get('width')}x"
+                        f"{view.get('height')} viewport")
+        if bits:
+            print(f"  #{step.get('i')} {step.get('action')}: {', '.join(bits)}")
+
+
+def _emit_json_and_exports(args, result: dict) -> None:
+    """``--json`` plus the SARIF export, in one place.
+
+    ``--json`` prints the report exactly as the API returned it. It used to be
+    filtered down to a digest, which meant a dashboard consuming the CLI could
+    not see the evidence a failure is diagnosed from and had to drive HTTP
+    directly instead.
+    """
     if args.json:
         print(json.dumps(result, indent=2))
     sarif_path = getattr(args, "sarif", None)
@@ -593,6 +651,26 @@ def register(subparsers) -> None:
     p_test.add_argument("--forbid-evaluate", dest="forbid_evaluate",
                         action="store_true",
                         help="Refuse JS-dependent evaluate steps")
+    p_test.add_argument("--viewport", metavar="WxH",
+                        help="Viewport for this run, e.g. 390x844 (default 1440x900)")
+    p_test.add_argument("--device", metavar="NAME",
+                        help="Device preset: mobile, tablet, laptop, desktop, "
+                             "iphone_13, pixel_5")
+    p_test.add_argument("--color-scheme", dest="color_scheme",
+                        choices=("light", "dark", "no-preference", "null"),
+                        help="Emulate a colour scheme")
+    p_test.add_argument("--reduced-motion", dest="reduced_motion",
+                        choices=("reduce", "no-preference", "null"),
+                        help="Emulate a motion preference")
+    p_test.add_argument("--no-scrub", dest="scrub_pii", action="store_false",
+                        default=None,
+                        help="Return page content unmasked (default for local targets)")
+    p_test.add_argument("--scrub", dest="scrub_pii", action="store_true",
+                        default=None,
+                        help="Mask PII in returned content (default for public hosts)")
+    p_test.add_argument("--network-idle", dest="network_idle",
+                        action="store_true",
+                        help="Wait for requests to go quiet after each step")
     p_test.add_argument("--json", action="store_true", help="Print the full report JSON")
     p_test.add_argument("--sarif", metavar="FILE",
                         help="Write a per-step SARIF 2.1.0 report (use '-' for stdout)")

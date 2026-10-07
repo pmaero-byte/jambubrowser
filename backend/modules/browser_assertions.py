@@ -17,9 +17,160 @@ XPath probes, ``evaluate_assert`` for page/API state) and keep the
 
 from __future__ import annotations
 
+import json
 from typing import Any, Optional
 
 from backend.modules.browser_agent_errors import SessionRefused
+
+
+def decode_png(png_base64: str) -> tuple[int, int, bytes]:
+    """Decode a base64 PNG into ``(width, height, rgb_bytes)``.
+
+    Written out rather than pulled from a dependency because the only thing the
+    canvas assertions need is the pixel buffer, and Pillow is not a guaranteed
+    install. Uses the stdlib zlib for the IDAT stream.
+    """
+    import base64
+    import struct
+    import zlib
+
+    raw = base64.b64decode(png_base64)
+    if raw[:8] != b"\x89PNG\r\n\x1a\n":
+        raise ValueError("not a PNG")
+    pos, width, height, depth, colour, idat = 8, 0, 0, 0, 0, bytearray()
+    while pos + 8 <= len(raw):
+        length, kind = struct.unpack(">I4s", raw[pos:pos + 8])
+        body = raw[pos + 8:pos + 8 + length]
+        if kind == b"IHDR":
+            width, height, depth, colour = struct.unpack(">IIBB", body[:10])
+        elif kind == b"IDAT":
+            idat += body
+        elif kind == b"IEND":
+            break
+        pos += 12 + length
+    if depth != 8 or colour not in (2, 6):
+        # Palette/greyscale/16-bit frames are not what the assertions produce;
+        # refusing is better than silently mis-measuring.
+        raise ValueError(f"unsupported PNG format (depth={depth}, colour={colour})")
+
+    channels = 3 if colour == 2 else 4
+    data = zlib.decompress(bytes(idat))
+    stride = width * channels
+    out = bytearray(width * height * 3)
+    previous = bytearray(stride)
+    src = 0
+    for row in range(height):
+        filter_type = data[src]
+        src += 1
+        line = bytearray(data[src:src + stride])
+        src += stride
+        # Undo the per-scanline filters defined in the PNG spec.
+        if filter_type == 1:
+            for i in range(channels, stride):
+                line[i] = (line[i] + line[i - channels]) & 0xFF
+        elif filter_type == 2:
+            for i in range(stride):
+                line[i] = (line[i] + previous[i]) & 0xFF
+        elif filter_type == 3:
+            for i in range(stride):
+                left = line[i - channels] if i >= channels else 0
+                line[i] = (line[i] + ((left + previous[i]) >> 1)) & 0xFF
+        elif filter_type == 4:
+            for i in range(stride):
+                left = line[i - channels] if i >= channels else 0
+                up = previous[i]
+                up_left = previous[i - channels] if i >= channels else 0
+                p = left + up - up_left
+                pa, pb, pc = abs(p - left), abs(p - up), abs(p - up_left)
+                pred = left if (pa <= pb and pa <= pc) else (up if pb <= pc else up_left)
+                line[i] = (line[i] + pred) & 0xFF
+        for x in range(width):
+            base = x * channels
+            dst = (row * width + x) * 3
+            out[dst] = line[base]
+            out[dst + 1] = line[base + 1]
+            out[dst + 2] = line[base + 2]
+        previous = line
+    return width, height, bytes(out)
+
+
+def analyze_png(png_base64: str, *, quantize: int = 24) -> dict:
+    """Measure a frame: size, non-background share, colour count, brightness.
+
+    "Background" is the single most common colour in the frame, which is what a
+    blank canvas is; anything else counts as drawn. Colours are quantised into
+    ``quantize``-level buckets so a rendered gradient reads as a contour plot
+    rather than as "a million colours" (anti-aliasing would otherwise make
+    every shaded region look unique).
+    """
+    width, height, pixels = decode_png(png_base64)
+    total = max(1, width * height)
+    histogram: dict[int, int] = {}
+    brightness_sum = 0
+    for i in range(0, len(pixels), 3):
+        r, g, b = pixels[i], pixels[i + 1], pixels[i + 2]
+        key = ((r // quantize) << 16) | ((g // quantize) << 8) | (b // quantize)
+        histogram[key] = histogram.get(key, 0) + 1
+        brightness_sum += (r * 299 + g * 587 + b * 114) // 1000
+    background_count = max(histogram.values()) if histogram else total
+    return {
+        "width": width, "height": height, "pixels": total,
+        "non_background_pct": 100.0 * (total - background_count) / total,
+        "colors": len(histogram),
+        "brightness": brightness_sum / total,
+    }
+
+
+def diff_png(a_base64: str, b_base64: str, *,
+             tolerance: int = 16) -> dict:
+    """Compare two frames pixel-wise.
+
+    ``tolerance`` absorbs anti-aliasing and GPU rounding: a channel difference
+    at or below it counts as equal, so re-running the same render does not fail
+    on dithering noise. Frames of different sizes are reported as fully
+    differing rather than raising -- a layout change is exactly the regression a
+    baseline should catch.
+    """
+    aw, ah, a = decode_png(a_base64)
+    bw, bh, b = decode_png(b_base64)
+    if (aw, ah) != (bw, bh):
+        return {"size_mismatch": True, "baseline_size": [aw, ah],
+                "current_size": [bw, bh], "diff_pixels": aw * ah,
+                "total_pixels": aw * ah, "diff_pct": 100.0}
+    total = max(1, aw * ah)
+    differing = 0
+    for i in range(0, len(a), 3):
+        if (abs(a[i] - b[i]) > tolerance or abs(a[i + 1] - b[i + 1]) > tolerance
+                or abs(a[i + 2] - b[i + 2]) > tolerance):
+            differing += 1
+    return {"size_mismatch": False, "width": aw, "height": ah,
+            "diff_pixels": differing, "total_pixels": total,
+            "diff_pct": 100.0 * differing / total}
+
+
+def encode_png(width: int, height: int, rgb: bytes) -> bytes:
+    """Build a PNG from raw RGB -- the inverse of :func:`decode_png`.
+
+    Used by the tests and by anything that needs a real image to feed the
+    canvas/diff assertions, so those paths can be exercised without a browser.
+    """
+    import struct
+    import zlib
+
+    raw = bytearray()
+    stride = width * 3
+    for row in range(height):
+        raw.append(0)  # filter type 0 (None)
+        raw += rgb[row * stride:(row + 1) * stride]
+
+    def chunk(kind: bytes, body: bytes) -> bytes:
+        return (struct.pack(">I", len(body)) + kind + body
+                + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF))
+
+    return (b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(bytes(raw), 6))
+            + chunk(b"IEND", b""))
 
 
 def json_path(payload: Any, path: str) -> Any:
@@ -88,17 +239,37 @@ async def evaluate_assert(session, step: dict, state: dict) -> tuple[bool, str]:
             element = None
 
     selector = (step.get("selector") or "").strip()
+    # ``assert_canvas``/``assert_screenshot`` are whole actions, not selector
+    # probes, so they are dispatched before the selector narrowing below.
+    if kind in ("canvas", "screenshot", "not_screenshot", "diff"):
+        return await _assert_visual(session, kind, selector, step)
+
+    if not selector and (step.get("testid") or step.get("test_id")):
+        selector = f'[data-testid="{step.get("testid") or step.get("test_id")}"]'
+    if not selector and (step.get("role") or (step.get("name") and step.get("role"))):
+        selector = _role_selector(step)
+    if not selector and step.get("xpath"):
+        selector = str(step["xpath"])
     if selector and kind in (
         "visible", "not_visible", "hidden", "text", "text_contains",
         "text_equals", "value", "count", "checked", "unchecked",
         "not_checked", "enabled", "disabled",
     ):
-        return await assert_selector(session, kind, selector, value)
+        # nth / within narrow an ambiguous match. "Third Skip button" and "the
+        # Save inside the toolbar" were both unreachable before, because a text
+        # target threw "ambiguous" with no way to choose. They are also
+        # normalised for xpath: an assertion refused xpath outright.
+        selector, note = _narrow_selector(selector, step)
+        ok, detail = await assert_selector(session, kind, selector, value)
+        return ok, f"{note}{detail}" if note else detail
 
     handled = await assert_page_health(session, kind, step, value, state)
     if handled is not None:
         return handled
     handled = await assert_api_response(session, kind, step, value)
+    if handled is not None:
+        return handled
+    handled = await assert_network_assertions(session, kind, step, value)
     if handled is not None:
         return handled
     if kind in ("no_request", "request_absent"):
@@ -164,11 +335,199 @@ async def evaluate_assert(session, step: dict, state: dict) -> tuple[bool, str]:
     if kind in ("console_clean", "no_console_errors"):
         errors = session._peek_telemetry().get("console_errors", [])
         return (not errors), ("console clean" if not errors else f"{len(errors)} console error(s)")
+    if kind == "no_warnings":
+        warnings = session._peek_telemetry().get("console_warnings", [])
+        return (not warnings), ("no console warnings" if not warnings
+                                else f"{len(warnings)} console warning(s)")
     if kind in ("no_failed_requests", "network_clean"):
         failed_reqs = session._peek_telemetry().get("failed_requests", [])
         return (not failed_reqs), ("no failed requests" if not failed_reqs
                                    else f"{len(failed_reqs)} failed request(s)")
     raise SessionRefused("unknown_assertion", f"unsupported assertion kind: {kind}")
+
+async def _assert_visual(session, kind: str, selector: str,
+                         step: dict) -> tuple[bool, str]:
+    """Route the whole-frame/visual assertion kinds.
+
+    They are actions rather than selector probes because their evidence is the
+    rendered frame: the target may be a canvas (which has no readable pixel
+    buffer once presented), the whole viewport, or a baseline image on disk.
+    """
+    if kind == "canvas":
+        if not selector:
+            raise SessionRefused(
+                "invalid_step",
+                "assert_canvas needs a 'selector' (the canvas or element to measure)",
+            )
+        return await assert_canvas(session, selector, step)
+    if kind in ("screenshot", "diff"):
+        return await assert_screenshot(session, kind, selector, step)
+    return await assert_screenshot(session, kind, selector, step)
+
+
+def _role_selector(step: dict) -> str:
+    """A getByRole-style ``role`` + accessible ``name`` target, as a selector.
+
+    ``role``+``name`` is the most durable way to address a control that has no
+    test id, so it is supported directly rather than forcing a hand-written CSS
+    or xpath. Implemented with Playwright's ``internal:role`` engine selector,
+    which is what ``getByRole`` compiles to.
+    """
+    role = str(step.get("role") or "").strip()
+    name = str(step.get("name") or "").strip()
+    escaped = name.replace("\\", "\\\\").replace('"', '\\"')
+    base = f'internal:role={role}'
+    return f'{base}[name="{escaped}" sss]' if name else base
+
+
+def _narrow_selector(selector: str, step: dict) -> tuple[str, str]:
+    """Apply ``nth`` / ``within`` to a selector, returning it plus a note.
+
+    Both exist because a duplicated label is normal in real UI ("Skip" in a
+    header and a "Skip" in a footer) and "ambiguous" with no way to choose is
+    not a usable assertion. The note goes into the step detail so a pass/fail
+    still says which element it actually looked at.
+    """
+    note = ""
+    within = (step.get("within") or "").strip()
+    if within:
+        if _is_xpath(selector) or _is_xpath(within):
+            selector = f"xpath=({within})//{selector[6:] if _is_xpath(selector) else selector}"
+        else:
+            selector = f"{within} >> {selector}"
+        note = f"within {within[:40]}! "
+    nth = step.get("nth")
+    if nth is not None and str(nth).strip() != "":
+        try:
+            index = int(nth)
+        except (TypeError, ValueError):
+            raise SessionRefused(
+                "invalid_step", f"nth must be an integer, got {nth!r}",
+            ) from None
+        if index < 0:
+            index = max(1, index + 1)  # negative counts back from the end
+        selector = f"{selector} >> nth={index}"
+        note = f"{note}nth={index}: "
+    return selector, note
+
+
+def _is_xpath(selector: str) -> bool:
+    selector = (selector or "").strip()
+    return selector.startswith(("xpath=", "//", "(//", ".//"))
+
+
+async def assert_canvas(session, selector: str, step: dict) -> tuple[bool, str]:
+    """Assert that a canvas (or any element's box) actually rendered content.
+
+    Reading pixels back out of a WebGL canvas does not work: after the frame is
+    presented the drawing buffer is cleared, so ``toDataURL`` and a 2D read of
+    the canvas both return zeros. The rendered frame only exists in the
+    compositor's output, which a screenshot captures. So this asserts on a
+    clipped screenshot:
+
+      ``min_non_background_pct`` -- % of pixels differing from the modal
+          background colour. The "did anything draw at all" check: a blank
+          viewport is one uniform colour, a rendered one is not.
+      ``min_colors`` -- distinct quantised colours, i.e. "this is a shaded
+          contour plot" rather than "this is two flat areas".
+      ``max_colors`` -- the negative case, for "the empty state must be blank".
+      ``min_brightness`` / ``max_brightness`` -- catches an all-black or
+          all-white frame that technically has colour variation.
+
+    Evidence (the PNG and the measured numbers) is attached to the step result.
+    """
+    min_non_background = float(step.get("min_non_background_pct", 0.0) or 0.0)
+    min_colors = int(step.get("min_colors", 0) or 0)
+    max_colors = step.get("max_colors")
+    min_brightness = step.get("min_brightness")
+    max_brightness = step.get("max_brightness")
+
+    if not (min_non_background or min_colors or max_colors
+            or min_brightness is not None or max_brightness is not None):
+        raise SessionRefused(
+            "invalid_step",
+            "assert_canvas needs at least one bound: min_non_background_pct, "
+            "min_colors, max_colors, min_brightness or max_brightness",
+        )
+
+    shot = await session._call_optional("screenshot_clip", selector)
+    png_b64 = (shot or {}).get("png_base64") or ""
+    if not png_b64:
+        return False, (f"canvas {selector[:40]} captured no pixels — nothing "
+                       f"rendered (element may be display:none or zero-sized)")
+    stats = analyze_png(png_b64)
+
+    label = selector[:60]
+    problems = []
+    if min_non_background and stats["non_background_pct"] < min_non_background:
+        problems.append(
+            f"only {stats['non_background_pct']:.1f}% non-background pixels "
+            f"(want >= {min_non_background:.1f}%)"
+        )
+    if min_colors and stats["colors"] < min_colors:
+        problems.append(
+            f"{stats['colors']} distinct colours (want >= {min_colors})"
+        )
+    if max_colors is not None and stats["colors"] > int(max_colors):
+        problems.append(
+            f"{stats['colors']} distinct colours (want <= {int(max_colors)})"
+        )
+    if min_brightness is not None and stats["brightness"] < float(min_brightness):
+        problems.append(
+            f"brightness {stats['brightness']:.1f} (want >= {min_brightness})"
+        )
+    if max_brightness is not None and stats["brightness"] > float(max_brightness):
+        problems.append(
+            f"brightness {stats['brightness']:.1f} (want <= {max_brightness})"
+        )
+
+    measured = (f"{label}: {stats['width']}x{stats['height']}, "
+                f"{stats['non_background_pct']:.1f}% non-background, "
+                f"{stats['colors']} colours, brightness {stats['brightness']:.1f}")
+    if problems:
+        return False, f"canvas assertion failed — {measured}; " + "; ".join(problems)
+    return True, f"canvas rendered — {measured}"
+
+
+async def assert_screenshot(session, kind: str, selector: str,
+                            step: dict) -> tuple[bool, str]:
+    """Compare the current frame against a stored baseline (visual regression).
+
+    ``{"action": "assert_screenshot", "name": "results-contour"}`` diffs the
+    live frame against ``<artifacts>/baselines/<name>.png``. The first run of a
+    baseline that does not exist *creates* it and passes with
+    ``baseline_created`` — that is the one behaviour worth knowing about,
+    because a silently created baseline asserts nothing.
+
+    ``threshold`` is the fraction of differing pixels allowed (default 0.5%).
+    ``masks`` are ``[selector, …]`` or ``{"selector": …, "color": …}`` regions
+    excluded from the diff, for the clock, the fps counter and anything else
+    that legitimately moves between runs.
+    """
+    name = str(step.get("name") or step.get("baseline") or "").strip()
+    if not name:
+        raise SessionRefused("invalid_step", "assert_screenshot needs a 'name'")
+    threshold = float(step.get("threshold", 0.005) or 0.0)
+    shots = await session._call_optional("diff_screenshot", name, selector,
+                                         threshold, step.get("masks") or [])
+
+    if shots.get("baseline_created"):
+        return True, (f"baseline {name!r} created — no comparison on the first "
+                      f"run; re-run to assert")
+    if kind == "not_screenshot":
+        differing = float(shots.get("diff_pct", 0.0))
+        return differing > threshold, (
+            f"differs from baseline {name!r} by {differing:.2f}% "
+            f"(want > {threshold * 100:.2f}%)")
+    diff_pct = float(shots.get("diff_pct", 0.0))
+    if diff_pct <= threshold:
+        return True, (f"matches baseline {name!r} ({diff_pct:.2f}% differing, "
+                      f"threshold {threshold * 100:.2f}%)")
+    return False, (
+        f"differs from baseline {name!r} by {diff_pct:.2f}% "
+        f"({shots.get('diff_pixels')} pixels, threshold "
+        f"{threshold * 100:.2f}%) — capture is saved for inspection")
+
 
 async def assert_selector(session, kind: str, selector: str, value: str) -> tuple[bool, str]:
     """Assertion kinds answered by direct CSS/XPath probes."""
@@ -273,6 +632,32 @@ async def assert_page_health(session, kind: str, step: dict, value: str, state: 
 
 
     return None  # kind not handled by this family
+async def assert_network_assertions(session, kind: str, step: dict,
+                                    value: str) -> Optional[tuple]:
+    """Assertions about what the *page itself* sent over the wire.
+
+    ``assert_api_response`` covers requests the flow issued explicitly through
+    the ``api`` action. These cover the calls the application makes on its own,
+    which is where a dispatch bug lives: the UI can look perfectly correct while
+    having sent the wrong payload. Family returns ``None`` for any other kind.
+    """
+    if kind in ("request_body", "request_sent", "request_payload"):
+        return await assert_request_body(session, step, value)
+    if kind in ("request_status", "request_response_status"):
+        return await assert_request_status(session, step, value)
+    if kind == "request_fast":
+        budget = step.get("max_ms", step.get("ms", 500))
+        matches = await _captured(session, value)
+        if not matches:
+            return False, f"no captured request matching {value!r}"
+        slowest = max((m.get("ms") or 0) for m in matches)
+        ok = slowest <= float(budget)
+        return ok, (f"request within {budget}ms budget (slowest {slowest}ms)"
+                    if ok else f"slowest matching request took {slowest}ms "
+                               f"(budget {budget}ms)")
+    return None
+
+
 async def assert_api_response(session, kind: str, step: dict, value: str) -> tuple[bool, str]:
     """Assertions over the last ``api`` step response (status/latency/json/schema/header)."""
 
@@ -353,3 +738,88 @@ async def assert_api_response(session, kind: str, step: dict, value: str) -> tup
                             else f"no matching request: {value}")
 
     return None  # kind not handled by this family
+
+
+async def _captured(session, pattern: str) -> list[dict]:
+    """Matching captured requests, enabling capture if it was not on."""
+    await session._call_optional("enable_request_capture", True)
+    return await session._call_optional("captured_matching", pattern) or []
+
+
+async def assert_request_body(session, step: dict, value: str) -> tuple[bool, str]:
+    """Assert on what a request actually sent, not just that it happened."""
+    url = str(step.get("url") or step.get("request") or value or "")
+    body_path = str(step.get("body_path") or step.get("path") or "")
+    expected = step.get("body_contains", step.get("expected_body"))
+    equals = step.get("body_equals", step.get("equals"))
+    method = step.get("method")
+
+    matches = await _captured(session, url)
+    if method:
+        wanted = str(method).upper()
+        matches = [m for m in matches if (m.get("method") or "").upper() == wanted]
+    if not matches:
+        return False, (f"no captured request matching {url!r}"
+                       + (f" method {method}" if method else ""))
+
+    last = matches[-1]
+    body = last.get("body")
+    if body is None:
+        preview = last.get("body_preview")
+        if preview is not None:
+            return False, (f"request body was not JSON (preview: {preview[:120]!r}); "
+                           f"cannot assert on it")
+        return False, (f"request body not captured (perhaps {last.get('body_omitted')}"
+                       f"); enable body capture before the request")
+
+    if body_path:
+        found = json_path(body, body_path)
+        ok = found is not None
+        if ok and equals is not None:
+            ok = str(found) == str(equals)
+        if ok and isinstance(expected, str) and expected:
+            ok = expected in str(found)
+        return ok, (f"{body_path} = {found!r}" if ok
+                    else f"{body_path} was {found!r}, expected "
+                         f"{equals!r}" if equals is not None
+                         else f"{body_path} missing from the request body "
+                              f"(keys: {sorted(body)[:10] if isinstance(body, dict) else 'n/a'})")
+
+    if isinstance(expected, (dict, list)):
+        ok = _contains(body, expected)
+        return ok, ("request body contains the expected structure" if ok
+                    else f"request body {json.dumps(body, default=str)[:200]} "
+                         f"does not contain {json.dumps(expected, default=str)}")
+    if isinstance(expected, str) and expected:
+        ok = expected in json.dumps(body, default=str)
+        return ok, ("request body contains the expected value" if ok
+                    else f"request body {json.dumps(body, default=str)[:200]} "
+                         f"does not contain {expected!r}")
+    return True, f"request matched {url!r} (body captured)"
+
+
+async def assert_request_status(session, step: dict, value: str) -> tuple[bool, str]:
+    """Assert on the status a matching request came back with."""
+    url = str(step.get("url") or step.get("request") or value or "")
+    matches = await _captured(session, url)
+    if not matches:
+        return False, f"no captured request matching {url!r}"
+    statuses = [m.get("status") for m in matches]
+    ok = any(value in str(s) for s in statuses if s is not None)
+    return ok, (f"response status {statuses[-1]} matches {value!r}" if ok
+                else f"response statuses were {statuses}, wanted {value!r}")
+
+
+def _contains(haystack, needle) -> bool:
+    """Recursive containment for a nested body subset."""
+    if isinstance(needle, dict):
+        if not isinstance(haystack, dict):
+            return False
+        return all(key in haystack and _contains(haystack[key], value)
+                   for key, value in needle.items())
+    if isinstance(needle, list):
+        if not isinstance(haystack, list):
+            return False
+        return all(any(_contains(item, want) for item in haystack)
+                   for want in needle)
+    return haystack == needle

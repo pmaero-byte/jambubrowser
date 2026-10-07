@@ -12,11 +12,10 @@ Security Features:
 """
 
 import re
-import hashlib
 import time
-from typing import Optional, List, Dict, Set, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
+from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
 
@@ -26,6 +25,83 @@ class PrivacyMode(Enum):
     ENHANCED = "enhanced"      # Aggressive PII removal
     MAXIMUM = "maximum"        # Zero external calls, full sanitization
     LOCAL_ONLY = "local_only"  # No network access at all
+
+
+# Hosts that are the developer's own machine. Nothing leaves them, so masking
+# their page content protects nobody -- and actively breaks callers whose
+# assertions are about numbers (a solver's max displacement, an element count,
+# a dev-server port). Scrubbing stays *available* and is still the default for
+# anything that is not one of these.
+LOOPBACK_HOSTS = frozenset({
+    "localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]", "host.docker.internal",
+})
+
+
+def is_local_host(host: Optional[str]) -> bool:
+    """True for loopback, ``.local``/``.localhost`` and RFC1918 hosts.
+
+    Used to decide the *default* for PII scrubbing only. It is not a security
+    boundary -- :func:`backend.modules.browser_agent.is_safe_url` and the
+    allowlist are.
+
+    Accepts a host *or* a ``host:port`` authority, because that is how an
+    allowlist entry is spelled (``127.0.0.1:5180``).
+    """
+    h = (host or "").strip().lower()
+    if not h:
+        return False
+    # Strip a port and any IPv6 brackets before comparing.
+    if h.startswith("["):
+        closing = h.find("]")
+        if closing > 0:
+            h = h[1:closing]
+    elif h.count(":") == 1:
+        h = h.partition(":")[0]
+    if h in LOOPBACK_HOSTS:
+        return True
+    if h.endswith((".localhost", ".local", ".internal")):
+        return True
+    # 10/8, 172.16/12, 192.168/16
+    parts = h.split(".")
+    if len(parts) == 4 and all(p.isdigit() for p in parts):
+        try:
+            octets = [int(p) for p in parts]
+        except ValueError:
+            return False
+        if any(o > 255 for o in octets):
+            return False
+        return (octets[0] == 10
+                or (octets[0] == 172 and 16 <= octets[1] <= 31)
+                or (octets[0] == 192 and octets[1] == 168))
+    return False
+
+
+def default_scrub_pii(*, host: str = "", allow_private: bool = False,
+                      allow_domains: Optional[List[str]] = None) -> bool:
+    """Whether a session should mask page content unless the caller says otherwise.
+
+    Scrubbing is opt-*out* for local targets and opt-*in* everywhere else:
+
+    * a loopback/private target (``local=true``, a dev server on ``127.0.0.1``)
+      gets no scrubbing by default, because the content is the developer's own
+      and redacting numbers makes the result unassertable;
+    * a public host, or a session with no host to judge, keeps the safe default
+      of scrubbing on.
+
+    An explicit ``scrub_pii`` from the caller always wins over this default --
+    this only computes the value for when the caller stayed silent.
+    """
+    if allow_private:
+        return False
+    host = (host or "").strip().lower()
+    if host and is_local_host(host):
+        return False
+    if allow_domains and any(is_local_host(d) for d in allow_domains):
+        # An allowlist that is entirely local targets is the same case, even if
+        # no host was named (e.g. /browser/sessions before any navigation).
+        if not host or is_local_host(host):
+            return False
+    return True
 
 
 @dataclass
@@ -41,14 +117,35 @@ class SanitizationResult:
 class PIIDetector:
     """Detects and removes personally identifiable information."""
 
-    # Common PII patterns
+    # Common PII patterns.
+    #
+    # Every digit-shaped pattern here is deliberately *anchored to a shape PII
+    # actually has* rather than "a run of digits". A permissive digit pattern
+    # is a false-positive machine for any application whose payload is numbers:
+    # a solver reporting ``max displacement 0.1234`` or ``3768 nodes`` must not
+    # come back masked, or the scrubber silently destroys the result the caller
+    # is trying to assert on. So:
+    #   * ``phone_intl`` requires the ``+`` country prefix that distinguishes an
+    #     international number from a bare decimal or a 4-digit count;
+    #   * ``ssn`` requires its dashed/slashed/spaced separators;
+    #   * ``ip_address`` bounds each octet to 0-255, so a long integer that
+    #     happens to contain dots is not read as an address.
+    # Testing a local app should not need scrubbing at all -- see
+    # :func:`default_scrub_pii`.
     PATTERNS = {
         "email": re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'),
         "phone_us": re.compile(r'(?:\+1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}'),
-        "phone_intl": re.compile(r'\+?\d{1,3}[-.\s]?\(?\d{1,4}\)?[-.\s]?\d{1,4}[-.\s]?\d{1,9}'),
-        "ssn": re.compile(r'\b\d{3}[-.\s]?\d{2}[-.\s]?\d{4}\b'),
+        "phone_intl": re.compile(
+            r'(?<![\d+])\+\d{1,3}[-.\s]?\(?\d{1,4}\)?[-.\s]?\d{1,4}[-.\s]?\d{1,9}(?!\d)'
+        ),
+        "ssn": re.compile(r'\b\d{3}[-.\s/]\d{2}[-.\s/]\d{4}\b'),
         "credit_card": re.compile(r'\b(?:\d{4}[-.\s]?){3}\d{4}\b'),
-        "ip_address": re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b'),
+        "ip_address": re.compile(
+            r'\b(?:\d{1,2}|1\d\d|2[0-4]\d|25[0-5])\.'
+            r'(?:\d{1,2}|1\d\d|2[0-4]\d|25[0-5])\.'
+            r'(?:\d{1,2}|1\d\d|2[0-4]\d|25[0-5])\.'
+            r'(?:\d{1,2}|1\d\d|2[0-4]\d|25[0-5])\b'
+        ),
         "ipv6": re.compile(r'([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}'),
         "mac_address": re.compile(r'([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}'),
         "passport": re.compile(r'\b[A-Z]{1,2}\d{6,9}\b'),

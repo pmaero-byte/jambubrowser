@@ -501,12 +501,22 @@ class TestFlowRunner:
 
 
 def written_download(dest_dir: str, name: str = "report.csv") -> dict:
-    """Stand-in for ``PlaywrightPage._store_download``'s metadata dict."""
+    """Stand-in for ``PlaywrightPage._store_download``'s metadata dict.
+
+    Writes the file for real: a download step now verifies what landed on disk
+    (min_bytes / sha256 / contains), so a metadata-only stand-in would be
+    asserting against a file that does not exist.
+    """
+    directory = dest_dir or "."
+    os.makedirs(directory, exist_ok=True)
+    path = os.path.join(directory, name)
+    with open(path, "wb") as handle:
+        handle.write(b"id,value\n1,2\n" * 8)
     return {
         "file": name,
         "url": f"https://example.com/{name}",
-        "bytes": 128,
-        "path": os.path.join(dest_dir or ".", name),
+        "bytes": os.path.getsize(path),
+        "path": path,
     }
 
 
@@ -674,11 +684,13 @@ class TestUploadAndDownloadSteps:
         assert report["ok"] is False
         assert report["steps"][1]["reason"] == "upload_path_denied"
 
-    def test_download_click_records_the_destination(self):
+    def test_download_click_records_the_destination(self, tmp_path):
         page = FlowPage()
         seed(page)
         add_element(page, "@d1", "Export CSV")
-        page.download_info = written_download("downloads", "report.csv")
+        # tmp_path, not a relative "downloads/": the step now verifies what
+        # landed on disk, so the stand-in has to write somewhere disposable.
+        page.download_info = written_download(str(tmp_path), "report.csv")
         session = make_session(page)
         report = run(session.run_flow([
             {"action": "navigate", "url": "https://example.com/"},

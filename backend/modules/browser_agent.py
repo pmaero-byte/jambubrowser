@@ -27,36 +27,23 @@ tested without a browser.
 from __future__ import annotations
 
 import asyncio
-import glob
 import hashlib
 import inspect
-import json
 import logging
 import os
 import tempfile
 import time
-import uuid
-from dataclasses import dataclass, field
-from typing import Any, Optional, Protocol
-from urllib.parse import urljoin
+from dataclasses import dataclass
+from typing import Any, Optional
 
 from backend.core.security import is_safe_url
+from backend.decentralized.meshpay import js_dumps, merkle_root
 from backend.modules.browser_debug import (
-    A11Y_JS,
-    PERF_JS,
-    PERF_OBSERVER_JS,
+    SourceMapData,
     compact_observation,
-    compile_network,
     diff_elements,
     map_url_for,
-    match_network,
-    NetworkDecision,
-    NetworkPolicy,
-    parse_stack_frames,
-    serialize_body,
-    SourceMapData,
 )
-from backend.decentralized.meshpay import js_dumps, merkle_root
 
 log = logging.getLogger("jambu.browser_agent")
 
@@ -64,6 +51,11 @@ MAX_SESSIONS = 4
 SESSION_TTL_SECONDS = 900
 MAX_STEPS = 200
 MAX_TEXT_CHARS = 4000
+
+# Ceiling for any single action's wait. Playwright's own 10s was hardcoded into
+# every selector dispatch, so a step could neither fail faster nor wait longer
+# than that regardless of what it asked for.
+MAX_STEP_TIMEOUT_MS = 120000
 
 # File uploads / downloads: bounded so a flow cannot exfiltrate or hoard disks.
 MAX_UPLOAD_FILES = 10
@@ -82,7 +74,18 @@ DEFAULT_REOBSERVE_BUDGET = 3
 
 # Actions the single-primitive verb (``act``) accepts; everything else in the
 # vocabulary is reachable through the flow runner / batch verb.
-_ACT_ACTIONS = ("click", "type", "upload")
+_ACT_ACTIONS = ("click", "type", "upload", "drag", "wheel", "dblclick", "set_range")
+
+# Steps whose failure is worth explaining in DOM terms. A refused ``evaluate``
+# (someone forgot ``approve=true``) needs no diagnosis; a click that timed out
+# almost always does -- it was the wrong element, off-screen, disabled, or
+# covered by something else.
+_DIAGNOSABLE_ACTIONS = frozenset({
+    "click", "dblclick", "type", "hover", "press", "select", "check", "uncheck",
+    "set_range", "drag", "fill", "tap",
+    "wait", "wait_for", "assert", "assert_visible", "assert_not_visible",
+    "assert_text", "assert_count", "assert_value", "upload", "attach_file",
+})
 
 # Loopback / private hosts that a *local* test session is allowed to reach.
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0", "host.docker.internal"}
@@ -92,6 +95,41 @@ DISABLE_ANIM_CSS = (
     "*,*::before,*::after{transition:none!important;animation:none!important;"
     "animation-duration:0s!important;caret-color:transparent!important}"
 )
+
+
+def _run_isolated(awaitable):
+    """Resolve an awaitable on a private event loop.
+
+    Only for the odd adapter whose synchronous telemetry hook happens to return
+    a coroutine; the real adapter is synchronous, so this is a compatibility
+    path rather than something to lean on.
+    """
+    try:
+        return asyncio.run(_as_coroutine(awaitable)) or {}
+    except Exception:
+        log.debug("could not resolve async telemetry hook", exc_info=True)
+        return {}
+
+
+async def _as_coroutine(awaitable):
+    return await awaitable
+
+
+def _wants_visible(step: dict) -> bool:
+    """Whether a wait step is satisfied by a *rendered* element (the default).
+
+    Waiting for a selector to exist matches nodes that are in the DOM but not on
+    screen, and waiting for text matches the document title or offscreen copy.
+    Both let a flow continue onto a page that has not finished rendering, so
+    the next step reads a half-built DOM. ``visible: false`` opts back into the
+    looser existence check for the cases that genuinely want it.
+    """
+    value = step.get("visible", True)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() not in ("false", "0", "no", "off", "")
+    return bool(value)
 
 # Words that mark an action as irreversible/high-stakes regardless of session
 # settings. Matched case-insensitively against element name/role/href.
@@ -137,28 +175,11 @@ class Step:
 # SessionRefused now lives in browser_agent_errors so extracted subsystems can
 # raise it without importing this module (see that file's docstring).
 from backend.modules.browser_agent_errors import SessionRefused  # noqa: E402
+
 # Re-exported so existing importers keep working while the implementation
 # lives with the assertion engine that owns it.
 from backend.modules.browser_assertions import json_path as _json_path  # noqa: E402,F401
-from backend.modules.browser_step_actions import (  # noqa: E402
-    run_api_step,
-    run_dialog_and_navigation,
-    run_file_step,
-    run_interaction,
-)
-# The page adapter (PlaywrightPage, Telemetry, the catalog JS and the coverage
-# arithmetic) lives in browser_page: session logic and driver logic change for
-# different reasons and are read from different tracebacks. These names are
-# re-exported because this module is the entry point browser-agent code imports,
-# and because MAX_ELEMENTS is used below.
-from backend.modules.browser_page import (  # noqa: E402,F401
-    DEFAULT_STEP_TIMEOUT_MS,
-    MAX_ELEMENTS,
-    PageAdapter,
-    PlaywrightPage,
-    summarise_coverage,
-    Telemetry,
-)
+
 # The flow/report helpers live in browser_flow (they are pure functions over
 # JSON, so they can be tested without a session). Imported here because
 # run_flow/act_many are their only callers and they are part of this module's
@@ -182,6 +203,28 @@ from backend.modules.browser_flow import (  # noqa: E402,F401
     summarize_flow_diagnostics,
     token_savings,
 )
+
+# The page adapter (PlaywrightPage, Telemetry, the catalog JS and the coverage
+# arithmetic) lives in browser_page: session logic and driver logic change for
+# different reasons and are read from different tracebacks. These names are
+# re-exported because this module is the entry point browser-agent code imports,
+# and because MAX_ELEMENTS is used below.
+from backend.modules.browser_page import (  # noqa: E402,F401
+    DEFAULT_STEP_TIMEOUT_MS,
+    MAX_ELEMENTS,
+    PageAdapter,
+    PlaywrightPage,
+    Telemetry,
+    summarise_coverage,
+)
+from backend.modules.browser_step_actions import (  # noqa: E402
+    run_api_step,
+    run_dialog_and_navigation,
+    run_file_step,
+    run_interaction,
+    run_pointer_step,
+)
+
 # Old private spellings, kept so any importer of them still resolves.
 _host = host_of  # noqa: E305,F401
 _FLOW_BLOCKED_REASONS = FLOW_BLOCKED_REASONS  # noqa: E305,F401
@@ -326,6 +369,9 @@ class BrowserAgentSession:
         self._forbid_evaluate = False
         # Last API-step response, read by assert_status/json/latency/schema.
         self._last_api: Optional[dict] = None
+        # Last verified download, so a follow-up step can assert on its content
+        # or a later step can parse the exported file.
+        self._last_download: Optional[dict] = None
         # Where saved downloads land (artifact dir when the session has one).
         self.artifacts_dir = artifacts_dir
 
@@ -333,6 +379,38 @@ class BrowserAgentSession:
 
     def _scrub(self, text: str) -> str:
         if not self.scrub_pii or not text:
+            return text
+        from backend.core.privacy import PIIDetector
+
+        masked = text
+        for pii_type in PIIDetector.PATTERNS:
+            masked = PIIDetector.mask_pii(masked, pii_type)
+        return masked
+
+    def _scrub_step(self, text: str, override: Any = None) -> str:
+        """Mask *text* honouring a per-step ``scrub`` override.
+
+        ``None`` keeps the session policy. ``True``/``False`` force masking or
+        raw output for this one step. An unrecognised value keeps the session
+        policy rather than guessing, because silently treating ``"false"`` (the
+        string, from a JSON-ish caller) as True would keep masking.
+        """
+        if override is None:
+            return self._scrub(text)
+        if isinstance(override, bool):
+            return self._mask(text) if override else text
+        if isinstance(override, str):
+            lowered = override.strip().lower()
+            if lowered in ("true", "1", "yes", "on"):
+                return self._mask(text)
+            if lowered in ("false", "0", "no", "off"):
+                return text
+        return self._scrub(text)
+
+    @staticmethod
+    def _mask(text: str) -> str:
+        """Apply every PII pattern regardless of the session's policy."""
+        if not text:
             return text
         from backend.core.privacy import PIIDetector
 
@@ -521,25 +599,36 @@ class BrowserAgentSession:
 
     async def act(self, action: str, ref: str, *, text: str = "",
                   approve: bool = False, selector: str = "",
-                  files: Optional[list] = None, dialog: Any = "") -> dict:
+                  files: Optional[list] = None, dialog: Any = "",
+                  timeout: Optional[int] = None, **extra) -> dict:
         """One primitive action, with the rails.
 
         ``dialog`` answers the native dialog this action raises (``"accept"`` /
         ``"dismiss"`` / ``{"accept": true, "text": "…"}`` for ``prompt()``),
         which is what makes a ``confirm()``-guarded button testable in one call
         instead of an arm-then-click race.
+
+        ``timeout`` is this action's wait budget in ms. It used to be accepted
+        by the flow runner and then dropped, so a step written with
+        ``"timeout": 1500`` to fail fast still burned the full 10s -- the wrong
+        trade for a negative assertion ("this must not appear"). It is now
+        honoured on every dispatch path below.
         """
         if action not in _ACT_ACTIONS:
             raise SessionRefused("unknown_action", f"unsupported action: {action}")
         self._require_agent_control(action)
         if dialog:
             await self.arm_dialog(dialog)
+        wait_ms = self._step_timeout_ms(timeout)
         if action == "upload":
             return await self.upload_files(
                 ref, files or [], approve=approve, selector=selector,
+                timeout=wait_ms,
             )
         if selector and not ref:
-            return await self.act_selector(action, selector, text=text, approve=approve)
+            return await self.act_selector(action, selector, text=text,
+                                           approve=approve, timeout=wait_ms,
+                                           **extra)
 
         element = self.catalog.get(ref)
         if element is None:
@@ -565,9 +654,22 @@ class BrowserAgentSession:
 
         before_url = self.last_url
         if action == "click":
-            await self.page.click(ref)
+            # Routed through _call_optional so an adapter whose click() predates
+            # the timeout keyword still works (test doubles, older adapters).
+            await self._call_optional("click", ref, timeout_ms=wait_ms)
+        elif action in ("drag", "wheel", "dblclick", "set_range"):
+            # Pointer gestures cannot be expressed as a catalog ref: they need
+            # coordinates or a geometry pair, and a rotation/zoom is defined by
+            # the movement, not by the element. They are dispatched by
+            # ``selector``/coordinates, so reaching here without one means the
+            # caller described the gesture with nothing to aim at.
+            raise SessionRefused(
+                "target_required",
+                f"'{action}' needs a 'selector' or coordinates ({action} "
+                f"is not a catalog-ref action)",
+            )
         else:
-            await self.page.type_text(ref, text)
+            await self._call_optional("type_text", ref, text, timeout_ms=wait_ms)
         await self._settle_navigation(action, ref, before_url)
 
         step = self._record(action, "ok", ref=ref,
@@ -607,7 +709,8 @@ class BrowserAgentSession:
         self.last_url = after_url
 
     async def act_selector(self, action: str, selector: str, *, text: str = "",
-                           approve: bool = False) -> dict:
+                           approve: bool = False, timeout: Optional[int] = None,
+                           **extra) -> dict:
         """Dispatch click/type by CSS/XPath selector (bypasses the catalog).
 
         Selectors address elements the snapshot never catalogs, so the risk
@@ -632,11 +735,13 @@ class BrowserAgentSession:
                 # handled by the step itself; keep going.
                 log.debug("current_url unavailable; using last known url",
                           exc_info=True)
+        wait_ms = self._step_timeout_ms(timeout)
         before_url = self.last_url
         if action == "click":
-            await self._call_optional("click_selector", selector)
+            await self._call_optional("click_selector", selector, timeout_ms=wait_ms)
         else:
-            await self._call_optional("fill_selector", selector, text)
+            await self._call_optional("fill_selector", selector, text,
+                                      timeout_ms=wait_ms)
         await self._settle_navigation(action, None, before_url)
         step = self._record(action, "ok",
                             detail=(f"{selector[:60]} ← {text[:40]}"
@@ -645,6 +750,24 @@ class BrowserAgentSession:
             {"action": action, "selector": selector, **({"value": self._scrub(text)} if action == "type" else {})}
         )
         return {"outcome": "ok", "url": self.last_url, "step": step.to_dict()}
+
+    @staticmethod
+    def _step_timeout_ms(timeout: Optional[int]) -> int:
+        """Clamp a step's requested budget into a sane range.
+
+        A step that asks for 0 or a negative wait means "as soon as possible",
+        not "never". Anything above the ceiling is treated as the ceiling so a
+        typo cannot wedge a flow for an hour.
+        """
+        if timeout is None:
+            return MAX_STEP_TIMEOUT_MS
+        try:
+            value = int(timeout)
+        except (TypeError, ValueError):
+            return MAX_STEP_TIMEOUT_MS
+        if value <= 0:
+            return 1
+        return min(value, MAX_STEP_TIMEOUT_MS)
 
     # -- dialogs --------------------------------------------------------------
 
@@ -664,7 +787,8 @@ class BrowserAgentSession:
     # -- uploads --------------------------------------------------------------
 
     async def upload_files(self, ref: str, files: Any, *, approve: bool = False,
-                           selector: str = "", chooser: Optional[bool] = None) -> dict:
+                           selector: str = "", chooser: Optional[bool] = None,
+                           timeout: Optional[int] = None) -> dict:
         """Attach local files to a file input, or feed the picker a button opens.
 
         Uploads read from the engine's own disk and the risk classifier cannot
@@ -688,12 +812,16 @@ class BrowserAgentSession:
             and (element.get("tag") or "").lower() == "input"
             and (element.get("type") or "").lower() == "file"
         )
+        wait_ms = self._step_timeout_ms(timeout)
         if selector and not ref:
-            info = await self._call_optional("set_input_files_selector", selector, paths)
+            info = await self._call_optional("set_input_files_selector", selector,
+                                             paths, timeout_ms=wait_ms)
         elif wants_input:
-            info = await self._call_optional("set_input_files", ref, paths)
+            info = await self._call_optional("set_input_files", ref, paths,
+                                             timeout_ms=wait_ms)
         else:
-            info = await self._call_optional("upload_via_chooser", ref, paths)
+            info = await self._call_optional("upload_via_chooser", ref, paths,
+                                             timeout_ms=wait_ms)
         info = info or {}
         names = [os.path.basename(p) for p in paths]
         mode = str(info.get("mode") or ("input" if wants_input else "chooser"))
@@ -899,28 +1027,74 @@ class BrowserAgentSession:
             raise SessionRefused(
                 "unsupported_action", f"page adapter does not support {name!r}",
             )
-        result = fn(*args, **kwargs)
+        from backend.modules.browser_page import (
+            _accepted_keywords,
+            _is_signature_error,
+        )
+
+        try:
+            result = fn(*args, **kwargs)
+        except TypeError as exc:
+            # An adapter that predates a keyword we now pass (the timeout on
+            # every click/fill, or a new pointer method's signature) should
+            # degrade to the old call rather than fail the step as a typo. A
+            # TypeError from *inside* the adapter is a real bug and re-raised.
+            if not _is_signature_error(exc, fn, name):
+                raise
+            accepted = _accepted_keywords(fn)
+            trimmed = {k: v for k, v in kwargs.items()
+                       if k in accepted or not accepted}
+            result = fn(*args, **trimmed)
         if inspect.isawaitable(result):
             result = await result
         return result
 
     def _drain_telemetry(self) -> dict:
+        """Take everything buffered since the last drain.
+
+        Synchronous like :meth:`_peek_telemetry` because callers are sync too,
+        and because the drain must happen at the same instant as the peek that
+        follows it. An async hook is resolved on a private loop.
+        """
         drain = getattr(self.page, "drain_telemetry", None)
-        if callable(drain):
-            try:
-                return drain() or {}
-            except Exception:
+        if not callable(drain):
+            return {}
+        try:
+            result = drain()
+            if inspect.isawaitable(result):
+                try:
+                    asyncio.get_running_loop()
+                except RuntimeError:
+                    return _run_isolated(result)
                 return {}
-        return {}
+            return result or {}
+        except Exception:
+            log.debug("drain_telemetry failed", exc_info=True)
+            return {}
 
     def _peek_telemetry(self) -> dict:
+        """Synchronous view of the buffers.
+
+        Read from hot paths -- per-step attribution, assertions -- where
+        awaiting would force the whole path async for no benefit. Tolerates a
+        coroutine-returning double by closing it on a private loop.
+        """
         peek = getattr(self.page, "peek_telemetry", None)
-        if callable(peek):
-            try:
-                return peek() or {}
-            except Exception:
+        if not callable(peek):
+            return {}
+        try:
+            result = peek()
+            if inspect.isawaitable(result):
+                try:
+                    asyncio.get_running_loop()
+                except RuntimeError:
+                    return _run_isolated(result)
+                # Inside a loop: a sync peek cannot wait on async work.
                 return {}
-        return {}
+            return result or {}
+        except Exception:
+            log.debug("peek_telemetry failed", exc_info=True)
+            return {}
 
     async def _safe_state(self) -> dict:
         try:
@@ -936,7 +1110,8 @@ class BrowserAgentSession:
         freeze_animations: bool = True, resolve_sources: bool = False,
         settle_ms: int = 0, forbid_evaluate: bool = False,
         clock: Optional[dict] = None, throttle: Optional[dict] = None,
-        coverage: bool = False,
+        coverage: bool = False, network_idle: bool = False,
+        wait_network_idle_ms: int = 15000,
     ) -> dict:
         """Execute a declarative list of steps and return one compact report.
 
@@ -959,9 +1134,15 @@ class BrowserAgentSession:
                         kbps/latency) so 3G / offline paths are testable.
         ``coverage``  — capture JS coverage and summarise used bytes per
                         script in the report (Chromium).
+        ``network_idle`` — after every step, wait until the request count stops
+                        changing before reading state. A dev server streaming
+                        lazy chunks otherwise leaves the next step reading a
+                        half-rendered page.
         """
         normalized = normalize_flow_steps(steps)
         results: list[dict] = []
+        evaluated: list[dict] = []
+        screenshots: list[dict] = []
         passed = failed = 0
         started = time.time()
         self._settle_ms = max(0, int(settle_ms or 0))
@@ -1007,6 +1188,11 @@ class BrowserAgentSession:
             result: dict = {"i": i, "action": action, "status": "passed"}
             before_elements = list(self.catalog.values())
             before_tel = self._telemetry_counts()
+            # Console output is attributed to the step running now, so a report
+            # says *which* step produced an error rather than just that one did.
+            begin = getattr(self.page, "begin_step", None)
+            if callable(begin):
+                begin(f"{i}:{action}")
             try:
                 step_approve = bool(step.get("approve", approve))
                 detail, evidence = await self._run_step(
@@ -1016,6 +1202,12 @@ class BrowserAgentSession:
                     result["detail"] = detail
                 if evidence:
                     result.update(evidence)
+                if evidence and evidence.get("evaluated") is not None:
+                    evaluated.append({"i": i, "action": action,
+                                      "value": evidence["evaluated"]})
+                if evidence and evidence.get("screenshot_base64"):
+                    screenshots.append({"i": i, "action": action,
+                                        "bytes": evidence.get("screenshot_bytes", 0)})
                 passed += 1
             except SessionRefused as refusal:
                 result["status"] = classify_step_failure(refusal.reason)
@@ -1023,12 +1215,50 @@ class BrowserAgentSession:
                 result["error"] = refusal.detail or refusal.reason
                 if refusal.candidates:
                     result["candidates"] = refusal.candidates
+                # Why it failed, in the terms of the DOM: found at all, on
+                # screen, actually clickable, or what is covering it. A
+                # Playwright call log says "waiting for locator" which is not
+                # an answer; an off-screen button at y=855 on an 844px viewport
+                # is.
+                if action in _DIAGNOSABLE_ACTIONS:
+                    failure_cause = await self._diagnose(step, refusal)
+                    if failure_cause:
+                        result["failure_cause"] = failure_cause
+                        if failure_cause.get("screenshot_base64"):
+                            result["failure_screenshot_bytes"] = len(
+                                failure_cause.pop("screenshot_base64"))
                 failed += 1
             except Exception as exc:  # unexpected page/tool error
                 result["status"] = "inconclusive"
                 result["reason"] = "harness_error"
                 result["error"] = str(exc)[:300]
+                # A Playwright timeout is the common case here and it arrives as
+                # a bare TimeoutError with a call log, so it needs the same
+                # diagnosis a refusal would get.
+                if action in _DIAGNOSABLE_ACTIONS:
+                    failure_cause = await self._diagnose(
+                        step, SessionRefused("page_error", str(exc)[:200]),
+                    )
+                    if failure_cause:
+                        result["failure_cause"] = failure_cause
+                        if failure_cause.get("screenshot_base64"):
+                            result["failure_screenshot_bytes"] = len(
+                                failure_cause.pop("screenshot_base64"))
                 failed += 1
+
+            if network_idle and result["status"] == "passed":
+                await self._wait_network_quiet(timeout_ms=wait_network_idle_ms)
+
+            # Console messages emitted while this step ran, with their source.
+            end = getattr(self.page, "end_step", None)
+            if callable(end):
+                try:
+                    owned = end() or []
+                except Exception:
+                    log.debug("end_step failed", exc_info=True)
+                    owned = []
+                if owned:
+                    result["console"] = owned[:10]
 
             # Cause attribution: what did this step change / emit?
             cause = self._attribute(before_elements, before_tel)
@@ -1048,6 +1278,8 @@ class BrowserAgentSession:
             "failed": failed,
             "total": len(results),
             "steps": results,
+            "evaluated": evaluated,
+            "screenshots": screenshots,
             "console_errors": telemetry.get("console_errors", []),
             "console_warnings": telemetry.get("console_warnings", []),
             "failed_requests": telemetry.get("failed_requests", []),
@@ -1073,6 +1305,17 @@ class BrowserAgentSession:
             else {"enforced": False, "reason": "adapter_without_request_policy"}
         )
         report["diagnostics"] = summarize_flow_diagnostics(results, telemetry)
+        # A worker that threw takes an in-browser computation with it while the
+        # page still looks correct, so its failures are part of the report.
+        worker_errors = None
+        probe = getattr(self.page, "worker_errors", None)
+        if callable(probe):
+            try:
+                worker_errors = probe()
+            except Exception:
+                log.debug("worker_errors probe failed", exc_info=True)
+        if worker_errors:
+            report["worker_errors"] = worker_errors
         if resolve_sources:
             report["console_errors_source"] = await self._resolve_sources(
                 telemetry.get("console_errors_detail") or [],
@@ -1201,6 +1444,9 @@ class BrowserAgentSession:
         result = await run_interaction(self, action, step, approve, observe)
         if result is not None:
             return result
+        result = await run_pointer_step(self, action, step, approve, observe)
+        if result is not None:
+            return result
         result = await run_api_step(self, action, step, approve)
         if result is not None:
             return result
@@ -1225,7 +1471,14 @@ class BrowserAgentSession:
             result = await self._call_optional("eval_js", script)
             if observe:
                 await self._read_state()
-            text = self._scrub(str(result if result is not None else ""))[:MAX_ASSERT_TEXT]
+            # A step may override the session's scrubbing policy. `scrub: false`
+            # is how a caller asserts on raw numbers ("max displacement
+            # 0.1234") when the session was opened with scrubbing forced on for
+            # a public host; `scrub: true` re-masks a local session's output so
+            # a page that happens to echo an email does not leak it into the
+            # report.
+            text = self._scrub_step(str(result if result is not None else ""),
+                                    step.get("scrub"))[:MAX_ASSERT_TEXT]
             self._capture_step({"action": "evaluate", "script": script[:200]})
             return "evaluated", {"evaluated": text}
 
@@ -1268,9 +1521,27 @@ class BrowserAgentSession:
             await self._call_optional("wait_for_function", str(step["js"]), timeout)
             return
         if step.get("selector"):
+            if _wants_visible(step):
+                # Default changed: waiting for a selector to *exist* matched
+                # nodes that were laid out but not shown, so a flow could resume
+                # on a page whose visible content was still rendering. Only
+                # `visible: false` opts back into existence. An adapter without
+                # the visible-aware variant falls back to the loose check rather
+                # than failing the step.
+                await self._wait_optional_visible(
+                    "wait_for_visible_selector", "wait_for_selector",
+                    step["selector"], timeout,
+                )
+                return
             await self._call_optional("wait_for_selector", step["selector"], timeout)
             return
         if step.get("text"):
+            if _wants_visible(step):
+                await self._wait_optional_visible(
+                    "wait_for_visible_text", "wait_for_text",
+                    str(step["text"]), timeout,
+                )
+                return
             await self._call_optional("wait_for_text", step["text"], timeout)
             return
         if step.get("url_contains"):
@@ -1280,9 +1551,100 @@ class BrowserAgentSession:
                     return
                 await asyncio.sleep(0.1)
             raise SessionRefused(
-                "wait_timeout", f"url never contained {step['url_contains']!r}",
+                "wait_timeout",
+                f"url never contained {step['url_contains']!r} "
+                f"(now: {self.last_url or 'unknown'})",
             )
-        await self._call_optional("wait_for", timeout_ms=timeout)
+        if step.get("network_idle") or step.get("networkidle"):
+            # The explicit "the app has stopped fetching" wait. Distinct from
+            # the implicit per-step settle: a dev server streaming lazy chunks
+            # keeps the request count climbing, so the next step would read a
+            # half-rendered page.
+            await self._wait_network_quiet(
+                quiet_ms=int(step.get("quiet_ms", 600) or 600), timeout_ms=timeout,
+            )
+            return
+        # No condition at all: still worth waiting for the page to go quiet, so
+        # a bare "wait" behaves like the settle a caller expects rather than a
+        # fixed sleep that races a lazy chunk.
+        await self._wait_network_quiet(
+            quiet_ms=int(step.get("quiet_ms", 600) or 600), timeout_ms=timeout,
+        )
+
+    async def _wait_optional_visible(self, visible_call: str, loose_call: str,
+                                     target: str, timeout: int) -> None:
+        """Prefer a visibility-aware wait; fall back if the adapter lacks one.
+
+        A stricter default must not become a hard dependency: an adapter that
+        only implements the loose wait should keep working (looser), rather than
+        refuse the step outright.
+        """
+        try:
+            await self._call_optional(visible_call, target, timeout)
+        except SessionRefused as refusal:
+            if refusal.reason != "unsupported_action":
+                raise
+            await self._call_optional(loose_call, target, timeout)
+
+    async def _diagnose(self, step: dict, refusal: SessionRefused) -> dict:
+        """Explain a failed interaction in the terms of the DOM.
+
+        A Playwright call log tells you it waited for a locator. That is not the
+        question anyone actually has when a flow goes red at 3am: *did the
+        element exist, was it on screen, was something covering it, is it
+        disabled?* A button at y=855 on an 844px-tall viewport is invisible and
+        unclickable -- "waiting for locator" says nothing about that.
+
+        Every probe is individually optional: diagnosis must never turn a clean
+        failure into a different error, and must work on adapters that do not
+        implement the probes.
+        """
+        out: dict = {}
+        selector = (step.get("selector") or "").strip()
+        if not selector:
+            return out
+
+        async def probe(name: str, *args, **kwargs):
+            try:
+                value = await self._call_optional(name, *args, **kwargs)
+            except SessionRefused:
+                return None
+            except Exception:
+                log.debug("diagnostic probe %s failed", name, exc_info=True)
+                return None
+            return value
+
+        report = await probe("describe_selector", selector)
+        if isinstance(report, dict) and report:
+            out.update(report)
+        else:
+            # No rich probe: fall back to the cheap ones so the report is not
+            # simply empty. ``None`` means "this adapter cannot answer" and is
+            # kept distinct from a real falsy answer.
+            found = await probe("count_selector", selector)
+            visible = await probe("is_visible_selector", selector)
+            out["found"] = None if found is None else int(found) > 0
+            out["visible"] = visible
+            out["probes_available"] = found is not None or visible is not None
+        out["selector"] = selector
+        out["refused_reason"] = refusal.reason
+
+        # Three selector spellings the caller could use instead, ranked by how
+        # likely they are to resolve. Cheap to compute and directly actionable.
+        suggestions = await probe("suggest_selectors", selector)
+        if suggestions:
+            out["suggestions"] = suggestions
+
+        try:
+            shot = await self._call_optional("screenshot", False)
+        except SessionRefused:
+            shot = None
+        except Exception:
+            log.debug("failure screenshot failed", exc_info=True)
+            shot = None
+        if shot:
+            out["screenshot_base64"] = shot
+        return out
 
     async def capture_screenshot(self, full_page: bool = False) -> Optional[str]:
         """Current frame as base64 PNG (live-view / takeover source)."""
