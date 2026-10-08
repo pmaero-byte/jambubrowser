@@ -111,7 +111,7 @@ per-step `scrub` overrides the session. The report states which policy ran.
 | `assert_no_failed_requests` | — | no failed network requests |
 | `assert_dialog` | `type?`, `value?`, `accepted?` | last dialog raised (`alert`/`confirm`/`prompt`/`beforeunload`) |
 | `assert_no_dialog` | — | nothing raised a dialog so far |
-| `assert_canvas` | `selector`, `min_non_background_pct?`, `min_colors?`, `max_colors?`, `min_brightness?`, `max_brightness?` | asserts the rendered frame; needs ≥1 bound |
+| `assert_canvas` | `selector`, `min_non_background_pct?`, `min_colors?`, `max_colors?`, `min_brightness?`, `max_brightness?`, `min_width?`, `min_height?` | asserts the rendered frame; needs ≥1 bound. Add `min_width`/`min_height` — colour bounds alone pass on a collapsed viewport |
 | `assert_screenshot` | `name`, `threshold?` (0.5%), `masks?`, `selector?` | visual regression vs. a stored baseline |
 | `assert_not_screenshot` | `name`, `threshold?` | the negative case |
 | `assert_request_body` | `url`, `body_path?` / `body_contains?` / `body_equals?`, `method?` | what the page actually sent |
@@ -308,9 +308,10 @@ assertions therefore capture what the compositor showed:
 
 `assert_canvas` reports the measured numbers either way ("3768×1844, 41.2%
 non-background, 27 colours, brightness 96.4") and requires at least one bound, so
-a typo'd assertion cannot silently pass. `assert_screenshot` diffs against a
-stored baseline; the first run of a missing baseline creates it and passes with
-`baseline_created`.
+a typo'd assertion cannot silently pass. Include `min_width`/`min_height`: a
+collapsed viewport still has colour, so the colour bounds pass on it.
+`assert_screenshot` diffs against a stored baseline; the first run of a missing
+baseline creates it and passes with `baseline_created`.
 
 Pixel thresholds are only comparable between runs because both the viewport
 *and* `device_scale_factor` are pinned (1440×900 at dpr 2 by default). Leaving

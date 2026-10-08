@@ -160,8 +160,16 @@ through a clipped screenshot, and the PNG is decoded in stdlib Python (no Pillow
 dependency).
 
 `assert_canvas {selector, min_non_background_pct, min_colors, max_colors,
-min_brightness, max_brightness}` — needs at least one bound, so a typo'd
-assertion cannot silently pass. Reports the measured numbers either way.
+min_brightness, max_brightness, min_width, min_height}` — needs at least one
+bound, so a typo'd assertion cannot silently pass. Reports the measured numbers
+either way.
+
+The geometry bounds matter more than they look: a responsive bug that collapses
+the viewport to a 3 px sliver still has colour, so `min_colors` and
+`min_non_background_pct` both pass on it. On FEA Lab at `device=mobile` the
+canvas measures `3x1899` and passes every colour bound until you add
+`min_width` — which then fails with `rendered width 3px (want >= 320px) -- the
+viewport is collapsed`.
 
 `assert_screenshot {name, threshold, masks}` / `assert_not_screenshot` — diffs
 against `<artifacts>/baselines/<name>.png`; the first run of a missing baseline

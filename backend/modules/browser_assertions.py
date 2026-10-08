@@ -441,13 +441,17 @@ async def assert_canvas(session, selector: str, step: dict) -> tuple[bool, str]:
     max_colors = step.get("max_colors")
     min_brightness = step.get("min_brightness")
     max_brightness = step.get("max_brightness")
+    min_width = step.get("min_width")
+    min_height = step.get("min_height")
 
     if not (min_non_background or min_colors or max_colors
-            or min_brightness is not None or max_brightness is not None):
+            or min_brightness is not None or max_brightness is not None
+            or min_width is not None or min_height is not None):
         raise SessionRefused(
             "invalid_step",
             "assert_canvas needs at least one bound: min_non_background_pct, "
-            "min_colors, max_colors, min_brightness or max_brightness",
+            "min_colors, max_colors, min_brightness, max_brightness, "
+            "min_width or min_height",
         )
 
     shot = await session._call_optional("screenshot_clip", selector)
@@ -479,6 +483,20 @@ async def assert_canvas(session, selector: str, step: dict) -> tuple[bool, str]:
     if max_brightness is not None and stats["brightness"] > float(max_brightness):
         problems.append(
             f"brightness {stats['brightness']:.1f} (want <= {max_brightness})"
+        )
+    # Geometry bounds, because colour alone cannot tell a rendered viewport
+    # from a collapsed one: a responsive bug that squeezes the canvas to a 3px
+    # sliver still has colour, so `min_colors` and `min_non_background_pct`
+    # both pass on it.
+    if min_width is not None and stats["width"] < float(min_width):
+        problems.append(
+            f"rendered width {stats['width']}px (want >= {int(min_width)}px) -- "
+            f"the viewport is collapsed"
+        )
+    if min_height is not None and stats["height"] < float(min_height):
+        problems.append(
+            f"rendered height {stats['height']}px (want >= {int(min_height)}px) -- "
+            f"the viewport is collapsed"
         )
 
     measured = (f"{label}: {stats['width']}x{stats['height']}, "

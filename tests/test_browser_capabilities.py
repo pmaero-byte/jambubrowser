@@ -851,6 +851,36 @@ class TestAssertCanvas:
             run(assert_canvas(session, "#c", {}))
         assert excinfo.value.reason == "invalid_step"
 
+    def test_a_collapsed_viewport_cannot_pass_on_colour_alone(self):
+        # A responsive bug that squeezes the viewport to a 3px sliver still has
+        # colour, so min_colors and min_non_background_pct both pass on it. Only
+        # a geometry bound catches it.
+        sliver = CanvasSession(png(3, 400, lambda x, y: ((x * 90) % 256, 30, 40)))
+        ok, detail = run(assert_canvas(sliver, "#viewport", {
+            "min_non_background_pct": 5, "min_colors": 3,
+        }))
+        assert ok, "colour bounds alone do not detect collapse"
+        ok, detail = run(assert_canvas(sliver, "#viewport", {
+            "min_non_background_pct": 5, "min_colors": 3, "min_width": 200,
+        }))
+        assert not ok
+        assert "collapsed" in detail
+        assert "3px" in detail
+
+    def test_min_height_catches_a_flat_viewport(self):
+        flat = CanvasSession(png(400, 2, lambda x, y: ((x * 7) % 256, 90, 10)))
+        ok, detail = run(assert_canvas(flat, "#viewport", {"min_height": 100}))
+        assert not ok
+        assert "collapsed" in detail
+
+    def test_geometry_bounds_pass_a_healthy_viewport(self):
+        big = CanvasSession(png(400, 300, lambda x, y: (200 if x > 200 else 20,
+                                                         30, 40)))
+        ok, detail = run(assert_canvas(big, "#viewport", {
+            "min_width": 300, "min_height": 200, "min_non_background_pct": 10,
+        }))
+        assert ok, detail
+
     def test_an_unrenderable_element_fails_clearly(self):
         class Empty(CanvasSession):
             async def _call_optional(self, name, *args, **kwargs):
