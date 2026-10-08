@@ -365,6 +365,12 @@ app.add_middleware(RequestTimeoutMiddleware, timeout_seconds=30.0, exclude_paths
     "/research", "/scrape", "/exec", "/act", "/workflow", "/v2/",
     "/mlx/", "/mission", "/knowledge/ingest", "/login", "/discover_api",
     "/audit/", "/proxy", "/sessions/recordings", "/dcm/", "/mcp", "/eval/", "/a2a",
+    # Browser flows are bounded by their own per-step timeouts, not by this cap.
+    # A 30s ceiling silently truncated exactly the flows that need waiting: a
+    # heavy solve, a dev server still streaming lazy chunks, a viewport that
+    # takes seconds to render. The client got a 504 with no step results at all,
+    # which is the worst possible outcome -- no evidence of how far it got.
+    "/browser/sessions/run", "/browser/sessions/matrix",
 ])
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(TrustedHostMiddleware)

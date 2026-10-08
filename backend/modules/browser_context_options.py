@@ -28,6 +28,13 @@ from typing import Any, Optional
 # results table plus a viewport.
 DEFAULT_VIEWPORT = {"width": 1440, "height": 900}
 
+# Pinned for the same reason the viewport is. device_scale_factor also came from
+# the rotated fingerprint, so the *same* flow rasterised at dpr 1.25 on one run
+# and 2 on the next -- a canvas element then measured 1566px wide instead of
+# 2088px, which quietly invalidates any pixel-count assertion and changes every
+# screenshot size. Callers override it when they want to test HiDPI.
+DEFAULT_DEVICE_SCALE_FACTOR = 2
+
 # Playwright ``new_context`` keys we accept from a caller, mapped to the
 # normalization they need. Anything not listed is not silently dropped -- it is
 # passed through untouched (storage_state, record_har_path, and so on).
@@ -225,6 +232,8 @@ def normalize_context_options(
     # unless this is a matrix variant that carries its own.
     if not viewport_matrix or opts.get("viewport") is not None:
         opts.setdefault("viewport", dict(DEFAULT_VIEWPORT))
+    # ...and so is the rasterisation scale, for the same reason.
+    opts.setdefault("device_scale_factor", DEFAULT_DEVICE_SCALE_FACTOR)
     # ...and a mobile-ish context has to agree with itself: Playwright rejects
     # is_mobile with a non-null device_scale_factor mismatch in some builds, and
     # a touch viewport without has_touch makes tap-only UI untestable.

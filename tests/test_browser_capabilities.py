@@ -29,6 +29,7 @@ from backend.modules.browser_assertions import (
     encode_png,
 )
 from backend.modules.browser_context_options import (
+    DEFAULT_DEVICE_SCALE_FACTOR,
     DEFAULT_VIEWPORT,
     normalize_context_options,
     parse_viewport,
@@ -382,8 +383,24 @@ class TestViewportOptions:
     def test_default_is_fixed_not_fingerprint_derived(self):
         # The viewport used to come from a rotated fingerprint, so two runs of
         # the same flow rendered at 1680x1050 and 1280x800.
-        assert normalize_context_options()["viewport"] == DEFAULT_VIEWPORT
+        opts = normalize_context_options()
+        assert opts["viewport"] == DEFAULT_VIEWPORT
         assert DEFAULT_VIEWPORT == {"width": 1440, "height": 900}
+        # device_scale_factor drifted too (1.25 vs 2), which resized every
+        # screenshot and invalidates any pixel-count assertion.
+        assert opts["device_scale_factor"] == DEFAULT_DEVICE_SCALE_FACTOR
+        assert DEFAULT_DEVICE_SCALE_FACTOR == 2
+
+    def test_device_scale_factor_is_overridable(self):
+        opts = normalize_context_options(device_scale_factor=1)
+        assert opts["device_scale_factor"] == 1
+
+    def test_the_default_rasterisation_is_identical_across_calls(self):
+        # The regression this guards: a per-session fingerprint made each call
+        # return different geometry, so two identical runs were not comparable.
+        first = normalize_context_options()
+        for _ in range(5):
+            assert normalize_context_options() == first
 
     def test_explicit_viewport_wins(self):
         opts = normalize_context_options(viewport={"width": 390, "height": 844})

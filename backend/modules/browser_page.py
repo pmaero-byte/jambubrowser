@@ -14,6 +14,7 @@ be tested without a browser.
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import inspect
 import json
@@ -71,20 +72,29 @@ class PageAdapter(Protocol):
 
 DESCRIBE_SELECTOR_JS = r"""
 (sel) => {
-  const engine = (s) => (s.startsWith('xpath=') ? s : null);
-  let el = null, viaXPath = false;
-  const isX = sel.startsWith('xpath=') || sel.startsWith('//') || sel.startsWith('(//');
-  if (isX) {
-    viaXPath = true;
-    try { el = document.evaluate(sel.startsWith('xpath=') ? sel.slice(6) : sel,
-                                document, null, 9, null).singleNodeValue; }
-    catch (e) { return {found: false, error: 'bad xpath: ' + e.message}; }
+  // ``sel`` is normally a selector string, but the adapter passes an element
+  // handle when the caller used a Playwright engine selector (``text=…``,
+  // ``role=…``, ``:has-text(…)``) -- those are not valid CSS, so they cannot be
+  // resolved here and must be resolved by Playwright itself first.
+  let el = null, viaXPath = false, label = '';
+  if (sel && typeof sel === 'object' && typeof sel.tagName === 'string') {
+    el = sel;
+    label = el.tagName.toLowerCase();
   } else {
-    try { el = document.querySelector(sel); } catch (e) {
-      return {found: false, error: 'bad selector: ' + e.message};
+    label = String(sel);
+    const isX = sel.startsWith('xpath=') || sel.startsWith('//') || sel.startsWith('(//');
+    if (isX) {
+      viaXPath = true;
+      try { el = document.evaluate(sel.startsWith('xpath=') ? sel.slice(6) : sel,
+                                  document, null, 9, null).singleNodeValue; }
+      catch (e) { return {found: false, error: 'bad xpath: ' + e.message}; }
+    } else {
+      try { el = document.querySelector(sel); } catch (e) {
+        return {found: false, error: 'bad selector: ' + e.message};
+      }
     }
   }
-  if (!el) return {found: false, selector: sel};
+  if (!el) return {found: false, selector: label};
 
   const rect = el.getBoundingClientRect();
   const style = window.getComputedStyle(el);
@@ -122,7 +132,7 @@ DESCRIBE_SELECTOR_JS = r"""
 
   return {
     found: true,
-    selector: sel,
+    selector: label,
     matched_via: viaXPath ? 'xpath' : 'css',
     tag: el.tagName.toLowerCase(),
     text: ((el.innerText || el.textContent || '').trim().slice(0, 80)),
@@ -611,18 +621,33 @@ class PlaywrightPage:
         websocket_supported = False
         route_websocket = getattr(self._route_target, "route_web_socket", None)
         if callable(route_websocket):
-            async def websocket_handler(websocket_route):
+            async def websocket_handler(ws_route):
+                # Playwright hands us the *page-side* route. Two things were
+                # wrong here: ``connect_to_server()`` is synchronous (awaiting it
+                # raised "object can't be awaited" and took down every snapshot
+                # on a page that opened a socket), and once you call it Playwright
+                # stops proxying for you -- both directions have to be forwarded
+                # by hand or the socket just stalls. A single WebSocket is enough
+                # to break every later step, which is how this surfaced.
                 decision = await asyncio.to_thread(
                     self.network_policy.decide,
-                    websocket_route.url, method="GET", kind="websocket",
+                    ws_route.url, method="GET", kind="websocket",
                 )
                 if not decision.allowed:
-                    return await websocket_route.close(code=1008, reason=decision.reason)
-                return await websocket_route.connect_to_server()
+                    await ws_route.close(code=1008, reason=decision.reason)
+                    return
+                server = ws_route.connect_to_server()
+                # server -> page, then page -> server.
+                server.on_message(lambda message: ws_route.send(message))
+                ws_route.on_message(lambda message: server.send(message))
+                ws_route.on_close(
+                    lambda code=None, reason=None: server.close(code, reason)
+                )
             try:
                 await route_websocket("**/*", websocket_handler)
                 websocket_supported = True
             except Exception:
+                log.debug("websocket routing unavailable", exc_info=True)
                 websocket_supported = False
         self.network_policy._websocket_supported = websocket_supported
         self.network_policy._routing_installed = True
@@ -1337,9 +1362,25 @@ class PlaywrightPage:
         hit it?". Answered in one round trip: existence, geometry against the
         viewport, what is painted on top at that point, and whether the element
         would accept input at all.
+
+        Resolution goes through a Playwright locator first so engine selectors
+        (``text=Run safe``, ``role=button[name=…]``) work here too -- handing
+        them to ``querySelector`` would just report "bad selector" and hide the
+        answer for exactly the selectors people write by hand.
         """
-        return await self._page.evaluate(DESCRIBE_SELECTOR_JS,
-                                         self._engine_selector(selector)) or {}
+        locator = self._page.locator(self._engine_selector(selector)).first
+        try:
+            count = await locator.count()
+        except Exception:
+            count = 0
+        if not count:
+            return {"found": False, "selector": selector}
+        handle = await locator.element_handle()
+        if handle is None:
+            return {"found": False, "selector": selector}
+        report = await self._page.evaluate(DESCRIBE_SELECTOR_JS, handle) or {}
+        report.setdefault("selector", selector)
+        return report
 
     async def suggest_selectors(self, selector: str) -> list[str]:
         """Up to three alternative spellings for the same element."""
@@ -1360,14 +1401,38 @@ class PlaywrightPage:
         """
         if not (selector or "").strip():
             return {"png_base64": await self.screenshot(False)}
-        box = await self._element_center(selector)
-        clip = {
-            "x": box["x"] - box["width"] / 2, "y": box["y"] - box["height"] / 2,
-            "width": box["width"], "height": box["height"],
-        }
-        png = await self._page.screenshot(clip=clip, timeout=timeout_ms)
-        return {"png_base64": png, "clip": clip,
+        box = await self._element_box(selector)
+        clip = await self._clip_to_viewport(box)
+        raw = await self._page.screenshot(clip=clip, timeout=timeout_ms)
+        # Playwright returns raw PNG bytes; the assertion side decodes base64
+        # (matching :meth:`screenshot`), so encode here rather than handing over
+        # bytes that will fail to inflate.
+        return {"png_base64": base64.b64encode(raw).decode("ascii"), "clip": clip,
                 "viewport": await self._viewport_size()}
+
+    async def _element_box(self, selector: str) -> dict:
+        """Raw bounding box of the element.
+
+        Playwright rejects a clip that reaches outside the captured surface, and
+        an element can be taller than the window or scrolled partly off -- so
+        :meth:`_clip_to_viewport` intersects it rather than trusting it.
+        """
+        box = await self._page.locator(self._engine_selector(selector)).first.bounding_box()
+        if not box:
+            raise SessionRefused(
+                "target_not_found", f"selector {selector!r} has no bounding box",
+            )
+        return box
+
+    async def _clip_to_viewport(self, box: dict) -> dict:
+        view = await self._viewport_size()
+        width = max(1.0, min(float(box["width"]),
+                              float(view.get("width") or box["width"])))
+        height = max(1.0, min(float(box["height"]),
+                               float(view.get("height") or box["height"])))
+        x = min(max(0.0, float(box["x"])), max(0.0, float(view.get("width") or 0) - width))
+        y = min(max(0.0, float(box["y"])), max(0.0, float(view.get("height") or 0) - height))
+        return {"x": x, "y": y, "width": width, "height": height}
 
     async def _viewport_size(self) -> dict:
         size = await self._page.evaluate(
@@ -1385,7 +1450,7 @@ class PlaywrightPage:
         without still gets a temp dir rather than writing into the repo.
         ``threshold`` is the allowed fraction of differing pixels.
         """
-        import base64
+
 
         directory = os.path.join(self.artifacts_dir or tempfile.gettempdir(),
                                  "baselines")
@@ -1532,7 +1597,7 @@ class PlaywrightPage:
         await self._page.go_forward(wait_until="domcontentloaded", timeout=20000)
 
     async def screenshot(self, full_page: bool = False) -> str:
-        import base64
+
 
         raw = await self._page.screenshot(full_page=full_page)
         return base64.b64encode(raw).decode("ascii")

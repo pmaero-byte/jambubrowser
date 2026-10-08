@@ -82,9 +82,12 @@ _ACT_ACTIONS = ("click", "type", "upload", "drag", "wheel", "dblclick", "set_ran
 # covered by something else.
 _DIAGNOSABLE_ACTIONS = frozenset({
     "click", "dblclick", "type", "hover", "press", "select", "check", "uncheck",
-    "set_range", "drag", "fill", "tap",
+    "set_range", "drag", "fill", "tap", "click_at",
     "wait", "wait_for", "assert", "assert_visible", "assert_not_visible",
     "assert_text", "assert_count", "assert_value", "upload", "attach_file",
+    # A download that never starts is usually the same story as a click that
+    # never lands: the trigger moved, was covered, or is disabled.
+    "download", "expect_download", "assert_download",
 })
 
 # Loopback / private hosts that a *local* test session is allowed to reach.

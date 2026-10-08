@@ -290,6 +290,9 @@ The suggestion list prefers `data-testid` — the only spelling that survives a
 redesign. Diagnosis is best-effort and attached to *inconclusive* steps too, since
 a Playwright timeout arrives as a bare exception; an adapter that cannot answer
 reports `probes_available: false` rather than claiming the element was absent.
+Selectors are resolved through Playwright's own locator, so engine spellings
+(`text=Run safe`, `role=button[name=…]`) are diagnosed too rather than reported
+as invalid CSS.
 
 ### Visual assertions
 Canvas and WebGL content cannot be read back from the page — once a frame is
@@ -308,6 +311,16 @@ non-background, 27 colours, brightness 96.4") and requires at least one bound, s
 a typo'd assertion cannot silently pass. `assert_screenshot` diffs against a
 stored baseline; the first run of a missing baseline creates it and passes with
 `baseline_created`.
+
+Pixel thresholds are only comparable between runs because both the viewport
+*and* `device_scale_factor` are pinned (1440×900 at dpr 2 by default). Leaving
+the scale to the session fingerprint made the same flow rasterise at 1.25 and 2
+on different runs, which resized every screenshot and moved the numbers these
+assertions are made of.
+
+Browser flows are exempt from the engine's 30 s request timeout: they are bounded
+by their own per-step timeouts, and the cap used to return a bare `504` with no
+step results for any flow that actually waited.
 
 ### Accessibility & performance budgets
 ```json

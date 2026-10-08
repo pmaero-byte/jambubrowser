@@ -116,17 +116,56 @@ class _Route:
         self.action = "fulfill"
 
 
+class _ServerWebSocketRoute:
+    """Server-side half, as Playwright actually hands it back.
+
+    ``connect_to_server()`` is synchronous and returns *this*, and once it is
+    called both directions must be forwarded by hand -- the earlier fake here
+    modelled it as a coroutine returning nothing, which is what let the
+    ``await`` bug through unnoticed.
+    """
+
+    def __init__(self):
+        self.sent: list = []
+
+    def on_message(self, handler):
+        self.server_message_handler = handler
+
+    def on_close(self, handler):
+        pass
+
+    def send(self, message):
+        self.sent.append(message)
+
+    def close(self, code=None, reason=None):
+        pass
+
+
 class _WebSocketRoute:
+    """Page-side route, matching Playwright 1.63's signatures."""
+
     def __init__(self, url):
         self.url = url
         self.action = None
         self.close_code = None
+        self.sent: list = []
+        self.server = _ServerWebSocketRoute()
 
     async def close(self, code=None, reason=None):
         self.action, self.close_code = "close", code
 
-    async def connect_to_server(self):
+    def connect_to_server(self):
         self.action = "connect"
+        return self.server
+
+    def on_message(self, handler):
+        self.page_message_handler = handler
+
+    def on_close(self, handler):
+        self.page_close_handler = handler
+
+    def send(self, message):
+        self.sent.append(message)
 
 
 class _PlaywrightPage:
@@ -209,6 +248,12 @@ class TestRequestRouting:
             await raw.websocket_handler(allowed)
             assert (blocked.action, blocked.close_code) == ("close", 1008)
             assert allowed.action == "connect"
+            # An allowed socket is proxied in both directions, not merely
+            # connected -- a one-way proxy silently drops every server frame.
+            allowed.server.server_message_handler("down")
+            allowed.page_message_handler("up")
+            assert allowed.sent == ["down"]
+            assert allowed.server.sent == ["up"]
         asyncio.run(check())
 
 

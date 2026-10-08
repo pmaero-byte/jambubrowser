@@ -210,6 +210,54 @@ element it looked at.
 
 ---
 
+## Verified live against FEA Lab
+
+Run against Vite :5180 + FastAPI :8000 with the engine on :8002. Harness:
+`tools/fealab_probe.py`.
+
+| Capability | Result |
+|---|---|
+| Numeric results unmasked | `{"max_disp_mm":0.1234,"von_mises_mpa":355,"nodes":12903,"elements":1000,"iterations":50000,"ssn_like":123456789}` — every value intact, and still intact with `scrub: true` (numbers and PII are now independent) |
+| Visible waits | before: `text="Loading module…"`, `count=0`; after `wait js` + `network_idle`: `count=32` |
+| Per-step timeout | `timeout: 2000` step finished in 2529 ms, not 10 s |
+| 3D viewport | `assert_canvas` → `2088x1378, 48.8% non-background, 248 colours`; drag-to-rotate changed it to **262 colours**, i.e. the gesture provably moved the scene |
+| Scroll-to-zoom / right-drag pan | wheel + right-drag both dispatch and the canvas stays rendered |
+| Sliders | `set_range` → `85`, reads back `85`, handle really dragged |
+| Viewport determinism | three runs → identical `1440x900`, dpr `2`, canvas `2088x1378` |
+| Device presets | `mobile` → `390x844` dpr 3 touch, `tablet` → `834x1112` |
+| Visual regression | baseline created → `0.00% differing` on rerun → `4.11% differing` after a drag |
+| Export | `Export Results (CSV)` → `3376 bytes`, `min_bytes`/`contains` verified; file holds 106 rows of nodal displacement + von Mises |
+| Failure diagnosis | `covered_by: '✕ FEA Welcome to FEA Lab…'`, `likely_cause: another element is on top at its centre point` — the onboarding modal blocking the export |
+| Console attribution | `{"step":"4:click","url":".../src/store.jsx","line":894}` |
+
+### Bugs found by running it (all fixed)
+
+1. **WebSocket routing crashed every later step.** `connect_to_server()` is
+   *synchronous* in Playwright 1.63; `await`ing it raised
+   `'ServerWebSocketRoute' object can't be awaited` inside the page's own
+   `evaluate`, so *any* app opening a socket — which FEA Lab does for its agent
+   bridge — had every snapshot and step fail. Fixed to call it synchronously
+   **and** forward both directions, because once you connect, Playwright stops
+   proxying for you and a one-way proxy silently drops every server frame.
+   `tests/test_browser_websocket.py`.
+2. **`/browser/sessions/run` was capped at 30 s** by the request-timeout
+   middleware, so any flow containing a real wait returned `504` with no step
+   results at all. Excluded, which is safe now that per-step timeouts bound a
+   flow.
+3. **`assert_canvas` could never have worked.** `screenshot_clip` returned raw
+   PNG bytes where the decoder expected base64 (a `zlib` "incorrect padding"
+   error), and passed an un-awaited coroutine as the clip rectangle. Also clamps
+   the clip to the viewport, since Playwright rejects one that reaches outside.
+4. **`device_scale_factor` still drifted** (1.25 vs 2 between runs), which
+   resized the canvas from 2088 px to 1566 px and would have invalidated every
+   pixel-count assertion. Pinned alongside the viewport.
+5. **`describe_selector` could not read engine selectors.** `text=Export Results
+   (CSV)` was reported as "bad selector", hiding the diagnosis for exactly the
+   selectors people write by hand. Resolution now goes through a Playwright
+   locator first.
+6. **A download that never started produced no diagnosis.** `download` was not
+   in the diagnosable set — and it was the action that most needed it.
+
 ## FEA Lab coverage now
 
 | Area | Before | After |
@@ -233,8 +281,13 @@ element it looked at.
 - **Variables / loops / `include`** — flows are still flat JSON. A 46-route
   sweep needs `repeat`, shared preludes and `save {as:…}` → `assert_eval`.
 - **State seeding**: `storage_state` and `context_options` reach the context, but
-  there is no `init_script` pre-navigation, so suppressing an onboarding modal
-  still costs steps.
+  there is no `init_script` pre-navigation, so suppressing FEA Lab's onboarding
+  modal still costs a step. `storage_state` with `origins[].localStorage` is the
+  workaround — it was enough to make the modal disappear once seeded.
+- **The 3D canvas has zero width at 390 px** (`canvas_px: "0x1899"` on
+  `device="mobile"`): the viewport is not responsive, so phone-width visual
+  assertions will fail until the app fixes it. Engine-side, `device="mobile"`
+  reports the geometry correctly.
 - **WebGL perf**: `lcp`/`fcp`/`load` exist; long-task count, frame-time/FPS
   sampling and JS heap do not.
 - **Multi-tab visibility**: workers surface errors; tab-level events do not.
@@ -243,7 +296,18 @@ element it looked at.
 
 ## Test coverage map
 
-`tests/test_browser_capabilities.py` (166 tests) covers §1–§10. The PNG codec,
+`tests/test_browser_capabilities.py` (168 tests) covers §1–§10. The PNG codec,
 diff and canvas arithmetic run against real encoded images rather than mocks, so
 the pixel maths is genuine; the pointer/gesture paths assert on what the session
 asked the adapter to do.
+
+Two more files cover what live testing exposed, and both are skipped rather than
+failed when no browser is installed so the unit suite stays hermetic:
+
+- `tests/test_browser_websocket.py` (10) — the socket proxy, against Playwright's
+  real signatures: connect is synchronous and one-shot, and both directions must
+  be forwarded by hand.
+- `tests/test_browser_diagnosis.py` (15) — `describe_selector` against a real
+  layout, because its answers depend on real geometry and real hit-testing:
+  covered, off-screen, disabled, `display:none`, `visibility:hidden`, a parent
+  containing its own child (must not accuse the child), and a bad selector.
