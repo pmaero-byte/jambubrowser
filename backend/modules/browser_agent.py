@@ -1510,7 +1510,37 @@ class BrowserAgentSession:
 
         raise SessionRefused("unknown_action", f"unsupported action: {action}")
 
+    @staticmethod
+    def _is_adapter_timeout(exc: BaseException) -> bool:
+        """True when *exc* is any adapter's "condition not met in time".
+
+        Playwright raises its own ``TimeoutError`` class (a subclass of
+        ``playwright.Error``, not the builtin), asyncio's is the builtin on
+        3.11+, and scripted test adapters raise the builtin — match on both
+        type and class name so all three classify identically.
+        """
+        return isinstance(exc, TimeoutError) or type(exc).__name__ == "TimeoutError"
+
     async def _run_wait(self, step: dict, timeout: int, approve: bool = False) -> None:
+        # A timed-out wait is a *failed* step (reason wait_timeout), not an
+        # inconclusive harness error: the url_contains branch already reported
+        # that way, but js/selector/text waits arrived as a bare Playwright
+        # TimeoutError and were classified inconclusive. A consumer gating on
+        # status == "failed" then silently missed a real miss.
+        try:
+            await self._run_wait_inner(step, timeout, approve)
+        except SessionRefused:
+            raise
+        except Exception as exc:
+            if self._is_adapter_timeout(exc):
+                raise SessionRefused(
+                    "wait_timeout",
+                    f"wait condition not met within {timeout}ms: "
+                    f"{str(exc)[:200]}",
+                ) from exc
+            raise
+
+    async def _run_wait_inner(self, step: dict, timeout: int, approve: bool = False) -> None:
         if step.get("js"):
             # A JS predicate is the escape hatch for "wait until the app is
             # actually ready" (a flag, a promise, a component state) — but it

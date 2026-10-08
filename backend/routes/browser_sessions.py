@@ -165,6 +165,9 @@ class TestFlowRequest(ViewportOptions):
     network: Optional[dict] = None
     resolve_sources: bool = False
     freeze_animations: bool = True
+    # Playwright storage_state shape: {"cookies": [...], "origins": [{"origin":
+    # str, "localStorage": [{"name": str, "value": str}]}]}. Use it to skip an
+    # onboarding modal or reuse an authenticated session.
     storage_state: Optional[dict] = None
     context_options: Optional[dict] = None
     trace: bool = False
@@ -179,6 +182,34 @@ class TestFlowRequest(ViewportOptions):
     coverage: bool = False
     network_idle: bool = False
     wait_network_idle_ms: int = 15000
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "url": "http://127.0.0.1:5180/results",
+                    "local": True,
+                    "approve": True,
+                    "device": "mobile",
+                    "storage_state": {
+                        "cookies": [],
+                        "origins": [
+                            {
+                                "origin": "http://127.0.0.1:5180",
+                                "localStorage": [
+                                    {"name": "fealab_onboarded", "value": "1"}
+                                ],
+                            }
+                        ],
+                    },
+                    "steps": [
+                        {"action": "wait", "network_idle": True, "timeout": 20000},
+                        {"action": "assert_canvas", "min_width": 320, "min_height": 240},
+                    ],
+                }
+            ]
+        }
+    }
 
 
 class PlanRequest(BaseModel):

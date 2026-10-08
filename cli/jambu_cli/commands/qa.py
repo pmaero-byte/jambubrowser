@@ -366,8 +366,47 @@ def cmd_qa_dataset(args) -> int:
     return core.EXIT_ENGINE_ERROR
 
 
+def _check_engine_version() -> bool:
+    """Refuse to run against an engine older than the CLI.
+
+    The trap this guards: a stale engine is still listening on the default
+    port (v3.3.0 next to a v3.4.0 checkout), and the fields this command
+    emits (viewport, device, network_idle, storage_state) are silently
+    ignored there, so every run "passes" against behaviour nobody verified.
+    An engine *newer* than the CLI only gets a warning; a missing version
+    (very old engine, or a test double) is tolerated rather than fatal.
+    """
+    try:
+        from backend import __version__ as cli_version
+    except Exception:
+        return True  # CLI installed without the backend package: nothing to compare
+    health = core.api_request("GET", "/health")
+    if health is None:
+        return False  # unreachable; api_request already printed why
+    engine_version = str(health.get("version") or "")
+    if not engine_version:
+        return True
+    def _parts(v: str) -> tuple:
+        out = []
+        for piece in v.split(".")[:3]:
+            digits = "".join(ch for ch in piece if ch.isdigit())
+            out.append(int(digits) if digits else 0)
+        return tuple(out)
+    if _parts(engine_version) < _parts(cli_version):
+        print(f"\033[91mError: engine at {core.get_engine_url()} is v{engine_version}, "
+              f"CLI is v{cli_version} — feature flags would be silently ignored.\033[0m")
+        print("Start a current engine from this checkout: "
+              ".venv/bin/python -m uvicorn backend.engine:app --port 8001")
+        return False
+    if _parts(engine_version) > _parts(cli_version):
+        print(f"note: engine v{engine_version} is newer than CLI v{cli_version}")
+    return True
+
+
 def cmd_test(args) -> int:
     """Run a browser test flow (local dev friendly) and report pass/fail."""
+    if not _check_engine_version():
+        return core.EXIT_ENGINE_ERROR
     flow: dict = {}
     if getattr(args, "flow", None):
         try:
@@ -395,6 +434,18 @@ def cmd_test(args) -> int:
         "forbid_evaluate": args.forbid_evaluate,
         "network": flow.get("network"),
     }
+    # The engine honours both keys; dropping them here used to leave a flow's
+    # onboarding/auth state unset (the classic symptom: a modal covering every
+    # click) with no hint the CLI had silently ignored them.
+    for key in ("storage_state", "context_options"):
+        if flow.get(key) is not None:
+            payload[key] = flow[key]
+    if getattr(args, "storage_state_file", None):
+        try:
+            payload["storage_state"] = json.loads(Path(args.storage_state_file).read_text())
+        except Exception as exc:
+            print(f"Could not read storage state {args.storage_state_file}: {exc}")
+            return core.EXIT_ENGINE_ERROR
     if getattr(args, "clock", ""):
         payload["clock"] = core._json_load_arg(args.clock)
     if getattr(args, "throttle", ""):
@@ -417,6 +468,18 @@ def cmd_test(args) -> int:
         print(f"Test flow failed: {result['error']}")
         return core.EXIT_ENGINE_ERROR
 
+    if not args.json:
+        _print_human_report(result)
+    return _emit_json_and_exports(args, result)
+
+
+def _print_human_report(result: dict) -> None:
+    """The readable pass/fail report, printed only when --json is not set.
+
+    ``--json`` means stdout is a single JSON document a pipeline can parse;
+    mixing the prose report in front of it made that impossible without
+    scraping.
+    """
     status = "PASS" if result.get("ok") else "FAIL"
     print(f"Browser test {status} — {result.get('passed', 0)}/{result.get('total', 0)} steps "
           f"in {result.get('duration_ms', 0)}ms")
@@ -456,7 +519,6 @@ def cmd_test(args) -> int:
     for evaluated in (result.get("evaluated") or [])[:10]:
         print(f"  step #{evaluated.get('i')} evaluated: "
               f"{str(evaluated.get('value', ''))[:120]}")
-    return _emit_json_and_exports(args, result)
 
 
 def _print_failure_causes(result: dict) -> None:
@@ -680,6 +742,10 @@ def register(subparsers) -> None:
                         help="JSON network shaping, e.g. '{\"offline\":true}' or '{\"download_kbps\":400}'")
     p_test.add_argument("--coverage", action="store_true",
                         help="Capture JS coverage and report used bytes per script")
+    p_test.add_argument("--storage-state", dest="storage_state_file",
+                        metavar="FILE",
+                        help="Playwright storage_state JSON (cookies/localStorage) "
+                             "to seed the session; overrides the flow file's key")
 
     p_export = subparsers.add_parser(
         "export", help="Export a flow to Playwright Test (.spec.ts)",

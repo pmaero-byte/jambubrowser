@@ -771,6 +771,150 @@ class TestJambuBrowserCommands:
         text, code = self._run(["test", str(flow), "--local"], response)
         assert code == 0
 
+    def test_test_forwards_storage_state_from_flow(self, tmp_path):
+        # The CLI used to silently drop the flow's storage_state — the engine
+        # honours it, so the modal-onboarding flow failed only via the CLI.
+        flow = tmp_path / "flow.json"
+        ss = {"cookies": [], "origins": [{"origin": "http://localhost:3000",
+              "localStorage": [{"name": "onboarded", "value": "1"}]}]}
+        flow.write_text(json.dumps({
+            "url": "http://localhost:3000", "storage_state": ss,
+            "steps": [{"action": "navigate", "url": "http://localhost:3000"}],
+        }))
+        from cli import jambu
+        from cli.jambu_cli import core
+
+        sent = {}
+        def fake_api_request(method, path, data=None, stream=False):
+            sent[path] = data
+            return {"ok": True, "passed": 1, "total": 1, "steps": [], "final_url": "x"}
+        captured = io.StringIO()
+        with patch.object(core, "api_request", side_effect=fake_api_request), \
+             patch.object(sys, "argv", ["jambu", "test", str(flow), "--local"]), \
+             patch.object(sys, "stdout", captured):
+            code = jambu.main()
+        assert code == 0
+        assert sent["/browser/sessions/run"]["storage_state"] == ss
+
+    def test_test_forwards_context_options_from_flow(self, tmp_path):
+        flow = tmp_path / "flow.json"
+        ctx = {"viewport": {"width": 390, "height": 844}, "isMobile": True}
+        flow.write_text(json.dumps({
+            "url": "http://localhost:3000", "context_options": ctx,
+            "steps": [{"action": "navigate", "url": "http://localhost:3000"}],
+        }))
+        from cli import jambu
+        from cli.jambu_cli import core
+
+        sent = {}
+        def fake_api_request(method, path, data=None, stream=False):
+            sent[path] = data
+            return {"ok": True, "passed": 1, "total": 1, "steps": [], "final_url": "x"}
+        captured = io.StringIO()
+        with patch.object(core, "api_request", side_effect=fake_api_request), \
+             patch.object(sys, "argv", ["jambu", "test", str(flow), "--local"]), \
+             patch.object(sys, "stdout", captured):
+            code = jambu.main()
+        assert code == 0
+        assert sent["/browser/sessions/run"]["context_options"] == ctx
+
+    def test_test_storage_state_flag_overrides_flow(self, tmp_path):
+        flow = tmp_path / "flow.json"
+        flow.write_text(json.dumps({
+            "url": "http://localhost:3000",
+            "storage_state": {"cookies": [{"name": "from-flow"}]},
+            "steps": [{"action": "navigate", "url": "http://localhost:3000"}],
+        }))
+        state_file = tmp_path / "state.json"
+        flag_state = {"cookies": [{"name": "from-flag"}]}
+        state_file.write_text(json.dumps(flag_state))
+        from cli import jambu
+        from cli.jambu_cli import core
+
+        sent = {}
+        def fake_api_request(method, path, data=None, stream=False):
+            sent[path] = data
+            return {"ok": True, "passed": 1, "total": 1, "steps": [], "final_url": "x"}
+        captured = io.StringIO()
+        with patch.object(core, "api_request", side_effect=fake_api_request), \
+             patch.object(sys, "argv", ["jambu", "test", str(flow), "--local",
+                                        "--storage-state", str(state_file)]), \
+             patch.object(sys, "stdout", captured):
+            code = jambu.main()
+        assert code == 0
+        assert sent["/browser/sessions/run"]["storage_state"] == flag_state
+
+    def test_test_json_flag_emits_pure_json(self):
+        # --json means stdout parses as one JSON document; the prose report
+        # used to precede it, which broke pipelines consuming the CLI.
+        response = {"ok": True, "passed": 2, "total": 2, "duration_ms": 10,
+                    "steps": [{"i": 1, "action": "navigate", "status": "passed"}],
+                    "title": "App", "final_url": "http://localhost:3000/"}
+        text, code = self._run(
+            ["test", "--url", "http://localhost:3000", "--local", "--json"],
+            response)
+        assert code == 0
+        parsed = json.loads(text)
+        assert parsed["ok"] is True
+        assert "Browser test PASS" not in text
+
+    def test_test_without_json_prints_human_report(self):
+        response = {"ok": True, "passed": 2, "total": 2, "duration_ms": 10,
+                    "steps": [{"i": 1, "action": "navigate", "status": "passed"}],
+                    "title": "App", "final_url": "http://localhost:3000/"}
+        text, code = self._run(
+            ["test", "--url", "http://localhost:3000", "--local"], response)
+        assert code == 0
+        assert "Browser test PASS" in text
+
+    def _run_with_health(self, argv, health, run_response):
+        from cli import jambu
+        from cli.jambu_cli import core
+
+        def fake_api_request(method, path, data=None, stream=False):
+            return health if path == "/health" else run_response
+        captured = io.StringIO()
+        code = 0
+        with patch.object(core, "api_request", side_effect=fake_api_request), \
+             patch.object(sys, "argv", ["jambu"] + argv), \
+             patch.object(sys, "stdout", captured):
+            try:
+                code = jambu.main()
+            except SystemExit as e:
+                code = e.code if isinstance(e.code, int) else 0
+        return captured.getvalue(), code
+
+    def test_test_refuses_stale_engine(self):
+        from backend import __version__
+        run_response = {"ok": True, "passed": 1, "total": 1, "steps": [],
+                        "final_url": "x"}
+        text, code = self._run_with_health(
+            ["test", "--url", "http://localhost:3000", "--local"],
+            {"version": "0.0.1"}, run_response)
+        assert code == 2
+        assert "silently ignored" in text
+        assert __version__ in text
+
+    def test_test_accepts_current_engine(self):
+        from backend import __version__
+        run_response = {"ok": True, "passed": 1, "total": 1, "steps": [],
+                        "final_url": "x"}
+        text, code = self._run_with_health(
+            ["test", "--url", "http://localhost:3000", "--local"],
+            {"version": __version__}, run_response)
+        assert code == 0
+        assert "PASS" in text
+
+    def test_test_tolerates_versionless_health(self):
+        # Very old engines (and test doubles) have no version field: warn-free
+        # pass-through rather than a hard refusal.
+        run_response = {"ok": True, "passed": 1, "total": 1, "steps": [],
+                        "final_url": "x"}
+        text, code = self._run_with_health(
+            ["test", "--url", "http://localhost:3000", "--local"],
+            {"status": "online"}, run_response)
+        assert code == 0
+
     def test_export_command_writes_spec(self, tmp_path):
         flow = tmp_path / "flow.json"
         flow.write_text(json.dumps({

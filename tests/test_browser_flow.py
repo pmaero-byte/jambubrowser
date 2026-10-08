@@ -755,6 +755,33 @@ class TestComplexWaits:
         assert report["ok"] is False
         assert "window.ready" in json.dumps(report["steps"][1])
 
+    def test_js_predicate_timeout_is_failed_not_inconclusive(self):
+        # A wait that times out is a *failed* step, like the url_contains
+        # flavour already was — not an inconclusive harness error. A consumer
+        # gating on status == "failed" must not miss it.
+        page = FlowPage()
+        seed(page)
+        page.wait_function_error = "window.ready never became true"
+        session = make_session(page)
+        report = run(session.run_flow([
+            {"action": "navigate", "url": "https://example.com/"},
+            {"action": "wait", "js": "window.ready === true", "approve": True},
+        ]))
+        assert report["steps"][1]["status"] == "failed"
+        assert report["steps"][1]["reason"] == "wait_timeout"
+        assert report["status"] == "failed"
+
+    def test_url_wait_timeout_is_also_failed(self):
+        page = FlowPage()
+        seed(page)
+        session = make_session(page)
+        report = run(session.run_flow([
+            {"action": "navigate", "url": "https://example.com/"},
+            {"action": "wait", "url_contains": "/never", "timeout": 200},
+        ]))
+        assert report["steps"][1]["status"] == "failed"
+        assert report["steps"][1]["reason"] == "wait_timeout"
+
 
 # ---------------------------------------------------------------------------
 # Debugging: network, cause attribution, a11y/perf, source maps
