@@ -1,7 +1,9 @@
 import { Cpu, Wifi, Lock, Unlock, DollarSign, Activity } from "lucide-react";
 import { motion } from "motion/react";
+import { useEffect, useState } from "react";
 import { useAgentWebSocket } from "../../utils/useAgentWebSocket";
 import { useAppStore } from "../../store/appStore";
+import { localFetch } from "../../utils/api";
 
 function TokenFlow({ tokensPerSec }: { tokensPerSec: number | undefined }) {
   const active = (tokensPerSec ?? 0) > 0;
@@ -33,6 +35,23 @@ function TokenFlow({ tokensPerSec }: { tokensPerSec: number | undefined }) {
 export function StatusBar() {
   const { telemetry, connected, agentState } = useAgentWebSocket();
   const { privacyMode } = useAppStore();
+  const [engineOk, setEngineOk] = useState<boolean | null>(null);
+
+  // Cheap engine liveness ping; updated every 10s.
+  useEffect(() => {
+    let cancelled = false;
+    const ping = async () => {
+      try {
+        const r = await localFetch("/health");
+        if (!cancelled) setEngineOk(r.ok);
+      } catch {
+        if (!cancelled) setEngineOk(false);
+      }
+    };
+    ping();
+    const id = setInterval(ping, 10000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
 
   const modeLabels: Record<typeof privacyMode, string> = {
     standard: "Standard",
@@ -74,6 +93,10 @@ export function StatusBar() {
           <TokenFlow tokensPerSec={telemetry?.tokens_per_sec} />
           <Activity className="h-3 w-3 text-muted-foreground/60" />
           <span>{telemetry?.tokens_per_sec?.toFixed(1) || "0.0"} tok/s</span>
+        </div>
+        <div className="hidden sm:flex items-center gap-1.5" title="Python engine /health probe">
+          <span className={`inline-block h-1.5 w-1.5 rounded-full ${engineOk === null ? "bg-muted-foreground/40" : engineOk ? "bg-emerald-400" : "bg-red-400"}`} />
+          <span>{engineOk === null ? "engine …" : engineOk ? "engine up" : "engine down"}</span>
         </div>
       </div>
 

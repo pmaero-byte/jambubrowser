@@ -21,34 +21,60 @@ import {
   Radio,
   Coins,
   Target,
+  LayoutGrid,
 } from "lucide-react";
 import { useAppStore, type CanvasTab } from "../../store/appStore";
 import { useAgentWebSocket } from "../../utils/useAgentWebSocket";
 
-const workspaceNav: { id: CanvasTab; label: string; icon: React.ElementType }[] = [
-  { id: "chat", label: "Research", icon: MessageSquare },
+const overviewNav: { id: CanvasTab; label: string; icon: React.ElementType }[] = [
+  { id: "abilities", label: "Abilities", icon: LayoutGrid },
+];
+
+const browserNav: { id: CanvasTab; label: string; icon: React.ElementType }[] = [
   { id: "browser", label: "Browser", icon: Globe },
-  { id: "logs", label: "Logs", icon: FileText },
+  { id: "monitors", label: "Monitors", icon: Radar },
+  { id: "qa", label: "QA", icon: FlaskConical },
+  { id: "history", label: "History", icon: History },
+  { id: "recordings", label: "Recordings", icon: Video },
+  { id: "audit", label: "Audit", icon: ScrollText },
+];
+
+const harnessNav: { id: CanvasTab; label: string; icon: React.ElementType }[] = [
+  { id: "chat", label: "Research", icon: MessageSquare },
+  { id: "agent", label: "Agent", icon: Bot },
   { id: "memory", label: "Memory", icon: Brain },
   { id: "missions", label: "Missions", icon: FolderKanban },
   { id: "goals", label: "Goals", icon: Target },
-  { id: "monitors", label: "Monitors", icon: Radar },
-  { id: "qa", label: "QA", icon: FlaskConical },
+];
+
+const deepNetNav: { id: CanvasTab; label: string; icon: React.ElementType }[] = [
+  { id: "privacy", label: "Privacy", icon: Shield },
+  { id: "vault", label: "Vault", icon: Wallet },
+];
+
+const decNav: { id: CanvasTab; label: string; icon: React.ElementType }[] = [
   { id: "dcm-node", label: "DCM Node", icon: Radio },
   { id: "meshpay", label: "MeshPay", icon: Coins },
-  { id: "history", label: "History", icon: History },
-  { id: "recordings", label: "Recordings", icon: Video },
-  { id: "agent", label: "Agent", icon: Bot },
 ];
 
 const systemNav: { id: CanvasTab; label: string; icon: React.ElementType }[] = [
   { id: "extensions", label: "Extensions", icon: Puzzle },
-  { id: "privacy", label: "Privacy", icon: Shield },
-  { id: "audit", label: "Audit", icon: ScrollText },
+  { id: "logs", label: "Logs", icon: FileText },
   { id: "team", label: "Team", icon: Users },
-  { id: "vault", label: "Vault", icon: Wallet },
   { id: "settings", label: "Settings", icon: Settings },
 ];
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="mb-2 mt-1 px-2 text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-widest">
+      {children}
+    </div>
+  );
+}
+
+function Divider() {
+  return <div className="my-2 mx-2 h-px bg-gradient-to-r from-transparent via-border/50 to-transparent" />;
+}
 
 function NavItem({
   label,
@@ -111,34 +137,39 @@ export function Sidebar() {
 
   return (
     <nav className="flex h-full flex-col gap-1 overflow-y-auto p-2" aria-label="Primary">
-      <div className="mb-2 px-2 text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-widest">
-        Workspace
-      </div>
-      {workspaceNav.map((item) => (
-        <NavItem
-          key={item.id}
-          label={item.label}
-          Icon={item.icon}
-          active={activeTab === item.id}
-          agentRunning={agentRunning}
-          onClick={() => setActiveTab(item.id)}
-        />
+      <SectionLabel>Overview</SectionLabel>
+      {overviewNav.map((item) => (
+        <NavItem key={item.id} label={item.label} Icon={item.icon} active={activeTab === item.id} agentRunning={agentRunning} onClick={() => setActiveTab(item.id)} />
       ))}
 
-      <div className="my-3 mx-2 h-px bg-gradient-to-r from-transparent via-border/50 to-transparent" />
+      <Divider />
+      <SectionLabel>Browser</SectionLabel>
+      {browserNav.map((item) => (
+        <NavItem key={item.id} label={item.label} Icon={item.icon} active={activeTab === item.id} agentRunning={agentRunning} onClick={() => setActiveTab(item.id)} />
+      ))}
 
-      <div className="mb-2 px-2 text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-widest">
-        System
-      </div>
+      <Divider />
+      <SectionLabel>Harness</SectionLabel>
+      {harnessNav.map((item) => (
+        <NavItem key={item.id} label={item.label} Icon={item.icon} active={activeTab === item.id} agentRunning={agentRunning} onClick={() => setActiveTab(item.id)} />
+      ))}
+
+      <Divider />
+      <SectionLabel>DeepNet</SectionLabel>
+      {deepNetNav.map((item) => (
+        <NavItem key={item.id} label={item.label} Icon={item.icon} active={activeTab === item.id} agentRunning={agentRunning} onClick={() => setActiveTab(item.id)} />
+      ))}
+
+      <Divider />
+      <SectionLabel>Decentralized</SectionLabel>
+      {decNav.map((item) => (
+        <NavItem key={item.id} label={item.label} Icon={item.icon} active={activeTab === item.id} agentRunning={agentRunning} onClick={() => setActiveTab(item.id)} />
+      ))}
+
+      <Divider />
+      <SectionLabel>System</SectionLabel>
       {systemNav.map((item) => (
-        <NavItem
-          key={item.id}
-          label={item.label}
-          Icon={item.icon}
-          active={activeTab === item.id}
-          agentRunning={agentRunning}
-          onClick={() => setActiveTab(item.id)}
-        />
+        <NavItem key={item.id} label={item.label} Icon={item.icon} active={activeTab === item.id} agentRunning={agentRunning} onClick={() => setActiveTab(item.id)} />
       ))}
 
       <div className="mt-auto flex items-center gap-2 px-2 pt-4 text-xs text-muted-foreground/60">

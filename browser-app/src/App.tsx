@@ -77,6 +77,9 @@ const QaPanel = lazy(() =>
 const GoalsPanel = lazy(() =>
   import("./components/goals/GoalsPanel").then((m) => ({ default: m.GoalsPanel }))
 );
+const AbilitiesGrid = lazy(() =>
+  import("./components/abilities/AbilitiesGrid").then((m) => ({ default: m.AbilitiesGrid }))
+);
 
 const USER_ID = "default";
 
@@ -191,6 +194,12 @@ export default function App() {
 
   const renderCanvas = () => {
     switch (activeTab) {
+      case "abilities":
+        return (
+          <Suspense fallback={<PanelFallback />}>
+            <AbilitiesGrid />
+          </Suspense>
+        );
       case "chat":
         return <ChatPane agentEvents={agentEvents} onSend={handleSend} onStop={handleStop} />;
       case "browser":

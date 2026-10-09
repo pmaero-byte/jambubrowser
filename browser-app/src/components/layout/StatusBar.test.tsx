@@ -13,6 +13,11 @@ vi.mock("../../store/appStore", () => ({
   useAppStore: mockUseAppStore,
 }));
 
+// Mock the engine probe so tests never hit the network and never set state.
+vi.mock("../../utils/api", () => ({
+  localFetch: vi.fn(() => new Promise(() => {})),
+}));
+
 // Mock motion to avoid animation overhead in tests.
 vi.mock("motion/react", () => ({
   motion: {

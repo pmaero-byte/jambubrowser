@@ -19,7 +19,8 @@ export type CanvasTab =
   | "team"
   | "extensions"
   | "agent"
-  | "qa";
+  | "qa"
+  | "abilities";
 
 export interface BrowserTab {
   id: string;
@@ -82,7 +83,7 @@ interface AppState {
 export const useAppStore = create<AppState>((set) => ({
   sidebarOpen: true,
   inspectorOpen: true,
-  activeTab: "chat",
+  activeTab: "abilities",
   activeModel: "auto",
   privacyMode: "enhanced",
   messages: [],

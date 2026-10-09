@@ -43,31 +43,34 @@ describe("Sidebar", () => {
   it("renders workspace navigation items", async () => {
     const { Sidebar } = await import("./Sidebar");
     render(<Sidebar />);
-    expect(screen.getByText("Research")).toBeDefined();
-    expect(screen.getByText("Browser")).toBeDefined();
-    expect(screen.getByText("Logs")).toBeDefined();
-    expect(screen.getByText("Memory")).toBeDefined();
-    expect(screen.getByText("Missions")).toBeDefined();
-    expect(screen.getByText("History")).toBeDefined();
-    expect(screen.getByText("Agent")).toBeDefined();
+    expect(screen.getAllByText("Research").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Browser").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Logs").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Memory").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Missions").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("History").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Agent").length).toBeGreaterThan(0);
   });
 
   it("renders system navigation items", async () => {
     const { Sidebar } = await import("./Sidebar");
     render(<Sidebar />);
-    expect(screen.getByText("Extensions")).toBeDefined();
-    expect(screen.getByText("Privacy")).toBeDefined();
-    expect(screen.getByText("Audit")).toBeDefined();
-    expect(screen.getByText("Team")).toBeDefined();
-    expect(screen.getByText("Vault")).toBeDefined();
-    expect(screen.getByText("Settings")).toBeDefined();
+    expect(screen.getAllByText("Extensions").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Privacy").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Audit").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Team").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Vault").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Settings").length).toBeGreaterThan(0);
   });
 
-  it("renders workspace and system headings", async () => {
+  it("renders grouped section headings", async () => {
     const { Sidebar } = await import("./Sidebar");
     render(<Sidebar />);
-    expect(screen.getByText("Workspace")).toBeDefined();
-    expect(screen.getByText("System")).toBeDefined();
+    for (const heading of ["Overview", "Harness", "DeepNet", "Decentralized", "System"]) {
+      expect(screen.getAllByText(heading).length).toBeGreaterThan(0);
+    }
+    // "Browser" appears as both a section heading and a nav item — both render.
+    expect(screen.getAllByText("Browser").length).toBeGreaterThanOrEqual(2);
   });
 
   it("calls setActiveTab when nav item clicked", async () => {
@@ -78,7 +81,7 @@ describe("Sidebar", () => {
     });
     const { Sidebar } = await import("./Sidebar");
     render(<Sidebar />);
-    await userEvent.click(screen.getByText("Browser"));
+    await userEvent.click(screen.getByRole("button", { name: /^Browser$/ }));
     expect(setActiveTab).toHaveBeenCalledWith("browser");
   });
 
@@ -103,7 +106,7 @@ describe("Sidebar", () => {
     const { Sidebar } = await import("./Sidebar");
     render(<Sidebar />);
     // The active tab should have secondary variant styling
-    const browserBtn = screen.getByText("Browser").closest("button");
+    const browserBtn = screen.getAllByText("Browser")[0].closest("button");
     expect(browserBtn).toBeDefined();
   });
 });
