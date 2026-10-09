@@ -189,6 +189,10 @@ pub async fn download_url_to_dir(url: &str) -> Result<String, String> {
 /// Last non-empty path segment of a URL, URL-decoded. Returns None if
 /// the URL is malformed or the path has no useful basename. Avoids the
 /// `url` crate dep — we only need the filename, not full URL parsing.
+pub fn url_basename_pub(url: &str) -> Option<String> {
+    url_basename(url)
+}
+
 fn url_basename(url: &str) -> Option<String> {
     // Drop the query string and fragment.
     let path = url.split(['?', '#']).next()?;
@@ -230,6 +234,12 @@ fn unix_now_secs() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+/// If <basename> already exists in <dir>, suffix with -1, -2, ...
+/// until a free name is found. Preserves the extension.
+pub fn unique_target_pub(dir: &Path, basename: &str) -> PathBuf {
+    unique_target(dir, basename)
 }
 
 /// If <basename> already exists in <dir>, suffix with -1, -2, ...

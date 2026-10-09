@@ -1,9 +1,14 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { useDownloadsStore, refreshDownloads, openDownload, removeDownload } from "./downloadsStore";
+import {
+  useDownloadsStore, refreshDownloads, refreshTransfers, openDownload, removeDownload,
+  startHttpDownload, pauseHttpDownload, addTorrent,
+} from "./downloadsStore";
 
 beforeEach(() => {
   useDownloadsStore.setState({
     downloads: [],
+    transfers: [],
+    torrents: [],
     loading: false,
     error: null,
     expanded: false,
@@ -56,6 +61,26 @@ describe("downloadsStore - Tauri helpers in non-Tauri env", () => {
     expect(s.error).toBeNull();
   });
 
+  it("refreshTransfers is a no-op when __TAURI__ is not present", async () => {
+    await refreshTransfers();
+    const s = useDownloadsStore.getState();
+    expect(s.transfers).toEqual([]);
+    expect(s.torrents).toEqual([]);
+  });
+
+  it("startHttpDownload returns null outside Tauri", async () => {
+    expect(await startHttpDownload("https://example.com/f.bin", 4)).toBeNull();
+  });
+
+  it("pauseHttpDownload is a no-op outside Tauri", async () => {
+    await pauseHttpDownload("missing");
+    expect(useDownloadsStore.getState().transfers).toEqual([]);
+  });
+
+  it("addTorrent returns null outside Tauri", async () => {
+    expect(await addTorrent("magnet:?xt=urn:btih:abc")).toBeNull();
+  });
+
   it("openDownload is a no-op when __TAURI__ is not present", async () => {
     // Should not throw.
     await openDownload("/x/a.pdf");
@@ -101,5 +126,42 @@ describe("downloadsStore - Tauri helpers with stubbed Tauri", () => {
     await removeDownload("/x/a.pdf");
     expect(calls).toContain("browser_remove_download");
     expect(calls).toContain("browser_list_downloads");
+  });
+
+  it("refreshTransfers populates http + torrent lists", async () => {
+    const httpRow = {
+      id: "h1", kind: "http", name: "f.bin", url: "https://example.com/f.bin",
+      path: "/x/f.bin", total_bytes: 100, total_known: true, downloaded_bytes: 10,
+      progress: 0.1, speed_bps: 5, eta_secs: 18, status: "downloading",
+      connections: 4, error: null, modified_at: 1,
+    };
+    const torrentRow = {
+      id: "t1", kind: "torrent", name: "ubuntu", info_hash: "t1",
+      magnet: "magnet:?xt=urn:btih:t1", path: "/x", total_bytes: 200,
+      total_known: true, downloaded_bytes: 20, progress: 0.1, speed_bps: 5,
+      eta_secs: 36, status: "downloading", peers: 3, error: null, modified_at: 1,
+    };
+    (globalThis as unknown as { __TAURI__: unknown }).__TAURI__ = {
+      core: {
+        invoke: async (cmd: string) => {
+          if (cmd === "browser_http_list") return [httpRow];
+          if (cmd === "browser_torrent_list") return [torrentRow];
+          return null;
+        },
+      },
+    };
+    await refreshTransfers();
+    const s = useDownloadsStore.getState();
+    expect(s.transfers).toHaveLength(1);
+    expect(s.transfers[0].id).toBe("h1");
+    expect(s.torrents).toHaveLength(1);
+    expect(s.torrents[0].peers).toBe(3);
+  });
+
+  it("setTransfers / setTorrents replace managed rows", () => {
+    useDownloadsStore.getState().setTransfers([]);
+    useDownloadsStore.getState().setTorrents([]);
+    expect(useDownloadsStore.getState().transfers).toEqual([]);
+    expect(useDownloadsStore.getState().torrents).toEqual([]);
   });
 });

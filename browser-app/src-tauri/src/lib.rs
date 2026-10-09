@@ -51,6 +51,10 @@ pub fn run() {
         .manage(StreamRegistry::default())
         .manage(ScreencastRegistry::default())
         .manage(NativeViewRegistry::default())
+        .manage(std::sync::Arc::new(
+            chromium::download_manager::DownloadManager::new(),
+        ))
+        .manage(std::sync::Arc::new(chromium::torrent::TorrentManager::new()))
         .setup(move |app| {
             let handle = app.handle().clone();
 
@@ -218,6 +222,18 @@ pub fn run() {
             commands::chromium::browser_open_download,
             commands::chromium::browser_remove_download,
             commands::chromium::browser_download_url,
+            commands::chromium::browser_http_start,
+            commands::chromium::browser_http_list,
+            commands::chromium::browser_http_pause,
+            commands::chromium::browser_http_resume,
+            commands::chromium::browser_http_cancel,
+            commands::chromium::browser_http_remove,
+            commands::chromium::browser_torrent_add,
+            commands::chromium::browser_torrent_add_bytes,
+            commands::chromium::browser_torrent_list,
+            commands::chromium::browser_torrent_pause,
+            commands::chromium::browser_torrent_resume,
+            commands::chromium::browser_torrent_remove,
             commands::chromium::vault_get_credential,
         ])
         .on_window_event(|window, event| {

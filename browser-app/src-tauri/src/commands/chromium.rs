@@ -435,6 +435,122 @@ pub async fn browser_download_url(url: String) -> Result<String, String> {
     downloads::download_url_to_dir(&url).await
 }
 
+// ── Segmented HTTP downloads (torrent-style pieces over HTTP) ──────
+
+/// Start a segmented HTTP download: the file is split into parallel
+/// byte-range pieces (like torrent pieces) and fetched concurrently.
+/// `connections` is 1–16 (default 8); small files use a single stream.
+#[tauri::command]
+pub async fn browser_http_start(
+    url: String,
+    connections: Option<usize>,
+    manager: State<'_, std::sync::Arc<crate::chromium::download_manager::DownloadManager>>,
+) -> Result<crate::chromium::download_manager::TransferInfo, String> {
+    // Stash the Arc globally so `resume` can re-drive tasks after the
+    // worker exits (Tauri State gives &Arc, we need Arc for spawn).
+    crate::chromium::download_manager::set_global_manager(manager.inner().clone());
+    manager.inner().start_http(url, connections).await
+}
+
+/// Live list of segmented HTTP transfers with progress/speed/ETA.
+#[tauri::command]
+pub async fn browser_http_list(
+    manager: State<'_, std::sync::Arc<crate::chromium::download_manager::DownloadManager>>,
+) -> Result<Vec<crate::chromium::download_manager::TransferInfo>, String> {
+    Ok(manager.inner().list().await)
+}
+
+#[tauri::command]
+pub async fn browser_http_pause(
+    id: String,
+    manager: State<'_, std::sync::Arc<crate::chromium::download_manager::DownloadManager>>,
+) -> Result<crate::chromium::download_manager::TransferInfo, String> {
+    manager.inner().pause(&id).await
+}
+
+#[tauri::command]
+pub async fn browser_http_resume(
+    id: String,
+    manager: State<'_, std::sync::Arc<crate::chromium::download_manager::DownloadManager>>,
+) -> Result<crate::chromium::download_manager::TransferInfo, String> {
+    crate::chromium::download_manager::set_global_manager(manager.inner().clone());
+    manager.inner().resume(&id).await
+}
+
+#[tauri::command]
+pub async fn browser_http_cancel(
+    id: String,
+    manager: State<'_, std::sync::Arc<crate::chromium::download_manager::DownloadManager>>,
+) -> Result<crate::chromium::download_manager::TransferInfo, String> {
+    manager.inner().cancel(&id).await
+}
+
+#[tauri::command]
+pub async fn browser_http_remove(
+    id: String,
+    delete_file: Option<bool>,
+    manager: State<'_, std::sync::Arc<crate::chromium::download_manager::DownloadManager>>,
+) -> Result<(), String> {
+    manager.inner().remove(&id, delete_file.unwrap_or(false)).await
+}
+
+// ── BitTorrent downloads (magnet / .torrent) ────────────────────────
+
+/// Add a torrent by magnet link, `.torrent` URL, or local `.torrent` path.
+#[tauri::command]
+pub async fn browser_torrent_add(
+    input: String,
+    only_files: Option<Vec<usize>>,
+    manager: State<'_, std::sync::Arc<crate::chromium::torrent::TorrentManager>>,
+) -> Result<crate::chromium::torrent::TorrentInfo, String> {
+    manager.inner().add(input, only_files).await
+}
+
+/// Add a `.torrent` file from base64 bytes (frontend file picker).
+#[tauri::command]
+pub async fn browser_torrent_add_bytes(
+    base64_bytes: String,
+    manager: State<'_, std::sync::Arc<crate::chromium::torrent::TorrentManager>>,
+) -> Result<crate::chromium::torrent::TorrentInfo, String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(base64_bytes.trim())
+        .map_err(|e| format!("bad base64 .torrent: {e}"))?;
+    manager.inner().add_bytes(bytes).await
+}
+
+#[tauri::command]
+pub async fn browser_torrent_list(
+    manager: State<'_, std::sync::Arc<crate::chromium::torrent::TorrentManager>>,
+) -> Result<Vec<crate::chromium::torrent::TorrentInfo>, String> {
+    Ok(manager.inner().list().await)
+}
+
+#[tauri::command]
+pub async fn browser_torrent_pause(
+    id: String,
+    manager: State<'_, std::sync::Arc<crate::chromium::torrent::TorrentManager>>,
+) -> Result<crate::chromium::torrent::TorrentInfo, String> {
+    manager.inner().pause(&id).await
+}
+
+#[tauri::command]
+pub async fn browser_torrent_resume(
+    id: String,
+    manager: State<'_, std::sync::Arc<crate::chromium::torrent::TorrentManager>>,
+) -> Result<crate::chromium::torrent::TorrentInfo, String> {
+    manager.inner().resume(&id).await
+}
+
+#[tauri::command]
+pub async fn browser_torrent_remove(
+    id: String,
+    delete_files: Option<bool>,
+    manager: State<'_, std::sync::Arc<crate::chromium::torrent::TorrentManager>>,
+) -> Result<(), String> {
+    manager.inner().remove(&id, delete_files.unwrap_or(false)).await
+}
+
 /// Look up a vault credential for a URL. Proxies the Python backend's
 /// /vault/credential/full endpoint over localhost. The backend handles
 /// URL validation, vault unlock, password decryption, and access logging.

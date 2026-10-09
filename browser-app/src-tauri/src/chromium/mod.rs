@@ -1,5 +1,6 @@
 pub mod audit;
 pub mod cdp;
+pub mod download_manager;
 pub mod downloads;
 pub mod extensions;
 pub mod manager;
@@ -7,3 +8,4 @@ pub mod native_view;
 pub mod privacy;
 pub mod settings;
 pub mod tab;
+pub mod torrent;
