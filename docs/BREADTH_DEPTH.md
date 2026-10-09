@@ -32,7 +32,7 @@ Legend: **●** wired + tested | **◐** wired, partial/inert in practice | **�
 | 20 | Evidence bundles | ● | compute_simulation + audit export kinds, standalone verifier script |
 | 21 | A2A agent | ● | Card + SendMessage/GetTask/CancelTask |
 | 22 | Models / LLM registry | ● | 8 providers auto-discovered incl. MoA (verified 2026-10-03) |
-| 23 | P2P discovery / federated RAG / consensus | ○ | Routes/tools exist but are single-node-inert; no second node in CI. **Depth fix: a two-node LAN smoke test, then show/hide UI toggle** |
+| 23 | P2P discovery / federated RAG / consensus | ◐ | `tests/test_two_node_mesh.py` boots two real engines: deterministic `/p2p/register`, cross-node `/p2p/query` via new `/peer/query`, encrypted `/federated/query` over a shared `JAMBU_FEDERATION_KEY`, consensus propose→receive→vote→tally with queued background broadcast. Query tests self-skip without sqlite-vec; remaining gap: DCM-mesh leg + CI wiring + UI show/hide toggle |
 | 24 | Harness bridge | ○ | Experimental-gated, talks to localhost:9090 infra not shipped. **Depth fix: package verbatim or remove from the shipped story** |
 | 25 | Billing / Stripe | ○ | Stub `billing.py`; TEAMS/Pro tiers exist but no checkout. **Depth fix: real Stripe or mark as roadmap in docs** |
 | 26 | Desktop (Tauri) | ● | CDP screencast/takeover/native-mode opt-in; sidecar now prefers venv python; `cargo check` clean. Native-tab parity items remain (downloads/find/copy/crash-fallback/privacy review) |
@@ -57,8 +57,10 @@ Legend: **●** wired + tested | **◐** wired, partial/inert in practice | **�
 
 ## Depth-fix ordering (what to build next)
 
-1. **Two-node smoke test** for P2P/federated/consensus/DCM mesh (flips the
-   largest ○ row to ◐).
+1. **Two-node smoke test** for P2P/federated/consensus mesh — DONE
+   (`tests/test_two_node_mesh.py`: 6 passed, 2 skipped without
+   sqlite-vec). Follow-ups: wire it into CI, add the DCM-mesh leg,
+   add the UI show/hide toggle.
 2. **Native-tab parity**: downloads/find/copy shims, crash fallback,
    privacy-script review (desktop runtime needed).
 3. **MeshPay receipt export** to lift the 200-per-fetch cap.

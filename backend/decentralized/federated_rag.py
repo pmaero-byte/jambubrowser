@@ -29,14 +29,16 @@ Features:
 import asyncio
 import hashlib
 import json
+import logging
+import os
+import sqlite3
 import time
-import base64
-from typing import Optional, List, Dict, Set, Tuple
-from dataclasses import dataclass, field
 from collections import defaultdict
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional
 
 import httpx
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 
 try:
     from backend.core.socks import make_async_client
@@ -45,7 +47,60 @@ except ImportError:
 
 
 from backend.core.database import get_db_cursor
-from backend.decentralized.p2p_discovery import get_p2p, Peer
+from backend.decentralized.p2p_discovery import get_p2p
+
+log = logging.getLogger("jambu.federated_rag")
+
+_model_cache: dict[str, object] = {}
+_model_lock = asyncio.Lock()
+
+
+async def _get_embedding_model() -> object:
+    """Process-wide cached embedding model, loaded off the event loop.
+
+    ``SentenceTransformer(...)`` + first ``encode`` downloads weights and
+    warms up the backend — seconds of blocking CPU/network. Called from
+    async handlers, that wedges the whole server (every concurrent
+    request stalls) until it finishes. Cache per process and construct
+    in a worker thread so the loop stays responsive.
+    """
+    if "model" in _model_cache:
+        return _model_cache["model"]
+    async with _model_lock:
+        if "model" in _model_cache:
+            return _model_cache["model"]
+
+        def _load() -> object:
+            from sentence_transformers import SentenceTransformer
+            model = SentenceTransformer("all-MiniLM-L6-v2")
+            model.encode("warmup")
+            return model
+
+        _model_cache["model"] = await asyncio.to_thread(_load)
+        return _model_cache["model"]
+
+
+def _shared_cipher() -> Fernet:
+    """Cipher for cross-node envelopes.
+
+    Each node used to generate its own key, so the encrypted context a
+    querying node sent could *never* be decrypted by the responder —
+    federated queries silently came back empty. ``JAMBU_FEDERATION_KEY``
+    (urlsafe-base64 32-byte Fernet key) lets operators give every node
+    in a federation the same key; without it we keep the old per-node
+    random key and only the plain ``/peer/query`` wrapper works.
+    """
+    key = os.environ.get("JAMBU_FEDERATION_KEY", "").strip()
+    if key:
+        try:
+            return Fernet(key.encode())
+        except (ValueError, TypeError):
+            log.warning(
+                "JAMBU_FEDERATION_KEY is not a valid Fernet key; "
+                "falling back to a per-node key (cross-node encrypted "
+                "queries will return empty)"
+            )
+    return Fernet(Fernet.generate_key())
 
 
 @dataclass
@@ -104,11 +159,12 @@ class FederatedRAG:
         self._rate_limits: Dict[str, List[float]] = defaultdict(list)
         self._http_client: Optional[httpx.AsyncClient] = None
 
-        # Encryption for query/result protection
+        # Encryption for query/result protection — shared federation key
+        # when configured (see _shared_cipher), else per-node random.
         if encryption_key:
             self._cipher = Fernet(encryption_key)
         else:
-            self._cipher = Fernet(Fernet.generate_key())
+            self._cipher = _shared_cipher()
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._http_client is None:
@@ -165,20 +221,26 @@ class FederatedRAG:
             p['node_id'] for p in p2p.get_peers(online_only=True)
         ]
 
+        # Zip the tasked node_ids with their coroutines: skipping a peer
+        # (rate limit / trust) must not shift the index used to attribute
+        # results, or one peer's answer gets credited to another.
+        tasked: List[str] = []
         tasks = []
         for node_id in target_peers:
             if not self._check_rate_limit(node_id):
                 continue
             if not self._is_trusted(node_id):
                 continue
+            tasked.append(node_id)
             tasks.append(self._query_single_peer(node_id, query))
 
         peer_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        for i, result in enumerate(peer_results):
+        for node_id, result in zip(tasked, peer_results):
             if isinstance(result, Exception) or result is None:
+                if isinstance(result, Exception):
+                    log.warning("federated query to %s failed: %s", node_id, result)
                 continue
-            node_id = target_peers[i]
             results[node_id] = result
             self._update_trust(node_id, success=True)
 
@@ -188,7 +250,7 @@ class FederatedRAG:
 
         return results
 
-    async def _query_single_peer(self, node_id: str, 
+    async def _query_single_peer(self, node_id: str,
                                    query: FederatedQuery) -> Optional[List[FederatedResult]]:
         """Send query to a single peer and parse results."""
         p2p = get_p2p()
@@ -232,6 +294,29 @@ class FederatedRAG:
 
         return None
 
+    async def query(self, query: str, min_relevance: float = 0.5,
+                    max_results: int = 10) -> List[dict]:
+        """Federate one query across peers and flatten the results.
+
+        This is the method ``POST /federated/query`` calls; it did not
+        exist until the two-node test exercised the route, so the
+        endpoint answered 500 for every caller. Returns plain dicts so
+        FastAPI can serialise them directly.
+        """
+        federated = self.create_query(query, min_relevance, max_results)
+        grouped = await self.query_peers(federated)
+        flat: List[dict] = []
+        for node_id, results in grouped.items():
+            for r in results:
+                flat.append({
+                    "peer_node_id": node_id,
+                    "document_hash": r.document_hash,
+                    "relevance_score": r.relevance_score,
+                    "source_domain": r.source_domain,
+                })
+        flat.sort(key=lambda r: r["relevance_score"], reverse=True)
+        return flat[:max_results]
+
     # ---- Response Protocol (Handling Incoming Queries) ----
 
     async def handle_federated_query(self, query_hash: str,
@@ -256,7 +341,15 @@ class FederatedRAG:
             context_json = self._cipher.decrypt(encrypted_context.encode()).decode()
             context = json.loads(context_json)
             query_text = context.get('q', '')
-        except Exception:
+        except (InvalidToken, ValueError, json.JSONDecodeError):
+            # Almost always a federation-key mismatch: the requester
+            # encrypted with a key we don't share. Log it — an empty
+            # result list alone is indistinguishable from an empty vault.
+            log.warning(
+                "dropping federated query from %s: context did not decrypt "
+                "(do all federation nodes share JAMBU_FEDERATION_KEY?)",
+                requester_id or "unknown",
+            )
             return []
 
         # Search local vector DB for matching documents
@@ -289,13 +382,19 @@ class FederatedRAG:
 
     async def _search_local_vault(self, query: str, min_relevance: float,
                                     max_results: int) -> List[dict]:
-        """Search the local knowledge vault for matching documents."""
+        """Search the local knowledge vault for matching documents.
+
+        Degrades to an empty list (never a 500): a peer with no sqlite-vec
+        extension, a not-yet-created vector table, or no sentence-transformers
+        install answers "no results" — the requester can't tell the
+        difference from an empty vault, and the failure is logged here.
+        """
         try:
-            from sentence_transformers import SentenceTransformer
             import numpy as np
 
-            model = SentenceTransformer("all-MiniLM-L6-v2")
-            query_vec = model.encode(query).astype(np.float32).tobytes()
+            model = await _get_embedding_model()
+            query_vec = (await asyncio.to_thread(
+                model.encode, query)).astype(np.float32).tobytes()
 
             with get_db_cursor() as cursor:
                 cursor.execute(
@@ -305,24 +404,36 @@ class FederatedRAG:
                     (query_vec, max_results * 2),
                 )
                 rows = cursor.fetchall()
-
-            results = []
-            for row in rows:
-                text = row['text'] or ''
-                url = row['url'] or ''
-                relevance = self._compute_relevance(query, text)
-                if relevance >= min_relevance:
-                    results.append({
-                        'text': text,
-                        'url': url,
-                        'score': relevance,
-                    })
-                if len(results) >= max_results:
-                    break
-
-            return results
         except ImportError:
+            log.info("sentence-transformers unavailable; vault search returns no results")
             return []
+        except sqlite3.Error:
+            # Fresh DB without a usable vec0 table, or sqlite-vec not
+            # loaded — MATCH would raise. Empty result beats a 500.
+            log.warning("vault vector search unavailable; returning no results",
+                        exc_info=True)
+            return []
+        except Exception:
+            # Model load can fail offline (OSError/RuntimeError). A peer
+            # that cannot embed must not 500 the federation endpoint.
+            log.warning("vault search failed; returning no results", exc_info=True)
+            return []
+
+        results = []
+        for row in rows:
+            text = row['text'] or ''
+            url = row['url'] or ''
+            relevance = self._compute_relevance(query, text)
+            if relevance >= min_relevance:
+                results.append({
+                    'text': text,
+                    'url': url,
+                    'score': relevance,
+                })
+            if len(results) >= max_results:
+                break
+
+        return results
 
     def _compute_relevance(self, query: str, text: str) -> float:
         """Compute a simple relevance score between query and text."""

@@ -25,7 +25,6 @@ or ``closed`` (manually finalised without consensus).
 
 from __future__ import annotations
 
-import asyncio
 import json
 import time
 import uuid
@@ -40,8 +39,9 @@ try:
 except ImportError:
     make_async_client = httpx.AsyncClient
 
+from backend.decentralized import mesh_state
 
-DEFAULT_STORE_PATH = Path.home() / ".jambubrowser" / "consensus.json"
+DEFAULT_STORE_PATH = mesh_state.consensus_store_path()  # env-aware; see mesh_state
 DEFAULT_TIMEOUT = 10.0
 VALID_STATUSES = {"pending", "voting", "decided", "closed"}
 
@@ -76,7 +76,7 @@ class ConsensusEngine:
                 doesn't supply one.
             timeout: HTTP timeout (seconds) for broadcast calls.
         """
-        self.store_path = Path(store_path) if store_path else DEFAULT_STORE_PATH
+        self.store_path = Path(store_path) if store_path else mesh_state.consensus_store_path()
         self.node_id = node_id or f"node-{uuid.uuid4().hex[:8]}"
         self.timeout = timeout
 
@@ -144,6 +144,32 @@ class ConsensusEngine:
         Returns:
             ``{"success": True, "proposal": {...}}`` on success.
         """
+        result = await self.create_proposal_local(
+            title, description, options, required_nodes)
+        if not result.get("success"):
+            return result
+        proposal_id = result["proposal"]["id"]
+        broadcast = await self._broadcast_proposal(proposal_id)
+        if broadcast.get("broadcast_to"):
+            result["proposal"]["status"] = "voting"
+            self._save()
+        result["broadcast"] = broadcast
+        return result
+
+    async def create_proposal_local(
+        self,
+        title: str,
+        description: str,
+        options: List[str],
+        required_nodes: int = 3,
+    ) -> Dict[str, Any]:
+        """Validate, persist, and return a proposal *without* broadcasting.
+
+        Split out of ``create_proposal`` so ``POST /consensus/propose``
+        can answer immediately and broadcast in the background: awaiting
+        a peer round-trip inside the request is what wedged the
+        requester when the peer was busy loading its embedding model.
+        """
         if not title or not isinstance(title, str):
             return {"success": False, "error": "title must be a non-empty string"}
         if not isinstance(description, str):
@@ -185,13 +211,23 @@ class ConsensusEngine:
             }
         )
 
-        # Attempt to broadcast; failures are non-fatal.
-        broadcast = await self._broadcast_proposal(proposal_id)
-        if broadcast.get("success"):
-            proposal["status"] = "voting"
-
         self._save()
-        return {"success": True, "proposal": proposal, "broadcast": broadcast}
+        return {"success": True, "proposal": proposal}
+
+    async def broadcast_new_proposal(self, proposal_id: str) -> Dict[str, Any]:
+        """Background half of proposal creation: POST to peers, flip status.
+
+        Runs as a Starlette ``BackgroundTask`` (see ``consensus_propose``),
+        so it must never raise — a peer outage surfaces in the returned
+        dict, and the route has already answered by the time we run.
+        """
+        broadcast = await self._broadcast_proposal(proposal_id)
+        if broadcast.get("broadcast_to"):
+            proposal = self.proposals.get(proposal_id)
+            if proposal is not None:
+                proposal["status"] = "voting"
+                self._save()
+        return broadcast
 
     def vote(
         self,
@@ -453,10 +489,10 @@ class ConsensusEngine:
     # Internal helpers
     # ------------------------------------------------------------------ #
     async def _broadcast_proposal(self, proposal_id: str) -> Dict[str, Any]:
-        """Best-effort POST the new proposal to peer ``/consensus`` endpoints.
+        """Best-effort POST the new proposal to peer ``/consensus/receive``.
 
-        Peers are read from a sidecar file (``federation.json``) when
-        available; the engine does not own the federation registry
+        Peers are read from the federation sidecar (``federation.json``)
+        when available; the engine does not own the federation registry
         directly, so we look it up lazily and tolerate its absence.
         """
         proposal = self.proposals.get(proposal_id)
@@ -468,52 +504,155 @@ class ConsensusEngine:
             # Nothing to broadcast to — still success.
             return {"success": True, "broadcast_to": 0, "note": "no peers discovered"}
 
+        return await self._post_to_peers(
+            "/consensus/receive",
+            {"sender": self.node_id, "proposal": proposal},
+            peer_urls,
+        )
+
+    async def broadcast_vote(
+        self,
+        proposal_id: str,
+        voter: str,
+        choice: str,
+        confidence: float = 1.0,
+        reasoning: str = "",
+    ) -> Dict[str, Any]:
+        """Best-effort forward a locally cast vote to every peer.
+
+        The payload is marked ``forwarded=True`` so the receiving node
+        records the vote *without* re-broadcasting it — that flag is the
+        loop guard: without it two nodes would echo votes forever.
+        """
+        peer_urls = self._discover_peer_urls()
+        if not peer_urls:
+            return {"success": True, "broadcast_to": 0, "note": "no peers discovered"}
+        payload = {
+            "proposal_id": proposal_id,
+            "vote": choice,
+            "voter": voter,
+            "confidence": confidence,
+            "reasoning": reasoning,
+            "forwarded": True,
+        }
+        return await self._post_to_peers("/consensus/vote/forwarded", payload, peer_urls)
+
+    def merge_forwarded_proposal(self, proposal: Any) -> Dict[str, Any]:
+        """Merge a proposal stub so an early forwarded vote is not dropped.
+
+        Same idempotency contract as ``receive_proposal``, but lenient on
+        options (a forwarded vote only names the one option it chose):
+        when the real broadcast arrives later, ``receive_proposal`` finds
+        the id already present and leaves the recorded vote untouched.
+        """
+        if not isinstance(proposal, dict):
+            return {"success": False, "error": "proposal must be an object"}
+        proposal_id = proposal.get("id")
+        if not isinstance(proposal_id, str) or not proposal_id:
+            return {"success": False, "error": "proposal missing id"}
+        if proposal_id in self.proposals:
+            return {"success": True, "duplicate": True, "proposal_id": proposal_id}
+        options = proposal.get("options") or []
+        stored = dict(proposal)
+        stored["votes"] = {}
+        stored["status"] = "voting"
+        stored["options"] = list(options)
+        stored.setdefault("required_nodes", 2)
+        stored.setdefault("title", "(forwarded vote arrived first)")
+        self.proposals[proposal_id] = stored
+        self.event_log.append(
+            {
+                "ts": time.time(),
+                "event": "proposal_merged_from_forwarded_vote",
+                "proposal_id": proposal_id,
+            }
+        )
+        self._save()
+        return {"success": True, "proposal_id": proposal_id}
+
+    def receive_proposal(self, proposal: Any) -> Dict[str, Any]:
+        """Record a proposal broadcast by a peer (no re-broadcast).
+
+        Idempotent: a proposal we already hold is acknowledged but left
+        untouched, so a duplicate delivery cannot clobber local votes.
+        Inbound votes are stripped — votes only arrive through
+        ``/consensus/vote``, which validates choice and voter.
+        """
+        if not isinstance(proposal, dict):
+            return {"success": False, "error": "proposal must be an object"}
+        proposal_id = proposal.get("id")
+        if not isinstance(proposal_id, str) or not proposal_id:
+            return {"success": False, "error": "proposal missing id"}
+        options = proposal.get("options")
+        if not isinstance(options, list) or len(options) < 2:
+            return {"success": False, "error": "proposal must declare >=2 options"}
+        if proposal_id in self.proposals:
+            return {"success": True, "duplicate": True, "proposal_id": proposal_id}
+
+        stored = dict(proposal)
+        stored["votes"] = {}
+        stored["status"] = "pending"
+        self.proposals[proposal_id] = stored
+        self.event_log.append(
+            {
+                "ts": time.time(),
+                "event": "proposal_received",
+                "proposal_id": proposal_id,
+            }
+        )
+        self._save()
+        return {"success": True, "proposal_id": proposal_id}
+
+    async def _post_to_peers(
+        self, path: str, payload: Dict[str, Any], peer_urls: List[str]
+    ) -> Dict[str, Any]:
+        """POST ``payload`` to ``{base}{path}`` on every peer base URL.
+
+        Best-effort by design: one unreachable peer must not fail the
+        originating request, but per-peer outcomes are reported so the
+        caller (and the test) can see what actually happened.
+        """
+        results = []
         async with make_async_client(timeout=self.timeout) as client:
-            results = []
-            for url in peer_urls:
+            for base in peer_urls:
+                url = f"{base}{path}"
                 try:
-                    resp = await client.post(
-                        url,
-                        json={
-                            "sender": self.node_id,
-                            "proposal": proposal,
-                        },
-                    )
+                    resp = await client.post(url, json=payload)
+                    ok = resp.status_code < 400
+                    # Our own routes answer 200 with {"success": False} when
+                    # they reject the payload (unknown proposal, bad vote);
+                    # counting those as delivered would hide real failures.
+                    if ok and "application/json" in resp.headers.get(
+                        "content-type", ""
+                    ):
+                        body = resp.json()
+                        if isinstance(body, dict) and body.get("success") is False:
+                            ok = False
                     results.append(
-                        {
-                            "url": url,
-                            "status": resp.status_code,
-                            "ok": resp.status_code < 400,
-                        }
+                        {"url": url, "status": resp.status_code, "ok": ok}
                     )
                 except Exception as exc:
                     results.append(
                         {"url": url, "status": None, "ok": False, "error": str(exc)}
                     )
-
         return {
-            "success": True,
-            "broadcast_to": len(peer_urls),
+            "success": all(r["ok"] for r in results),
+            "broadcast_to": len(results),
             "results": results,
         }
 
     def _discover_peer_urls(self) -> List[str]:
-        """Read the federation store (if any) and return peer base URLs."""
-        candidates = [
-            Path.home() / ".jambubrowser" / "federation.json",
-        ]
+        """Read the federation store (if any) and return peer *base* URLs.
+
+        Callers append their own path (``/consensus/receive``,
+        ``/consensus/vote``); returning bare bases keeps endpoint layout
+        in one place per caller instead of baked into the registry.
+        """
         urls: List[str] = []
-        for path in candidates:
-            if not path.exists():
-                continue
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                continue
-            for node in (data.get("nodes") or {}).values():
-                base = (node.get("node_url") or "").rstrip("/")
-                if base:
-                    urls.append(f"{base}/consensus")
+        for node in mesh_state.read_federation().values():
+            base = (node.get("node_url") or "").rstrip("/")
+            if base:
+                urls.append(base)
         return urls
 
     def _validate_vote(self, proposal_id: str, node_id: str) -> bool:
@@ -563,3 +702,36 @@ class ConsensusEngine:
             "leading": top_option,
             "voters": list(proposal["votes"].keys()),
         }
+
+
+# Module-level singleton.
+#
+# Routes must share ONE engine per process: a fresh ``ConsensusEngine()``
+# per request loads the store once and never sees writes made by other
+# instances — a forwarded vote recorded by one request is invisible to
+# the next request's tally. The two-node smoke test caught exactly this:
+# B's tally showed both votes while A forever showed one. ``get_consensus``
+# returns the shared instance and reloads the store when another writer
+# touched it (mtime check), so concurrent requests converge.
+_consensus: Optional["ConsensusEngine"] = None
+_consensus_mtime: float = 0.0
+
+
+def get_consensus() -> "ConsensusEngine":
+    """Return the process-wide consensus engine (store reloaded if stale)."""
+    global _consensus, _consensus_mtime
+    if _consensus is None:
+        _consensus = ConsensusEngine()
+        try:
+            _consensus_mtime = _consensus.store_path.stat().st_mtime
+        except OSError:
+            _consensus_mtime = 0.0
+        return _consensus
+    try:
+        mtime = _consensus.store_path.stat().st_mtime
+    except OSError:
+        return _consensus
+    if mtime != _consensus_mtime:
+        _consensus._load()
+        _consensus_mtime = mtime
+    return _consensus
