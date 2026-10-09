@@ -131,6 +131,19 @@ async def list_missions(status: str = None):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ── Plural aliases ──
+# Agents and shell scripts frequently guess the plural resource name
+# (/missions) and get an opaque 404 against the singular routes above.
+# Register the same handlers under the plural paths so both spellings work.
+# The path-parameter route (/mission/{id}/results) is left singular: a plural
+# alias would shadow nothing useful and risks matching "list"/"compare".
+router.add_api_route("/missions", start_mission, methods=["POST"])
+router.add_api_route("/missions/stop", stop_mission, methods=["POST"])
+router.add_api_route("/missions/schedule", schedule_mission, methods=["POST"])
+router.add_api_route("/missions/list", list_missions, methods=["GET"])
+router.add_api_route("/missions", list_missions, methods=["GET"])
+
+
 @router.get("/mission/{mission_id}/results")
 async def mission_results(mission_id: str, limit: int = 50):
     """Return the most recent collected results for a mission, newest first."""

@@ -19,7 +19,7 @@ from typing import AsyncGenerator
 from backend import __version__
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
@@ -479,6 +479,40 @@ if _decentralized_enabled():
     app.include_router(a2a_router)
     app.include_router(verification_router)
     app.include_router(simulation_router)
+else:
+    # When disabled the decentralized routers are simply not registered, so a
+    # client hitting /dcm/*, /p2p/*, /x402/* … gets an opaque 404 and assumes
+    # the feature is broken. Register a catch-all under each real prefix that
+    # answers 501 with an actionable hint instead — "disabled, set the flag" is
+    # a very different signal from "route does not exist".
+    _decentralized_prefixes = (
+        "/p2p", "/peer", "/peers", "/federated", "/federation",
+        "/consensus", "/dcm", "/meshpay", "/x402", "/evidence",
+        "/a2a", "/verification", "/simulation",
+    )
+
+    def _decentralized_disabled(path: str):
+        async def _handler():
+            raise HTTPException(
+                status_code=501,
+                detail=(
+                    f"{path}* is part of the decentralized/crypto layer, which is "
+                    "disabled. Set JAMBU_ENABLE_DECENTRALIZED=1 and restart the "
+                    "engine to enable it (see docs/FEATURE_MAP.md)."
+                ),
+            )
+        return _handler
+
+    _disabled_router = APIRouter(tags=["decentralized"])
+    for _prefix in _decentralized_prefixes:
+        # Register the bare prefix and a wildcard below it so every real path
+        # (/dcm/status, /p2p/query, …) resolves to the same 501 hint.
+        _disabled_router.add_api_route(_prefix, _decentralized_disabled(_prefix),
+                                       methods=["GET", "POST"])
+        _disabled_router.add_api_route(f"{_prefix}/{{subpath:path}}",
+                                       _decentralized_disabled(_prefix),
+                                       methods=["GET", "POST"])
+    app.include_router(_disabled_router)
 
 # Remote MCP (Streamable HTTP) + public Server Card. The sub-app carries
 # its own token auth; the engine's middleware stack still applies to it.

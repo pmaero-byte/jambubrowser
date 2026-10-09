@@ -80,6 +80,26 @@ class TestMissionRoundTrip:
         missions = client.get("/mission/list").json()["missions"]
         assert any(m["id"] == "legacy1" for m in missions)
 
+    def test_plural_missions_aliases_work(self, client):
+        """Agents/scripts guess the plural resource name (/missions) and
+        used to get an opaque 404. The plural paths must round-trip exactly
+        like the canonical singular ones."""
+        created = client.post("/missions", json={"query": "via plural alias"})
+        assert created.status_code == 200, created.text
+        mid = created.json()["mission_id"]
+
+        # GET /missions and GET /missions/list both serve the scheduler list.
+        for path in ("/missions", "/missions/list"):
+            missions = client.get(path).json()["missions"]
+            assert any(m["id"] == mid for m in missions), (path, missions)
+
+        stopped = client.post("/missions/stop", json={"mission_id": mid})
+        assert stopped.status_code == 200
+        row = next(
+            m for m in client.get("/missions").json()["missions"] if m["id"] == mid
+        )
+        assert row["status"] == "stopped"
+
 
 class TestSchedulerLifecycle:
     def test_start_scheduler_route_returns_started(self, client):

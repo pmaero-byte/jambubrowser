@@ -43,6 +43,19 @@ PYTHON="$(pick_python)" || { echo "no Python with backend.* (pip install -r requ
 
 if curl -sf --max-time 2 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
   echo "reusing engine at http://127.0.0.1:$PORT"
+  # Guard against a stale engine serving old code on the port: a 3-day-old
+  # process answers /health fine but is missing newer routes (this bit us
+  # when an old v3.3.0 engine squatted on :8001 while the checkout was
+  # v3.4.0). Compare the live version to this checkout's and warn loudly on
+  # mismatch — the caller can then `--stop` and relaunch to pick up changes.
+  local_version="$("$PYTHON" -c 'import backend; print(backend.__version__)' 2>/dev/null || echo '?')"
+  live_version="$(curl -sf --max-time 2 "http://127.0.0.1:$PORT/health" \
+    | "$PYTHON" -c 'import sys,json; print(json.load(sys.stdin).get("version","?"))' 2>/dev/null || echo '?')"
+  if [[ "$local_version" != "?" && "$live_version" != "?" && "$local_version" != "$live_version" ]]; then
+    echo "WARNING: engine on :$PORT reports v$live_version but this checkout is v$local_version." >&2
+    echo "         It may be a stale process from another checkout. To pick up" >&2
+    echo "         current code:  $0 --stop && $0 --background" >&2
+  fi
   exit 0
 fi
 
