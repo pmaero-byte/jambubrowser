@@ -235,6 +235,12 @@ pub fn run() {
             commands::chromium::browser_torrent_resume,
             commands::chromium::browser_torrent_remove,
             commands::chromium::vault_get_credential,
+            commands::agent::agent_bridge_status,
+            commands::agent::agent_session_open,
+            commands::agent::agent_session_act,
+            commands::agent::agent_session_close,
+            commands::agent::agent_run_audit,
+            commands::agent::agent_run_research,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

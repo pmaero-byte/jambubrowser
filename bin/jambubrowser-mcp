@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# jambubrowser-mcp — stdio launcher for the Jambubrowser MCP server.
+#
+# Purpose: lets a local AI tool (Claude Desktop, Cursor, Cline, Windsurf,
+# Zed, …) drive every Jambubrowser use case — audits, browser sessions,
+# deep research, memory, DCM mesh inference, simulation compute, VPN —
+# through the 52-tool MCP surface, using the SAME Python backend the
+# macOS desktop app talks to.
+#
+# The launcher resolves, in order:
+#   1. $JAMBU_ENGINE_URL            — an already-running engine (macOS app
+#                                     sidecar, dev terminal, CI service)
+#   2. http://127.0.0.1:8001        — the conventional local engine port
+#   3. boots its own engine         — `python -m uvicorn backend.engine:app`
+#                                     on a free loopback port, torn down on exit
+#
+# stdio transport: the MCP client spawns this script; JSON-RPC runs over
+# stdin/stdout. Nothing is printed to stdout except MCP frames — all
+# launcher diagnostics go to stderr (and $JAMBUBROWSER_MCP_LOG if set).
+#
+# Env knobs:
+#   JAMBU_ENGINE_URL     reuse a running engine (e.g. the macOS app's)
+#   JAMBU_MCP_PROFILE    full (default) | curated | developer
+#   JAMBU_DB_PATH        engine DB (launcher default: ~/.jambubrowser/rag_data.db)
+#   JAMBU_VAULT_KEY      vault key (else the engine prompts/fails closed)
+#   JAMBU_LLM_PROVIDER   auto|ollama|mlx|anthropic|openai|minimax|mock (default auto)
+#   JAMBUBROWSER_MCP_LOG append launcher diagnostics here (default: stderr only)
+#
+# Usage from an MCP client config (Claude Desktop example):
+#   { "mcpServers": { "jambubrowser": {
+#       "command": "/path/to/jambubrowser-mcp",
+#       "env": { "JAMBU_ENGINE_URL": "http://127.0.0.1:8001" } } } }
+set -euo pipefail
+
+log() { # diagnostics must never touch stdout (MCP frames live there)
+  local msg="[jambubrowser-mcp] $*"
+  if [[ -n "${JAMBUBROWSER_MCP_LOG:-}" ]]; then
+    printf '%s\n' "$msg" >>"$JAMBUBROWSER_MCP_LOG"
+  fi
+  printf '%s\n' "$msg" >&2
+}
+
+# --- locate the repo checkout this launcher ships with ---------------------
+SELF="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || realpath "${BASH_SOURCE[0]}" 2>/dev/null || echo "$0")"
+ROOT="$(cd "$(dirname "$SELF")/.." && pwd)"
+
+# --- pick a Python that can import backend.* --------------------------------
+pick_python() {
+  local cands=(
+    "$ROOT/.venv/bin/python"
+    "$ROOT/mlx-venv/bin/python3"
+  )
+  local c
+  for c in "${cands[@]}"; do
+    if [[ -x "$c" ]] && "$c" -c "import backend.engine" >/dev/null 2>&1; then
+      printf '%s' "$c"
+      return 0
+    fi
+  done
+  if command -v python3 >/dev/null 2>&1 && python3 -c "import backend.engine" >/dev/null 2>&1; then
+    printf 'python3'
+    return 0
+  fi
+  return 1
+}
+
+PYTHON="$(pick_python)" || {
+  log "ERROR: no Python with backend.* found (.venv, mlx-venv, PATH all miss)."
+  log "Run: pip install -r $ROOT/requirements.txt"
+  exit 2
+}
+log "python: $PYTHON"
+
+# --- engine URL: explicit > conventional port > boot our own ----------------
+ENGINE_URL="${JAMBU_ENGINE_URL:-}"
+OWN_ENGINE_PID=""
+
+engine_healthy() { # $1 = base url
+  curl -sf --max-time 2 "$1/health" >/dev/null 2>&1
+}
+
+if [[ -n "$ENGINE_URL" ]]; then
+  log "using JAMBU_ENGINE_URL=$ENGINE_URL"
+  engine_healthy "$ENGINE_URL" || log "WARN: $ENGINE_URL not healthy yet; tools will report engine-offline until it is"
+else
+  if engine_healthy "http://127.0.0.1:8001"; then
+    ENGINE_URL="http://127.0.0.1:8001"
+    log "reusing engine at $ENGINE_URL (macOS app sidecar or dev terminal)"
+  else
+    # Boot a private engine on a free loopback port.
+    PORT="$("$PYTHON" -c "import socket; s=socket.socket(); s.bind(('127.0.0.1',0)); print(s.getsockname()[1])")"
+    ENGINE_URL="http://127.0.0.1:$PORT"
+    export JAMBU_DB_PATH="${JAMBU_DB_PATH:-$HOME/.jambubrowser/rag_data.db}"
+    export JAMBU_LLM_PROVIDER="${JAMBU_LLM_PROVIDER:-auto}"
+    mkdir -p "$(dirname "$JAMBU_DB_PATH")"
+    log "booting private engine at $ENGINE_URL (db: $JAMBU_DB_PATH)"
+    : "${JAMBU_ENGINE_BOOT_TIMEOUT:=60}"
+    "$PYTHON" -m uvicorn backend.engine:app \
+      --host 127.0.0.1 --port "$PORT" --log-level warning \
+      >>"${JAMBUBROWSER_MCP_LOG:-/dev/null}" 2>&1 &
+    OWN_ENGINE_PID="$!"
+    for _ in $(seq 1 "$JAMBU_ENGINE_BOOT_TIMEOUT"); do
+      if engine_healthy "$ENGINE_URL"; then
+        log "private engine up after ${_}s (pid $OWN_ENGINE_PID)"
+        break
+      fi
+      if ! kill -0 "$OWN_ENGINE_PID" 2>/dev/null; then
+        log "ERROR: private engine exited during boot; see $JAMBUBROWSER_MCP_LOG"
+        exit 2
+      fi
+      sleep 1
+    done
+    engine_healthy "$ENGINE_URL" || {
+      log "ERROR: private engine not healthy after ${JAMBU_ENGINE_BOOT_TIMEOUT}s"
+      kill "$OWN_ENGINE_PID" 2>/dev/null || true
+      exit 2
+    }
+    cleanup() { kill "$OWN_ENGINE_PID" 2>/dev/null || true; }
+    trap cleanup EXIT
+  fi
+fi
+
+export JAMBU_ENGINE_URL="$ENGINE_URL"
+
+# --- hand stdio to the MCP server -------------------------------------------
+log "serving ${JAMBU_MCP_PROFILE:-full} profile; engine=$ENGINE_URL"
+exec "$PYTHON" -m backend.mcp_server

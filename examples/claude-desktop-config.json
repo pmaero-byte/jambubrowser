@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "jambubrowser": {
+      "command": "/Users/prabaharan/My_projects/browser_project/bin/jambubrowser-mcp",
+      "env": {
+        "JAMBU_ENGINE_URL": "http://127.0.0.1:8001",
+        "JAMBU_MCP_PROFILE": "full"
+      }
+    }
+  },
+  "_comment": "Replace the command path with your checkout. Omit JAMBU_ENGINE_URL to let the launcher reuse :8001 or boot a private engine. Profiles: full (52 tools) | curated (no execute_tool) | developer (8 browser-testing verbs)."
+}

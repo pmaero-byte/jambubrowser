@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# jambubrowser-engine — boot (or reuse) the Jambubrowser Python engine.
+#
+# The same engine the macOS desktop app talks to over http://127.0.0.1:8001.
+# Idempotent: if the port already answers /health, it is reused as-is.
+#
+# Usage:
+#   jambubrowser-engine                # foreground on :8001 (Ctrl-C stops)
+#   jambubrowser-engine --port 8002    # foreground on another port
+#   jambubrowser-engine --background   # detach, print URL, exit
+#   jambubrowser-engine --stop         # stop the engine on :8001 (ours only)
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PORT="8001"
+BACKGROUND=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --port) PORT="${2:?}"; shift 2 ;;
+    --background) BACKGROUND=1; shift ;;
+    --stop)
+      pkill -f "uvicorn backend.engine:app.*--port $PORT" 2>/dev/null \
+        && echo "stopped engine on :$PORT" || echo "no engine running on :$PORT"
+      exit 0
+      ;;
+    -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
+    *) echo "unknown arg: $1" >&2; exit 2 ;;
+  esac
+done
+
+pick_python() {
+  local c
+  for c in "$ROOT/.venv/bin/python" "$ROOT/mlx-venv/bin/python3" "python3"; do
+    if [[ -x "$c" || "$c" == "python3" ]] && "$c" -c "import backend.engine" >/dev/null 2>&1; then
+      printf '%s' "$c"
+      return 0
+    fi
+  done
+  return 1
+}
+PYTHON="$(pick_python)" || { echo "no Python with backend.* (pip install -r requirements.txt)" >&2; exit 2; }
+
+if curl -sf --max-time 2 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
+  echo "reusing engine at http://127.0.0.1:$PORT"
+  exit 0
+fi
+
+export JAMBU_DB_PATH="${JAMBU_DB_PATH:-$HOME/.jambubrowser/rag_data.db}"
+export JAMBU_LLM_PROVIDER="${JAMBU_LLM_PROVIDER:-auto}"
+mkdir -p "$(dirname "$JAMBU_DB_PATH")"
+
+if [[ "$BACKGROUND" == "1" ]]; then
+  LOG="${JAMBUBROWSER_ENGINE_LOG:-$HOME/.jambubrowser/engine.log}"
+  mkdir -p "$(dirname "$LOG")"
+  cd "$ROOT" && nohup "$PYTHON" -m uvicorn backend.engine:app \
+    --host 127.0.0.1 --port "$PORT" --log-level warning >"$LOG" 2>&1 &
+  for _ in $(seq 1 60); do
+    curl -sf --max-time 2 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1 \
+      && { echo "engine up at http://127.0.0.1:$PORT (log: $LOG)"; exit 0; }
+    sleep 1
+  done
+  echo "engine failed to start; see $LOG" >&2
+  exit 2
+fi
+
+echo "engine on http://127.0.0.1:$PORT (Ctrl-C to stop)"
+cd "$ROOT" && exec "$PYTHON" -m uvicorn backend.engine:app \
+  --host 127.0.0.1 --port "$PORT"
