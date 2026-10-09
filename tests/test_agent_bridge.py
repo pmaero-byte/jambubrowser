@@ -105,3 +105,34 @@ def test_guide_documents_all_three_paths():
         ".well-known/mcp-server-card.json",
     ):
         assert marker in guide, f"LOCAL_AGENTS.md never mentions {marker}"
+
+
+def test_proxy_localhost_invoke_shape_matches_rust():
+    """Frontend `invoke('proxy_localhost')` must nest args under `request`.
+
+    The Rust command takes a single `ProxyRequest` struct
+    (`proxy.rs: pub async fn proxy_localhost(request: ProxyRequest)`), so
+    Tauri expects `{ request: { url, method, headers, body } }`. A flat
+    `{ url, method, … }` payload fails arg parsing and EVERY Tauri API
+    call errors — the "everything is broken in the .app" symptom.
+    """
+    api_ts = (REPO_ROOT / "browser-app" / "src" / "utils" / "api.ts").read_text()
+    assert '"proxy_localhost", {\n      request: {' in api_ts or (
+        '"proxy_localhost"' in api_ts and "request: {" in api_ts
+    ), "api.ts must nest proxy_localhost args under `request:`"
+
+
+def test_sidecar_resolves_checkout_and_sets_pythonpath():
+    """The sidecar spawn must not depend on the process cwd.
+
+    The bundled `.app` runs with cwd `/`, so `current_dir()`-based root
+    detection + no `PYTHONPATH` = `ModuleNotFoundError: No module named
+    'backend'` and a ghost "started" log line while the UI shows
+    "engine unreachable" everywhere.
+    """
+    services = (
+        REPO_ROOT / "browser-app" / "src-tauri" / "src" / "orchestrator" / "services.rs"
+    ).read_text()
+    assert "current_exe" in services, "checkout root must derive from the executable, not cwd"
+    assert "engine.py" in services, "spawn must verify backend/engine.py exists before spawning"
+    assert "PYTHONPATH" in services, "spawn must set PYTHONPATH so backend.* imports"

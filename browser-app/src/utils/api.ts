@@ -48,10 +48,12 @@ export async function localFetch(
       headers: Record<string, string>;
       body: string;
     }>("proxy_localhost", {
-      url,
-      method,
-      headers,
-      body,
+      request: {
+        url,
+        method,
+        headers,
+        body,
+      },
     });
 
     return new Response(result.body, {
