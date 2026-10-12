@@ -235,6 +235,14 @@ class ConnectionManager:
         self._ip_counts: Dict[str, int] = {}
         # Greenwich event bus (Improvement 6): per-session SSE subscriber queues.
         self._session_subs: Dict[str, list] = {}
+        # Recent events per session, replayed to a subscriber that connects a
+        # beat late. Without this the first navigation's `nav:start` (emitted
+        # immediately after the session is created) is missed by every client
+        # that opens the stream right afterwards — the status bar then shows a
+        # page that finished loading with no "navigating" line before it.
+        self._session_backlog: Dict[str, list] = {}
+        self._backlog_sessions = 200  # bound: session ids are cheap but finite
+        self._backlog_events = 20
 
     def _register_ip(self, ip: str) -> bool:
         """Increment IP connection count. False if over limit."""
@@ -321,6 +329,15 @@ class ConnectionManager:
     # ── Greenwich session event bus (SSE fan-out) ──
     def session_subscribe(self, session_id: str) -> "asyncio.Queue":
         q: asyncio.Queue = asyncio.Queue(maxsize=500)
+        # Replay what happened just before this subscriber arrived. The first
+        # navigation is fired moments after the session is created, so a client
+        # that opens the stream right afterwards would otherwise never see its
+        # own "navigating" line.
+        for payload in self._session_backlog.get(session_id, []):
+            try:
+                q.put_nowait(payload)
+            except asyncio.QueueFull:
+                break
         self._session_subs.setdefault(session_id, []).append(q)
         return q
 
@@ -334,6 +351,14 @@ class ConnectionManager:
     async def emit_session_event(self, session_id: str, event: str, data: dict) -> None:
         payload = {"event": event, "session_id": session_id, "data": data or {},
                    "timestamp": time.time()}
+        backlog = self._session_backlog.setdefault(session_id, [])
+        backlog.append(payload)
+        if len(backlog) > self._backlog_events:
+            del backlog[: len(backlog) - self._backlog_events]
+        if len(self._session_backlog) > self._backlog_sessions:
+            # Evict the oldest session's history first (dicts keep insertion
+            # order) so a long-running engine cannot grow without bound.
+            self._session_backlog.pop(next(iter(self._session_backlog)), None)
         for q in list(self._session_subs.get(session_id, [])):
             try:
                 q.put_nowait(payload)

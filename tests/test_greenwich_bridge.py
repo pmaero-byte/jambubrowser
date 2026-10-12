@@ -140,6 +140,31 @@ class TestEventBus:
         assert ev["session_id"] == "bs-ev"
         assert ev["data"]["url"] == "https://example.com"
 
+    def test_late_subscriber_replays_recent_events(self):
+        """A stream opened just after session creation must still see nav:start."""
+        from backend.engine_runtime import manager
+        async def go():
+            manager._session_backlog.pop("bs-late", None)
+            await manager.emit_session_event("bs-late", "nav:start", {"url": "https://a.test"})
+            q = manager.session_subscribe("bs-late")  # subscribes AFTER the event
+            ev = await asyncio.wait_for(q.get(), timeout=2)
+            manager.session_unsubscribe("bs-late", q)
+            return ev
+        ev = asyncio.run(go())
+        assert ev["event"] == "nav:start"
+        assert ev["data"]["url"] == "https://a.test"
+
+    def test_backlog_is_bounded(self):
+        from backend.engine_runtime import manager
+        async def go():
+            manager._session_backlog.pop("bs-bound", None)
+            for i in range(manager._backlog_events + 5):
+                await manager.emit_session_event("bs-bound", "audit:step", {"n": i})
+            return list(manager._session_backlog["bs-bound"])
+        backlog = asyncio.run(go())
+        assert len(backlog) == manager._backlog_events
+        assert backlog[-1]["data"]["n"] == manager._backlog_events + 4  # newest kept
+
 
 class TestRoutesPresent:
     def test_greenwich_routes_registered(self):
