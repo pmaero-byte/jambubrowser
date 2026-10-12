@@ -2,6 +2,11 @@ import { test, expect } from "@playwright/test";
 
 test.describe("Jambubrowser — Vite dev shell", () => {
   test.beforeEach(async ({ page }) => {
+    // A returning user: the first-run onboarding wizard mounts a modal that
+    // shadows the shell and intercepts clicks. Same flag its own unit test sets.
+    await page.addInitScript(() =>
+      window.localStorage.setItem("jambu-onboarding-seen", "true"),
+    );
     // Forward console errors to the test reporter so they're visible
     // in CI output.
     page.on("pageerror", (err) => console.error("[pageerror]", err.message));
@@ -14,8 +19,11 @@ test.describe("Jambubrowser — Vite dev shell", () => {
     await page.goto("/");
     // AppShell renders the title bar; the brand text is a stable marker.
     await expect(page.getByText("Jambubrowser").first()).toBeVisible({ timeout: 10_000 });
-    // The default tab is named "Astrogenesis" in the initial store state.
-    await expect(page.getByText(/Astrogenesis/i).first()).toBeVisible();
+    // The default canvas tab is the Abilities overview (appStore `activeTab:
+    // "abilities"`). This used to assert a browser-tab title ("Astrogenesis"),
+    // which only exists once the Browser pane is open — stale since the
+    // sectioned sidebar landed.
+    await expect(page.getByText(/every ability, one map/i).first()).toBeVisible();
   });
 
   test("sidebar toggle responds to clicks", async ({ page }) => {
@@ -50,6 +58,27 @@ test.describe("Jambubrowser — Vite dev shell", () => {
       await expect(cmdkInput).toBeVisible();
       await page.keyboard.press("Escape");
     }
+  });
+
+  test("Agent Browser pane mounts with viewport, AX tree and telemetry", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.getByText("Jambubrowser").first()).toBeVisible({ timeout: 10_000 });
+
+    // Sidebar entry added alongside the human browser.
+    await page.getByText("Agent Browser", { exact: true }).first().click();
+
+    // URL bar drives an engine session.
+    const urlBar = page.getByPlaceholder("Enter a URL to browse with the engine…");
+    await expect(urlBar).toBeVisible();
+    await urlBar.fill("example.com");
+
+    // The three columns the Greenwich bridge made possible.
+    await expect(page.getByText("Agent view · AX tree")).toBeVisible();
+    await expect(page.getByText(/Session telemetry \(nav:\*, audit:\*, error\)/)).toBeVisible();
+    // Viewport empty state — either the engine is absent or no frames yet.
+    await expect(page.getByText(/No frames yet|Engine offline on :8001/)).toBeVisible();
+    // And the session status chip reports honestly.
+    await expect(page.getByText(/No session|Engine offline|Live/).first()).toBeVisible();
   });
 
   test("DevTools panel toggle: opening the Network tab reveals the network list", async ({ page }) => {

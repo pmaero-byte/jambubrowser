@@ -79,6 +79,23 @@ npm run dev        # Vite web dev on port 1420
 npm run tauri dev  # Tauri dev
 ```
 
+The dev server proxies the engine API (everything under `/browser`, `/v2`,
+`/audit`, …) to `http://localhost:8001`. Point it somewhere else — a second
+engine instance, or a source build on another port — with:
+
+```bash
+JAMBU_ENGINE_URL=http://localhost:8011 npm run dev
+```
+
+### Agent Browser pane
+
+`src/components/agentbrowser/` renders an engine browser session inside the
+app: live viewport (WS screencast with a polling fallback), the pruned AX tree
+the model acts on (click / type by `@ref`), the session telemetry stream
+(`nav:*`, `audit:*`, `error`), and one-click ingest of a page into permanent
+memory. Pure helpers live in `sessionUtils.ts` and are unit-tested; the pane
+itself is covered by `e2e/app.spec.ts`.
+
 ### Production build
 
 From the project root:

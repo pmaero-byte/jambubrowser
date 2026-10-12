@@ -3,6 +3,7 @@ import { create } from "zustand";
 export type CanvasTab =
   | "chat"
   | "browser"
+  | "agent-browser"
   | "logs"
   | "missions"
   | "goals"

@@ -22,6 +22,7 @@ import {
   Coins,
   Target,
   LayoutGrid,
+  ScanSearch,
 } from "lucide-react";
 import { useAppStore, type CanvasTab } from "../../store/appStore";
 import { useAgentWebSocket } from "../../utils/useAgentWebSocket";
@@ -32,6 +33,7 @@ const overviewNav: { id: CanvasTab; label: string; icon: React.ElementType }[] =
 
 const browserNav: { id: CanvasTab; label: string; icon: React.ElementType }[] = [
   { id: "browser", label: "Browser", icon: Globe },
+  { id: "agent-browser", label: "Agent Browser", icon: ScanSearch },
   { id: "monitors", label: "Monitors", icon: Radar },
   { id: "qa", label: "QA", icon: FlaskConical },
   { id: "history", label: "History", icon: History },

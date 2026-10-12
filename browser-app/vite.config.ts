@@ -4,6 +4,11 @@ import tailwindcss from "@tailwindcss/vite";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
+// Engine origin the dev server proxies API calls to. Overridable so a second
+// dev server can be pointed at another engine instance (e.g. a source build on
+// :8011) without fighting over :8001.
+// @ts-expect-error process is a nodejs global
+const ENGINE_URL = process.env.JAMBU_ENGINE_URL || "http://localhost:8001";
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
@@ -29,35 +34,21 @@ export default defineConfig(async () => ({
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],
     },
-    // Proxy API calls to the Python backend on port 8001
-    proxy: {
-      "/v2": "http://localhost:8001",
-      "/v1": "http://localhost:8001",
-      "/research": "http://localhost:8001",
-      "/search": "http://localhost:8001",
-      "/scrape": "http://localhost:8001",
-      "/act": "http://localhost:8001",
-      "/login": "http://localhost:8001",
-      "/exec": "http://localhost:8001",
-      "/health": "http://localhost:8001",
-      "/stats": "http://localhost:8001",
-      "/privacy": "http://localhost:8001",
-      "/audit": "http://localhost:8001",
-      "/vault": "http://localhost:8001",
-      "/security": "http://localhost:8001",
-      "/fingerprint": "http://localhost:8001",
-      "/knowledge": "http://localhost:8001",
-      "/mission": "http://localhost:8001",
-      "/consensus": "http://localhost:8001",
-      "/vision": "http://localhost:8001",
-      "/computer": "http://localhost:8001",
-      "/multimodal": "http://localhost:8001",
-      "/mlx": "http://localhost:8001",
-      "/goal": "http://localhost:8001",
-      "/p2p": "http://localhost:8001",
-      "/tools": "http://localhost:8001",
-      "/sessions": "http://localhost:8001",
-    },
+    // Proxy API calls to the Python engine (JAMBU_ENGINE_URL, :8001 by default)
+    proxy: Object.fromEntries(
+      [
+        "/v2", "/v1", "/research", "/search", "/scrape", "/act", "/login",
+        "/exec", "/health", "/stats", "/privacy", "/audit", "/vault",
+        "/security", "/fingerprint", "/knowledge", "/mission", "/consensus",
+        "/vision", "/computer", "/multimodal", "/mlx", "/goal", "/p2p",
+        "/tools", "/sessions",
+        // The engine's browser-session API: agent sessions, AX tree, act-by-ref,
+        // frames, event stream and memory sync — plus the human-takeover call
+        // that predated all of it. Without this entry the Agent Browser pane
+        // (and the takeover button) get the SPA fallback instead of the engine.
+        "/browser",
+      ].map((route) => [route, ENGINE_URL]),
+    ),
   },
 
   // Vendor / panel chunk splitting. Without this, every dependency — including

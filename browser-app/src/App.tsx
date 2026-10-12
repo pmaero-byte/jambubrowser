@@ -17,6 +17,9 @@ const BrowserPane = lazy(() =>
 const ChromiumPane = lazy(() =>
   import("./components/browser/ChromiumPane").then((m) => ({ default: m.ChromiumPane }))
 );
+const AgentBrowserPane = lazy(() =>
+  import("./components/agentbrowser/AgentBrowserPane").then((m) => ({ default: m.AgentBrowserPane }))
+);
 const PrivacyControls = lazy(() =>
   import("./components/privacy/PrivacyControls").then((m) => ({ default: m.PrivacyControls }))
 );
@@ -206,6 +209,8 @@ export default function App() {
         return (typeof window !== "undefined" && "__TAURI__" in window)
           ? <ChromiumPane />
           : <BrowserPane />;
+      case "agent-browser":
+        return <AgentBrowserPane />;
       case "logs":
         return <AuditLogViewer />;
       case "memory":
