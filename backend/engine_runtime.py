@@ -150,7 +150,7 @@ async def _call_llm(
     back to env-driven default.
     """
     cfg = _resolve_llm_config({})
-    from backend.llm import ChatMessage, Role, get_default
+    from backend.llm import ChatMessage, Role
 
     messages: list[ChatMessage] = []
     if system:
@@ -233,6 +233,8 @@ class ConnectionManager:
     def __init__(self):
         self.active_connections: Dict[str, WebSocket] = {}
         self._ip_counts: Dict[str, int] = {}
+        # Greenwich event bus (Improvement 6): per-session SSE subscriber queues.
+        self._session_subs: Dict[str, list] = {}
 
     def _register_ip(self, ip: str) -> bool:
         """Increment IP connection count. False if over limit."""
@@ -315,6 +317,35 @@ class ConnectionManager:
                 await ws.send_text(message)
             except Exception as e:
                 log.warning("[ws] broadcast_all failed: %r", e)
+
+    # ── Greenwich session event bus (SSE fan-out) ──
+    def session_subscribe(self, session_id: str) -> "asyncio.Queue":
+        q: asyncio.Queue = asyncio.Queue(maxsize=500)
+        self._session_subs.setdefault(session_id, []).append(q)
+        return q
+
+    def session_unsubscribe(self, session_id: str, q: "asyncio.Queue") -> None:
+        subs = self._session_subs.get(session_id)
+        if subs and q in subs:
+            subs.remove(q)
+        if subs is not None and not subs:
+            self._session_subs.pop(session_id, None)
+
+    async def emit_session_event(self, session_id: str, event: str, data: dict) -> None:
+        payload = {"event": event, "session_id": session_id, "data": data or {},
+                   "timestamp": time.time()}
+        for q in list(self._session_subs.get(session_id, [])):
+            try:
+                q.put_nowait(payload)
+            except asyncio.QueueFull:
+                try:
+                    q.get_nowait()
+                except Exception:
+                    log.debug("ignored failure", exc_info=True)
+                try:
+                    q.put_nowait(payload)
+                except Exception:
+                    log.debug("ignored failure", exc_info=True)
 
 
 manager = ConnectionManager()

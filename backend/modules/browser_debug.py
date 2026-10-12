@@ -17,7 +17,6 @@ Pure, dependency-free utilities used by the browser flow runner:
 """
 from __future__ import annotations
 
-import asyncio
 import fnmatch
 import ipaddress
 import json
@@ -26,7 +25,6 @@ import socket
 from dataclasses import dataclass
 from typing import Any, Optional
 from urllib.parse import urlparse
-
 
 _ALLOWED_REQUEST_SCHEMES = {"http", "https", "ws", "wss"}
 _BROWSER_INTERNAL_SCHEMES = {"about", "data", "blob"}
@@ -122,6 +120,25 @@ class NetworkPolicy:
             return decision
         if scheme in _BROWSER_INTERNAL_SCHEMES and not host:
             decision = NetworkDecision(True, "browser_internal", scheme=scheme, host=host)
+            self._record(decision, method, kind)
+            return decision
+        if scheme == "file":
+            # Local workspace preview (Greenwich §7): the top-level document AND
+            # its relative subresources arrive as file:// requests, so the
+            # request policy has to admit them too — otherwise the route aborts
+            # the navigation with ERR_BLOCKED_BY_CLIENT before the page loads.
+            # Same confinement as the navigation gate: enabled switch + roots.
+            try:
+                from backend.core.security import is_safe_file_url
+                allowed = is_safe_file_url(raw)
+            except Exception:
+                allowed = False
+            decision = (
+                NetworkDecision(True, "local_workspace", scheme=scheme, host=host)
+                if allowed else
+                NetworkDecision(False, "blocked_protocol", scheme=scheme, host=host,
+                                detail="file:// is disabled or outside the workspace roots")
+            )
             self._record(decision, method, kind)
             return decision
         if scheme not in _ALLOWED_REQUEST_SCHEMES:

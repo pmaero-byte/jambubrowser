@@ -8,15 +8,19 @@ with machine-readable reasons (``blocked_domain``, ``approval_required``,
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, validator
 
 from backend.modules.browser_agent import (
     SessionRefused,
     get_browser_agent_service,
 )
+
+log = logging.getLogger("jambu.browser_sessions")
 
 router = APIRouter(prefix="/browser/sessions", tags=["browser-sessions"])
 
@@ -80,6 +84,8 @@ class OpenRequest(ViewportOptions):
     scrub_pii: Optional[bool] = None
     privacy_level: Optional[str] = None
     allow_private: bool = False
+    # Greenwich (Improvement 5): auto-ingest scrapes into Memory Bridge.
+    sync_to_greenwich_memory: bool = False
     storage_state: Optional[dict] = None
     context_options: Optional[dict] = None
 
@@ -93,6 +99,33 @@ class OpenRequest(ViewportOptions):
 
 class NavigateRequest(BaseModel):
     url: str
+
+
+class GreenwichInputRequest(BaseModel):
+    """Coordinate input for the SwiftUI live viewport (Improvement 2)."""
+    type: str = "click"
+    x: float = 0
+    y: float = 0
+    delta_x: float = 0
+    delta_y: float = 0
+    key: str = ""
+    text: str = ""
+
+
+class GreenwichActRequest(BaseModel):
+    """Action-by-integer-ref against the AX tree (Improvement 3)."""
+    action: str = "click"
+    ref: int = 1
+    text: str = ""
+    approve: bool = False
+    press_enter: bool = False
+
+
+class GreenwichSyncRequest(BaseModel):
+    title: str = ""
+    clean_markdown: str = ""
+    url: str = ""
+    citations: Optional[list] = None
 
 
 class ActRequest(BaseModel):
@@ -273,6 +306,7 @@ async def open_session(req: OpenRequest):
             allow_private=req.allow_private,
             storage_state=req.storage_state,
             context_options=context_options,
+            sync_to_greenwich_memory=req.sync_to_greenwich_memory,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail={"reason": "invalid_viewport",
@@ -635,6 +669,142 @@ async def session_evidence(session_id: str):
     )
     return save_bundle(bundle)
 
+
+
+# Greenwich bridge (Improvements 2/3/5/6)
+@router.get("/{session_id}/ax-tree")
+async def ax_tree(session_id: str):
+    session = _get(session_id)
+    try:
+        state = await session.snapshot()
+    except SessionRefused as refusal:
+        raise _refusal_to_http(refusal)
+    focused = await session.focused_ref()
+    tree = session.ax_tree_text(state, focused_ref=focused)
+    elements = state.get("elements") or []
+    return {"session_id": session_id, "url": state.get("url", ""), "title": state.get("title", ""), "ax_tree": tree, "count": len(elements), "focused_ref": focused}
+
+@router.post("/{session_id}/act-by-ref")
+async def act_by_ref(session_id: str, req: GreenwichActRequest):
+    session = _get(session_id)
+    try:
+        return await session.act_by_ax_ref(req.action, req.ref, text=req.text, approve=req.approve, press_enter=req.press_enter)
+    except SessionRefused as refusal:
+        raise _refusal_to_http(refusal)
+
+@router.post("/{session_id}/input")
+async def session_input(session_id: str, req: GreenwichInputRequest):
+    session = _get(session_id)
+    return await session.send_input(req.type, x=req.x, y=req.y, delta_x=req.delta_x, delta_y=req.delta_y, key=req.key, text=req.text)
+
+@router.get("/{session_id}/frame")
+async def session_frame(session_id: str, quality: int = 80):
+    session = _get(session_id)
+    data = await session.capture_frame(quality=quality)
+    if data is None:
+        raise HTTPException(status_code=501, detail="screencast unavailable for this session")
+    return {"session_id": session_id, "frame_base64": data, "format": "jpeg"}
+
+
+@router.websocket("/{session_id}/stream")
+async def session_stream(websocket: WebSocket, session_id: str):
+    await websocket.accept()
+    try:
+        svc = get_browser_agent_service()
+        try:
+            session = svc.get(session_id)
+        except SessionRefused:
+            await websocket.send_json({"type": "error", "message": f"no such session: {session_id}"})
+            await websocket.close(code=4404)
+            return
+        import asyncio as _aio
+        async def _recv():
+            try:
+                while True:
+                    msg = await websocket.receive_json()
+                    if isinstance(msg, dict) and msg.get("type") in ("click", "move", "scroll", "keydown", "keypress", "type", "press"):
+                        kind = msg.get("type")
+                        if kind == "keypress":
+                            kind = "keydown"
+                        await session.send_input(kind, x=float(msg.get("x", 0) or 0), y=float(msg.get("y", 0) or 0), delta_x=float(msg.get("delta_x", 0) or 0), delta_y=float(msg.get("delta_y", 0) or 0), key=str(msg.get("key", "") or ""), text=str(msg.get("text", "") or ""))
+            except Exception:
+                log.debug("ignored failure", exc_info=True)
+        recv_task = _aio.create_task(_recv())
+        # Spec §2: prefer a pushed Page.startScreencast stream; keep-alive poll
+        # covers idle pages (Chromium only pushes on visual damage) and the
+        # non-CDP / fake-page path.
+        frames = _aio.Queue(maxsize=4)
+
+        def _push(payload):
+            if frames.full():
+                try:
+                    frames.get_nowait()
+                except Exception:
+                    log.debug("ignored failure", exc_info=True)
+            try:
+                frames.put_nowait(payload)
+            except Exception:
+                log.debug("ignored failure", exc_info=True)
+
+        pushed = await session.start_screencast(_push, quality=70)
+        try:
+            while True:
+                payload = None
+                if pushed:
+                    try:
+                        payload = await _aio.wait_for(frames.get(), timeout=2.0)
+                    except _aio.TimeoutError:
+                        payload = None
+                if not payload:
+                    payload = await session.capture_frame(quality=70)
+                if payload:
+                    await websocket.send_json({"type": "frame", "session_id": session_id, "frame_base64": payload, "format": "jpeg", "mode": "screencast" if pushed else "poll"})
+                if not pushed:
+                    await _aio.sleep(0.5)
+        except WebSocketDisconnect:
+            pass
+        except Exception:
+            try:
+                await websocket.close()
+            except Exception:
+                log.debug("ignored failure", exc_info=True)
+        finally:
+            if pushed:
+                try:
+                    await session.stop_screencast()
+                except Exception:
+                    log.debug("ignored failure", exc_info=True)
+            recv_task.cancel()
+    except Exception:
+        try:
+            await websocket.close()
+        except Exception:
+            log.debug("ignored failure", exc_info=True)
+
+@router.get("/{session_id}/events")
+async def session_events(session_id: str):
+    import asyncio as _aio
+    import json as _json
+    _get(session_id)
+    from backend.engine_runtime import manager as _manager
+    async def _gen():
+        q = _manager.session_subscribe(session_id)
+        try:
+            yield f"event: ready\ndata: {_json.dumps({'session_id': session_id})}\n\n"
+            while True:
+                try:
+                    payload = await _aio.wait_for(q.get(), timeout=25.0)
+                    yield f"event: {payload.get('event', 'message')}\ndata: {_json.dumps(payload)}\n\n"
+                except _aio.TimeoutError:
+                    yield ": heartbeat\n\n"
+        finally:
+            _manager.session_unsubscribe(session_id, q)
+    return StreamingResponse(_gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+@router.post("/{session_id}/sync-greenwich")
+async def session_sync_greenwich(session_id: str, req: GreenwichSyncRequest):
+    session = _get(session_id)
+    return await session.sync_to_greenwich(title=req.title, clean_markdown=req.clean_markdown, url=req.url, citations=req.citations)
 
 @router.delete("/{session_id}")
 async def close_session(session_id: str):

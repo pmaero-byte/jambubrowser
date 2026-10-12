@@ -27,9 +27,15 @@ def is_safe_url(url: str, allow_private: bool = False) -> bool:
     """Validate URL for external requests (SSRF protection).
 
     Checks:
-      - Must have http/https scheme
+      - Must have http/https scheme (plus ``file`` when local workspaces
+        are enabled via ``ALLOW_LOCAL_WORKSPACES`` / ``JAMBU_ALLOW_LOCAL_WORKSPACES``)
       - Hostname must resolve to a public IP (unless allow_private=True)
       - No empty host
+
+    Greenwich Studio needs localhost / 127.0.0.1 / file:// preview for its
+    local docs and generated EPUB/PDF reports. Set
+    ``ALLOW_LOCAL_WORKSPACES=true`` (or pass ``allow_private=True``) to
+    permit loopback + file URLs while still blocking the rest of RFC1918.
     """
     if not url or not isinstance(url, str):
         return False
@@ -37,13 +43,18 @@ def is_safe_url(url: str, allow_private: bool = False) -> bool:
         return False
     try:
         parsed = urlparse(url)
-        if parsed.scheme not in _ALLOWED_SCHEMES:
+        scheme = parsed.scheme.lower()
+        if scheme == "file":
+            return _local_workspaces_allowed()
+        if scheme not in _ALLOWED_SCHEMES:
             return False
         host = parsed.hostname
         if not host:
             return False
         # Allow localhost in dev mode but not 0.0.0.0
-        if host in ("localhost", "127.0.0.1", "0.0.0.0") and not allow_private:
+        if host in ("localhost", "127.0.0.1", "0.0.0.0"):
+            if allow_private or _local_workspaces_allowed():
+                return True
             return False
         # Check for DNS rebinding / IP obfuscation
         if not allow_private:
@@ -51,10 +62,47 @@ def is_safe_url(url: str, allow_private: bool = False) -> bool:
                 addr = ipaddress.ip_address(host)
                 for block in _BLOCKED_IPS:
                     if addr in ipaddress.ip_network(block):
+                        # Local-workspace mode still keeps the rest of
+                        # RFC1918 blocked; only loopback is lifted above.
                         return False
             except ValueError:
                 pass  # Hostname, not IP — assume public
         return True
+    except Exception:
+        return False
+
+
+def _local_workspaces_allowed() -> bool:
+    """True when ``ALLOW_LOCAL_WORKSPACES`` / ``JAMBU_ALLOW_LOCAL_WORKSPACES`` is truthy."""
+    for key in ("ALLOW_LOCAL_WORKSPACES", "JAMBU_ALLOW_LOCAL_WORKSPACES"):
+        raw = (os.environ.get(key) or "").lower().strip()
+        if raw in ("1", "true", "yes", "on"):
+            return True
+    return False
+
+
+def local_workspace_roots() -> list:
+    """Workspace roots permitted for ``file://`` preview (CSV env)."""
+    raw = os.environ.get("JAMBU_LOCAL_WORKSPACE_ROOTS", os.path.expanduser("~"))
+    return [p.strip() for p in raw.split(",") if p.strip()]
+
+
+def is_safe_file_url(url: str) -> bool:
+    """True when a ``file://`` URL is enabled AND confined to workspace roots."""
+    if not _local_workspaces_allowed():
+        return False
+    try:
+        from urllib.request import url2pathname
+        parsed = urlparse(url)
+        if parsed.scheme.lower() != "file":
+            return False
+        path = url2pathname(parsed.path or "")
+        if not path:
+            return False
+        for root in local_workspace_roots():
+            if is_safe_path(path, root):
+                return True
+        return False
     except Exception:
         return False
 

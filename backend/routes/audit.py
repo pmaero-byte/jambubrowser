@@ -8,7 +8,6 @@ POST /audit/quick    — quick scan: 3 employees (Security, Performance, UX)
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import logging
 import time
@@ -19,10 +18,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, validator
 
-from backend.core.audit import get_audit_logger, ActionCategory
-# Aliased: this module already defines a route handler named `audit_collect`,
-# and a plain import would shadow it.
-from backend.routes import audit_collect as page_collect
+from backend.core.audit import ActionCategory, get_audit_logger
 from backend.core.security import is_safe_url
 from backend.employees import (
     ALL_EMPLOYEES,
@@ -40,6 +36,10 @@ from backend.employees.export import (
     findings_to_sarif,
     sarif_to_json,
 )
+
+# Aliased: this module already defines a route handler named `audit_collect`,
+# and a plain import would shadow it.
+from backend.routes import audit_collect as page_collect
 
 log = logging.getLogger("jambu.audit")
 router = APIRouter(prefix="/audit", tags=["audit"])
@@ -70,6 +70,8 @@ class AuditRunRequest(BaseModel):
     mode: str = "full"  # "full" or "quick"
     timeout_ms: int = 60000
     provider: Optional[str] = None  # LLM provider override
+    session_id: Optional[str] = None  # Greenwich: fan audit steps into session events
+    sync_to_greenwich_memory: bool = False
 
     @validator("url")
     def validate_url(cls, v):
@@ -321,6 +323,16 @@ async def _audit_event_stream(req: AuditRunRequest, on_collected=None):
     """
     employees = ALL_EMPLOYEES if req.mode == "full" else QUICK_SCAN_EMPLOYEES
 
+    async def _emit(event: str, data: dict) -> None:
+        if not req.session_id:
+            return
+        try:
+            from backend.engine_runtime import manager as _mgr
+            await _mgr.emit_session_event(req.session_id, event, data)
+        except Exception:
+            log.debug("ignored failure", exc_info=True)
+
+    await _emit("nav:start", {"url": req.url})
     # Phase 1: Collect
     yield ("status", {"phase": "collecting", "url": req.url})
     try:
@@ -336,6 +348,8 @@ async def _audit_event_stream(req: AuditRunRequest, on_collected=None):
                 on_collected(data)
             except Exception:
                 log.warning("on_collected callback failed", exc_info=True)
+        await _emit("nav:domcontentloaded", {"url": req.url, "title": data.title})
+        await _emit("nav:networkidle", {"url": req.url})
         yield ("status", {
             "phase": "collected",
             "load_ms": data.load_time_ms,
@@ -390,12 +404,15 @@ async def _audit_event_stream(req: AuditRunRequest, on_collected=None):
     for coro in asyncio.as_completed(tasks):
         name, emoji, findings, elapsed, error = await coro
         if error:
+            await _emit("error", {"message": f"{name}: {error}"})
             yield ("employee_error", {
                 "employee": name, "emoji": emoji,
                 "error": error, "elapsed_ms": elapsed,
             })
         else:
             all_findings.extend(findings)
+            await _emit("audit:step", {"agent": name, "finding": f"{len(findings)} findings",
+                                       "severity": "info", "elapsed_ms": elapsed})
             yield ("employee_done", {
                 "employee": name, "emoji": emoji,
                 "findings_count": len(findings),
@@ -479,6 +496,27 @@ async def _audit_event_stream(req: AuditRunRequest, on_collected=None):
         })
     except Exception:
         log.debug("audit: ignored failure", exc_info=True)
+
+    await _emit("nav:networkidle", {"url": req.url, "findings": len(active_findings)})
+    if req.sync_to_greenwich_memory:
+        try:
+            from backend.engine_runtime import safe_task as _safe
+            from backend.modules.greenwich_bridge import ingest_memory as _ingest_memory
+            score = max(0.0, 100.0 - 4.0 * by_severity.get("critical", 0) - 2.0 * by_severity.get("high", 0) - 0.5 * by_severity.get("medium", 0))
+            summary = (
+                f"# Audit {req.mode} — {req.url}\n\n"
+                f"Findings: {len(active_findings)} (critical {by_severity.get('critical', 0)}, "
+                f"high {by_severity.get('high', 0)}, medium {by_severity.get('medium', 0)}, "
+                f"low {by_severity.get('low', 0)})\n"
+            )
+            _safe(_ingest_memory(
+                title=f"Audit {req.mode}: {data.title or req.url}",
+                clean_markdown=summary, url=req.url, citations=[req.url],
+                metadata={"audit_id": audit_id, "audit_score": round(score, 1),
+                          "mode": req.mode, "session_id": req.session_id},
+            ), label="greenwich-audit-sync")
+        except Exception:
+            log.debug("ignored failure", exc_info=True)
 
     # Record API key usage if authenticated
     if hasattr(req, '_api_key') and req._api_key:

@@ -79,6 +79,13 @@ class LLMConfig:
     minimax_base_url: str = "https://api.minimax.io/v1"
     minimax_model: str = "MiniMax-M2"
 
+    # Greenwich Studio local stack (Safe Qwen 3.8 27B + Quantum Daemon).
+    # Primary :8085, extended :8090. OpenAI-compatible, local = free.
+    greenwich_base_url: str = "http://127.0.0.1:8085/v1"
+    greenwich_extended_url: str = "http://127.0.0.1:8090/v1"
+    greenwich_model: str = "qwen3.8-27b"
+    greenwich_api_key: str = ""
+
     # DecentraCode Mesh (DCM) — OpenAI-compatible endpoint of a local mesh node.
     # The mesh is user-operated infrastructure, so inference is treated as a
     # local provider (zero USD marginal cost; DCT metering happens mesh-side).
@@ -115,6 +122,10 @@ class LLMConfig:
             minimax_api_key=_env("MINIMAX_API_KEY", ""),
             minimax_base_url=_env("JAMBU_LLM_MINIMAX_BASE_URL", "https://api.minimax.io/v1"),
             minimax_model=_env("JAMBU_LLM_MINIMAX_MODEL", "MiniMax-M2"),
+            greenwich_base_url=_env("GREENWICH_BASE_URL", _env("JAMBU_LLM_GREENWICH_BASE_URL", "http://127.0.0.1:8085/v1")),
+            greenwich_extended_url=_env("GREENWICH_EXTENDED_URL", _env("JAMBU_LLM_GREENWICH_EXTENDED_URL", "http://127.0.0.1:8090/v1")),
+            greenwich_model=_env("GREENWICH_MODEL", _env("JAMBU_LLM_GREENWICH_MODEL", "qwen3.8-27b")),
+            greenwich_api_key=_env("GREENWICH_API_KEY", _env("JAMBU_LLM_GREENWICH_API_KEY", "")),
             dcm_base_url=_env("JAMBU_LLM_DCM_BASE_URL", "http://127.0.0.1:3001"),
             dcm_model=_env("JAMBU_LLM_DCM_MODEL", "qwen1.5-moe-a2.7b"),
             dcm_auth=_env("JAMBU_LLM_DCM_AUTH", ""),
@@ -130,6 +141,7 @@ class LLMConfig:
             "ollama": self.ollama_model,
             "mlx": self.mlx_model,
             "minimax": self.minimax_model,
+            "greenwich": self.greenwich_model,
             "dcm": self.dcm_model,
             "mock": "mock-model",
             "moa": self.default_model or "default",

@@ -49,6 +49,21 @@ log = logging.getLogger("jambu.browser_agent")
 
 MAX_SESSIONS = 4
 SESSION_TTL_SECONDS = 900
+
+# Active process reaper default: Greenwich asked for 5-minute idle TTL
+# (JAMBU_BROWSER_IDLE_TTL / JAMBU_SESSION_IDLE_TTL, seconds).
+SESSION_IDLE_TTL_SECONDS = 300
+
+
+def _idle_ttl_seconds() -> int:
+    for key in ("JAMBU_SESSION_IDLE_TTL", "JAMBU_BROWSER_IDLE_TTL"):
+        raw = (os.environ.get(key) or "").strip()
+        if raw:
+            try:
+                return max(30, int(raw))
+            except ValueError:
+                continue
+    return SESSION_IDLE_TTL_SECONDS
 MAX_STEPS = 200
 MAX_TEXT_CHARS = 4000
 
@@ -238,11 +253,50 @@ def host_allowed(host: str, allow_domains: list[str]) -> bool:
     host = (host or "").lower()
     if not host:
         return False
+    # Local-workspace mode: loopback/file hosts pass when allowlisted.
+    try:
+        from backend.core.security import _local_workspaces_allowed
+        if host in ("localhost", "127.0.0.1", "::1") and _local_workspaces_allowed():
+            for domain in allow_domains:
+                d = str(domain).lower().lstrip(".")
+                if host == d or (d in ("localhost", "127.0.0.1", "*")):
+                    return True
+    except Exception:
+        log.debug("ignored failure", exc_info=True)
     for domain in allow_domains:
         domain = domain.lower().lstrip(".")
         if host == domain or host.endswith("." + domain):
             return True
     return False
+
+
+# Implicit ARIA roles for the snapshot's tag set, so the AX tree reads the way
+# the spec's example does (``link`` / ``textbox``) instead of raw tag names.
+_AX_TAG_ROLES = {
+    "a": "link", "button": "button", "select": "combobox",
+    "textarea": "textbox", "option": "option", "summary": "button",
+}
+_AX_INPUT_ROLES = {
+    "text": "textbox", "search": "searchbox", "email": "textbox",
+    "password": "textbox", "tel": "textbox", "url": "textbox",
+    "number": "spinbutton", "checkbox": "checkbox", "radio": "radio",
+    "range": "slider", "file": "button", "submit": "button",
+    "reset": "button", "button": "button", "color": "button",
+    "date": "textbox", "datetime-local": "textbox", "month": "textbox",
+    "time": "textbox", "week": "textbox",
+}
+_AX_VALUE_ROLES = frozenset({"textbox", "searchbox", "combobox", "spinbutton"})
+
+
+def ax_role(element: dict) -> str:
+    """Role for one snapshot element: explicit role attr wins, else implicit."""
+    explicit = str(element.get("role") or "").strip().lower()
+    if explicit:
+        return explicit
+    tag = str(element.get("tag") or "").lower()
+    if tag == "input":
+        return _AX_INPUT_ROLES.get(str(element.get("type") or "text").lower(), "textbox")
+    return _AX_TAG_ROLES.get(tag, tag or "element")
 
 
 def classify_risk(*parts: str) -> Optional[str]:
@@ -356,6 +410,9 @@ class BrowserAgentSession:
         # that also appear in the explicit allowlist (both gates must agree).
         self.allow_private = allow_private
         self.created_at = created_at or time.time()
+        self.last_activity = self.created_at
+        self.sync_to_greenwich_memory = False
+        self.greenwich_audit_score: Optional[float] = None
         self.steps: list[Step] = []
         self.catalog: dict[str, dict] = {}
         self.last_url = ""
@@ -379,6 +436,14 @@ class BrowserAgentSession:
         self.artifacts_dir = artifacts_dir
 
     # -- helpers -------------------------------------------------------------
+
+    def touch(self) -> None:
+        """Mark session activity (drives the idle-TTL reaper)."""
+        self.last_activity = time.time()
+
+    @property
+    def idle_seconds(self) -> float:
+        return time.time() - getattr(self, "last_activity", self.created_at)
 
     def _scrub(self, text: str) -> str:
         if not self.scrub_pii or not text:
@@ -449,7 +514,34 @@ class BrowserAgentSession:
                 f"session is under human control; '{action}' refused",
             )
 
+    def _url_allowed_after_nav(self, url: str) -> bool:
+        """Post-navigation gate that understands file:// URLs.
+
+        ``host_allowed`` is the right question for http(s); a ``file://`` page
+        has no host at all, so it has to be judged by workspace confinement
+        instead — otherwise every local preview is silently reverted to
+        ``about:blank`` after loading correctly.
+        """
+        if str(url or "").lower().startswith("file:"):
+            try:
+                from backend.core.security import is_safe_file_url
+                return is_safe_file_url(url)
+            except Exception:
+                return False
+        return host_allowed(host_of(url), self.allow_domains)
+
     def _check_navigation(self, url: str) -> None:
+        # Local-workspace preview: file:// confined to workspace roots.
+        try:
+            from backend.core.security import is_safe_file_url
+            if isinstance(url, str) and url.lower().startswith("file:"):
+                if is_safe_file_url(url):
+                    return
+                raise SessionRefused("unsafe_url", f"file URL outside workspace roots: {url}")
+        except SessionRefused:
+            raise
+        except Exception:
+            log.debug("ignored failure", exc_info=True)
         if not is_safe_url(url, allow_private=self.allow_private):
             raise SessionRefused("unsafe_url", f"URL failed safety checks: {url}")
         if not host_allowed(host_of(url), self.allow_domains):
@@ -500,20 +592,33 @@ class BrowserAgentSession:
         }
 
     async def navigate(self, url: str) -> dict:
+        self.touch()
         try:
             self._check_navigation(url)
         except SessionRefused as refusal:
             self._record("navigate", "blocked", url=url, detail=refusal.detail)
+            await self._emit_event("error", {"message": refusal.detail or refusal.reason,
+                                             "reason": refusal.reason, "url": url})
             raise
+        # nav:start fires before the request so a status bar can show
+        # "connecting" rather than only reporting completion.
+        await self._emit_event("nav:start", {"url": url})
         await self.page.goto(url)
         self.last_url = await self.page.current_url()
+        self.touch()
+        await self._emit_event("nav:domcontentloaded",
+                               {"url": self.last_url, "title": await self._page_title()})
+        await self._emit_event("nav:networkidle", {"url": self.last_url})
         # Post-check: redirects can land outside the allowlist.
-        if not host_allowed(host_of(self.last_url), self.allow_domains):
+        if not self._url_allowed_after_nav(self.last_url):
             await self.page.goto("about:blank")
             self._record(
                 "navigate", "reverted", url=self.last_url,
                 detail=f"redirected outside allowlist: {host_of(self.last_url)}",
             )
+            await self._emit_event("error", {
+                "message": f"redirect landed on {host_of(self.last_url)} (outside allowlist); reverted",
+                "reason": "blocked_domain", "url": self.last_url})
             raise SessionRefused(
                 "blocked_domain",
                 f"redirect landed on {host_of(self.last_url)} (outside allowlist); reverted",
@@ -521,6 +626,25 @@ class BrowserAgentSession:
         step = self._record("navigate", "ok", url=self.last_url)
         self._capture_step({"action": "navigate", "url": url})
         return {"url": self.last_url, "step": step.to_dict()}
+
+    async def _emit_event(self, event: str, data: dict) -> None:
+        """Best-effort publish onto the Greenwich session event bus.
+
+        Emission never fails a navigation or an action: a telemetry outage must
+        not break the browser. Subscribers are per-session SSE queues.
+        """
+        try:
+            from backend.engine_runtime import manager as _manager
+            await _manager.emit_session_event(self.id, event, data)
+        except Exception:
+            log.debug("session event emit failed (%s)", event, exc_info=True)
+
+    async def _page_title(self) -> str:
+        """Page title for ``nav:domcontentloaded`` ("" when unavailable)."""
+        try:
+            return str(await self._call_optional("evaluate", "() => document.title") or "")[:120]
+        except Exception:
+            return ""
 
     async def _read_state(self) -> dict:
         """Fetch + scrub the current page state and refresh the catalog.
@@ -617,6 +741,7 @@ class BrowserAgentSession:
         trade for a negative assertion ("this must not appear"). It is now
         honoured on every dispatch path below.
         """
+        self.touch()
         if action not in _ACT_ACTIONS:
             raise SessionRefused("unknown_action", f"unsupported action: {action}")
         self._require_agent_control(action)
@@ -700,7 +825,7 @@ class BrowserAgentSession:
         after_url = await self.page.current_url()
         if after_url == before_url:
             return
-        if not host_allowed(host_of(after_url), self.allow_domains):
+        if not self._url_allowed_after_nav(after_url):
             await self.page.goto("about:blank")
             self.last_url = "about:blank"
             self._record(action, "reverted", ref=ref, url=after_url,
@@ -1681,10 +1806,165 @@ class BrowserAgentSession:
 
     async def capture_screenshot(self, full_page: bool = False) -> Optional[str]:
         """Current frame as base64 PNG (live-view / takeover source)."""
+        self.touch()
         try:
             return await self._call_optional("screenshot", full_page)
         except SessionRefused:
             return None
+
+    # -- Greenwich: AX-tree / act-by-ref / input / memory sync --------------
+    async def focused_ref(self) -> str:
+        """Ref of the focused element, or ``""`` when the adapter can't say."""
+        try:
+            return await self._call_optional("focused_ref") or ""
+        except SessionRefused:
+            return ""
+
+    def ax_tree_text(self, state: Optional[dict] = None,
+                     focused_ref: str = "") -> str:
+        """Render the catalog as an LLM-optimised AX tree with integer @refs.
+
+        Numbering must match what ``act_by_ax_ref`` indexes: that method walks
+        ``self.catalog``, so ref-less elements are excluded here too — a tree
+        that numbered them would hand the model an @N that resolves to a
+        different element.
+
+        ``focused_ref`` (optional) marks the element holding DOM focus, so the
+        model knows where a keypress will land without guessing.
+        """
+        elements = (state or {}).get("elements")
+        if elements is None:
+            elements = list(self.catalog.values())
+        else:
+            elements = [e for e in elements if e.get("ref")]
+        lines = ["[Root: document]"]
+        for idx, el in enumerate(elements, 1):
+            role = ax_role(el)
+            name = (el.get("name") or el.get("value") or "")[:80]
+            extra = ""
+            if el.get("href"):
+                extra = f' href="{str(el.get("href"))[:80]}"'
+            if role in _AX_VALUE_ROLES and el.get("value"):
+                extra += f' value="{str(el.get("value"))[:60]}"'
+            if el.get("disabled"):
+                extra += " (disabled)"
+            if focused_ref and el.get("ref") == focused_ref:
+                extra += " (focused)"
+            if el.get("frame"):
+                extra += f" [frame:{el.get('frame')}]"
+            lines.append(f'  [@{idx}: {role} "{name}"{extra}]')
+            el["_ax_ref"] = idx
+        return "\n".join(lines)
+
+    async def act_by_ax_ref(self, action: str, ref: int, text: str = "",
+                            approve: bool = False, press_enter: bool = False) -> dict:
+        """Dispatch click/type by integer AX-tree ref (1-based).
+
+        ``press_enter`` sends Return to the typed element through the adapter's
+        ref-scoped ``press`` (the DOM press handler), so submitting a search box
+        is one deterministic call. An adapter without ``press`` reports
+        ``press_enter: "unsupported"`` rather than pretending it fired.
+        """
+        try:
+            idx = int(ref)
+        except (TypeError, ValueError):
+            raise SessionRefused("unknown_ref", f"ref must be an integer, got {ref!r}")
+        elements = list(self.catalog.values())
+        if idx < 1 or idx > len(elements):
+            raise SessionRefused("unknown_ref", f"@{idx} out of range (1..{len(elements)}) — snapshot again")
+        catalog_ref = elements[idx - 1].get("ref")
+        if action != "type":
+            return await self.act(action, catalog_ref, text=text, approve=approve)
+        out = await self.act("type", catalog_ref, text=text, approve=approve)
+        if press_enter:
+            try:
+                await self._call_optional("press", catalog_ref, "Enter")
+            except SessionRefused:
+                out = {**out, "press_enter": "unsupported"}
+        return out
+
+    async def send_input(self, kind: str, x: float = 0, y: float = 0,
+                         delta_x: float = 0, delta_y: float = 0,
+                         key: str = "", text: str = "") -> dict:
+        """Coordinate-based input passthrough (SwiftUI live viewport)."""
+        self.touch()
+        send = getattr(self.page, "send_input", None)
+        if callable(send):
+            try:
+                return await send(kind, x=x, y=y, delta_x=delta_x, delta_y=delta_y, key=key, text=text)
+            except Exception as e:
+                return {"ok": False, "error": str(e)[:200]}
+        # Fake pages in tests have no mouse: emulate click/type via catalog.
+        kind_l = (kind or "").lower()
+        if kind_l == "click":
+            await self._read_state()
+            best = None
+            for el in self.catalog.values():
+                best = el
+                break
+            if best is None:
+                return {"ok": False, "error": "no elements to click"}
+            await self.act("click", best.get("ref", ""), approve=True)
+            return {"ok": True, "type": "click", "x": x, "y": y}
+        return {"ok": True, "type": kind_l, "x": x, "y": y, "emulated": True}
+
+    async def capture_frame(self, quality: int = 80) -> Optional[str]:
+        """One screencast frame as base64 JPEG (CDP captureScreenshot)."""
+        self.touch()
+        shot = getattr(self.page, "screencast_jpeg", None)
+        if callable(shot):
+            try:
+                frame = await shot(quality=int(quality or 80))
+                if frame:
+                    return frame
+            except Exception:
+                log.debug("ignored failure", exc_info=True)
+        return await self.capture_screenshot()
+
+    async def start_screencast(self, on_frame, quality: int = 70,
+                               every_nth_frame: int = 1) -> bool:
+        """Begin a pushed ``Page.startScreencast`` stream (spec §2).
+
+        ``on_frame`` is called with each base64 JPEG. False means the adapter
+        cannot push frames (no CDP / fake page) and the caller should poll
+        :meth:`capture_frame` instead.
+        """
+        self.touch()
+        try:
+            return bool(await self._call_optional(
+                "start_screencast", on_frame,
+                quality=int(quality or 70), every_nth_frame=int(every_nth_frame or 1),
+            ))
+        except SessionRefused:
+            return False
+        except Exception:
+            log.debug("start_screencast failed", exc_info=True)
+            return False
+
+    async def stop_screencast(self) -> None:
+        """Tear the pushed stream down (best effort, never raises)."""
+        try:
+            await self._call_optional("stop_screencast")
+        except Exception:
+            log.debug("stop_screencast failed", exc_info=True)
+
+    async def sync_to_greenwich(self, title: str = "", clean_markdown: str = "",
+                                url: str = "", citations: Optional[list] = None) -> dict:
+        """Ingest this session's artifact into the Greenwich Memory Bridge.
+
+        Endpoint resolution (spec path, then the deployed trajectory path) and
+        the payload shape live in :mod:`backend.modules.greenwich_bridge`.
+        """
+        from backend.modules.greenwich_bridge import ingest_memory
+
+        return await ingest_memory(
+            title=title,
+            clean_markdown=clean_markdown,
+            url=url or self.last_url,
+            citations=citations,
+            metadata={"session_id": self.id,
+                      "audit_score": self.greenwich_audit_score},
+        )
 
     # -- action recording ----------------------------------------------------
 

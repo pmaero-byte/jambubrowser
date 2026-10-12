@@ -16,6 +16,7 @@ Security Features:
 import asyncio
 import json
 import logging
+import os
 import time
 import base64
 import hashlib
@@ -34,6 +35,50 @@ log = logging.getLogger("jambu.browser")
 # Lazy import for Playwright - only imported when first used
 _playwright = None
 _playwright_lock = Lock()
+
+# Single shared Chromium instance for BrowserContext multiplexing
+# (Improvement 1). Ephemeral sessions isolate via lightweight contexts
+# instead of one OS process tree per session.
+_shared_browser = None
+_shared_browser_lock = None
+
+
+def _shared_lock():
+    global _shared_browser_lock
+    if _shared_browser_lock is None:
+        import asyncio as _aio
+        _shared_browser_lock = _aio.Lock()
+    return _shared_browser_lock
+
+
+def _idle_ttl_seconds() -> int:
+    try:
+        return int(os.environ.get("JAMBU_BROWSER_IDLE_TTL", "300") or "300")
+    except ValueError:
+        return 300
+
+
+def _chromium_headless_args() -> list:
+    """Headless agent profile: no GPU compositing unless asked otherwise."""
+    args = [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-blink-features=AutomationControlled",
+        "--disable-features=IsolateOrigins,site-per-process",
+        "--disable-background-networking",
+        "--disable-client-side-phishing-detection",
+        "--disable-default-apps",
+        "--disable-extensions",
+        "--disable-sync",
+        "--no-first-run",
+        "--disable-dev-shm-usage",
+    ]
+    raw = (os.environ.get("JAMBU_BROWSER_GPU", "off") or "off").lower().strip()
+    if raw in ("", "off", "0", "false", "no", "disable"):
+        args += ["--disable-gpu", "--disable-gpu-compositing", "--disable-software-rasterizer"]
+    if (os.environ.get("JAMBU_BROWSER_HEADLESS_NEW", "1") or "1").lower().strip() in ("1", "true", "yes", "on", "new"):
+        args += ["--headless=new"]
+    return args
 
 
 class SessionMode(Enum):
@@ -76,6 +121,42 @@ async def _get_playwright():
             raise RuntimeError(f"Failed to start Playwright: {e}")
 
 
+async def get_shared_browser():
+    """Return the single shared Chromium instance (creates it on first use)."""
+    global _shared_browser
+    if _shared_browser is not None:
+        try:
+            if getattr(_shared_browser, "is_connected", lambda: True)() is False:
+                _shared_browser = None
+            else:
+                return _shared_browser
+        except Exception:
+            _shared_browser = None
+    lock = _shared_lock()
+    async with lock:
+        if _shared_browser is not None:
+            return _shared_browser
+        pw = await _get_playwright()
+        _shared_browser = await pw.chromium.launch(headless=True, args=_chromium_headless_args())
+        return _shared_browser
+
+
+async def close_shared_browser():
+    """Close the shared Chromium instance (engine shutdown hook)."""
+    global _shared_browser
+    browser = _shared_browser
+    _shared_browser = None
+    if browser is not None:
+        try:
+            await browser.close()
+        except Exception:
+            log.debug("shared browser close failed", exc_info=True)
+
+
+def shared_browser_info() -> dict:
+    return {"shared": _shared_browser is not None}
+
+
 # ---- Browser Session ----
 
 class BrowserSession:
@@ -113,13 +194,28 @@ class BrowserSession:
         self._page = None
         self._pw = None
         self._browser = None
+        self._owns_browser = False  # multiplexed shared instance vs dedicated launch
         self._fingerprint = None
         self._created_at = time.time()
+        self._last_activity = time.time()
         self._pages_visited = 0
         self._sanitize_log = []
         # Which endpoint the VPN layer picked for this session (redacted for
         # logs; the real URL stays in self.proxy).
         self._vpn_endpoint: Optional[str] = None
+
+    def touch(self) -> None:
+        """Mark session activity (drives idle TTL reaping)."""
+        self._last_activity = time.time()
+
+    @property
+    def idle_seconds(self) -> float:
+        return time.time() - getattr(self, "_last_activity", self._created_at)
+
+    async def screencast_frame(self, *, full_page: bool = False) -> Optional[str]:
+        """Current frame as base64 PNG (alias for capture_screenshot)."""
+        self.touch()
+        return await self.capture_screenshot(full_page=full_page)
 
     def _resolve_proxy(self) -> Optional[str]:
         """Decide the egress for this session.
@@ -207,15 +303,31 @@ class BrowserSession:
             "--disable-client-side-phishing-detection",
             "--disable-default-apps",
             "--disable-extensions",
-            "--disable-gpu",
             "--disable-sync",
             "--no-first-run",
         ])
+        # Headless agent profile: avoid GPU compositing (Apple Silicon UMA).
+        for flag in ("--disable-gpu", "--disable-gpu-compositing"):
+            if flag not in launch_args:
+                launch_args.append(flag)
 
-        self._browser = await self._pw.chromium.launch(
-            headless=True,
-            args=launch_args,
-        )
+        # ── Multiplexing: share one Chromium for ephemeral sessions ──
+        sharing = self.mode in (SessionMode.EPHEMERAL, SessionMode.LOCAL_ONLY)
+        if sharing and self.mode != SessionMode.TOR_ISOLATED:
+            try:
+                shared = await get_shared_browser()
+                self._browser = shared
+                self._owns_browser = False
+            except Exception as exc:
+                log.warning("shared browser unavailable, dedicated launch: %s", exc)
+                sharing = False
+
+        if not sharing or self._browser is None:
+            self._browser = await self._pw.chromium.launch(
+                headless=True,
+                args=launch_args,
+            )
+            self._owns_browser = True
 
         # Generate fingerprint for this session
         rotator = get_rotator()
@@ -309,14 +421,24 @@ class BrowserSession:
             if self.mode in (SessionMode.EPHEMERAL, SessionMode.TOR_ISOLATED):
                 await self._clear_all_storage()
 
-            await self._context.close()
+            try:
+                await self._context.close()
+            except Exception:
+                log.debug("context close failed", exc_info=True)
 
-        if self._browser:
-            await self._browser.close()
+        # Multiplexed sessions share the Chromium process — only a dedicated
+        # launch owns (and closes) its browser. Closing the shared instance
+        # here would kill every sibling context.
+        if self._browser and getattr(self, "_owns_browser", True):
+            try:
+                await self._browser.close()
+            except Exception:
+                log.debug("browser close failed", exc_info=True)
 
         self._context = None
         self._page = None
         self._browser = None
+        self._owns_browser = False
 
     async def _clear_all_storage(self):
         """Clear all browser storage (cookies, localStorage, sessionStorage)."""
@@ -352,6 +474,63 @@ class BrowserSession:
     async def get_page(self):
         """Public accessor for the active page (agent sessions, scrapers)."""
         return await self._ensure_page()
+
+    async def send_input(self, kind: str, x: float = 0, y: float = 0,
+                         delta_x: float = 0, delta_y: float = 0,
+                         key: str = "", text: str = "") -> dict:
+        """Coordinate-based input for Greenwich SwiftUI passthrough.
+
+        kinds: click | move | scroll | keydown | type | press.
+        """
+        page = await self._ensure_page()
+        self.touch()
+        kind = (kind or "").lower()
+        try:
+            if kind == "click":
+                await page.mouse.click(float(x or 0), float(y or 0))
+            elif kind == "move":
+                await page.mouse.move(float(x or 0), float(y or 0))
+            elif kind == "scroll":
+                await page.mouse.wheel(float(delta_x or 0), float(delta_y or 0))
+            elif kind in ("keydown", "press"):
+                await page.keyboard.press(key or text or "Enter")
+            elif kind == "type":
+                if x or y:
+                    await page.mouse.click(float(x or 0), float(y or 0))
+                await page.keyboard.type(text or "")
+            else:
+                return {"ok": False, "error": f"unknown input type: {kind}"}
+            return {"ok": True, "type": kind, "x": x, "y": y}
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:300]}
+
+    async def screencast_jpeg(self, quality: int = 80) -> Optional[str]:
+        """Single screencast frame as base64 JPEG (CDP Page.captureScreenshot)."""
+        import base64 as _b64
+        page = await self._ensure_page()
+        self.touch()
+        try:
+            cdp = await self._context.new_cdp_session(page)
+            try:
+                res = await cdp.send("Page.captureScreenshot", {"format": "jpeg", "quality": int(quality)})
+                return res.get("data")
+            finally:
+                try:
+                    await cdp.detach()
+                except Exception:
+                    log.debug("ignored failure", exc_info=True)
+        except Exception:
+            log.debug("ignored failure", exc_info=True)
+        # Fallback: PNG screenshot re-encoded as JPEG-ish base64.
+        try:
+            raw = await page.screenshot(type="jpeg", quality=int(quality))
+            return _b64.b64encode(raw).decode()
+        except Exception:
+            try:
+                raw = await page.screenshot(type="png")
+                return _b64.b64encode(raw).decode()
+            except Exception:
+                return None
 
     async def start_trace(self):
         """Begin a Playwright trace (screenshots + snapshots + sources)."""
@@ -491,6 +670,9 @@ class BrowserManager:
         context_options: Optional[dict] = None,
     ) -> BrowserSession:
         """Get or create a browser session with specified privacy mode."""
+        # Active process reaper: reap idle sessions (default 5 min TTL) before
+        # enforcing the cap so zombies never accumulate.
+        await self.reap_idle()
         # Enforce session limits
         if len(self._sessions) >= self._session_limits["max_concurrent"]:
             # Cleanup oldest ephemeral session
@@ -508,8 +690,28 @@ class BrowserManager:
             self._sessions[session_id] = session
         elif self._sessions[session_id]._context is None:
             await self._sessions[session_id].start()
+        else:
+            self._sessions[session_id].touch()
 
         return self._sessions[session_id]
+
+    async def reap_idle(self, ttl_seconds: Optional[int] = None) -> list:
+        """Close sessions idle longer than TTL (default JAMBU_BROWSER_IDLE_TTL=300)."""
+        ttl = ttl_seconds if ttl_seconds is not None else _idle_ttl_seconds()
+        reaped = []
+        for sid, sess in list(self._sessions.items()):
+            try:
+                idle = sess.idle_seconds
+            except Exception:
+                idle = 0.0
+            if idle >= ttl:
+                try:
+                    await sess.stop()
+                except Exception:
+                    log.debug("idle reap stop failed for %s", sid, exc_info=True)
+                self._sessions.pop(sid, None)
+                reaped.append(sid)
+        return reaped
 
     def _create_session_object(
         self,
@@ -574,13 +776,17 @@ class BrowserManager:
     async def close_session(self, session_id: str):
         """Close a specific session and clean up all traces."""
         if session_id in self._sessions:
-            await self._sessions[session_id].stop()
+            try:
+                await self._sessions[session_id].stop()
+            except Exception:
+                log.debug("close_session stop failed for %s", session_id, exc_info=True)
             del self._sessions[session_id]
 
     async def close_all(self):
-        """Close all active sessions."""
+        """Close all active sessions + the shared Chromium (shutdown hook)."""
         for session_id in list(self._sessions.keys()):
             await self.close_session(session_id)
+        await close_shared_browser()
 
     async def _cleanup_oldest_ephemeral(self):
         """Cleanup the oldest ephemeral session to free resources."""

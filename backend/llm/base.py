@@ -193,7 +193,8 @@ _PRICING_TABLE: list[tuple[str, str, float, float]] = [
 
 # Local providers: zero marginal cost (electricity aside). DCM is a
 # user-operated compute mesh — DCT metering happens mesh-side, not in USD.
-_LOCAL_PROVIDERS = {"ollama", "mlx", "mock", "dcm"}
+# Greenwich is the Greenwich Studio local stack (:8085/:8090) — also local.
+_LOCAL_PROVIDERS = {"ollama", "mlx", "mock", "dcm", "greenwich"}
 
 
 def estimate_cost_for_model(provider: str, model: str, usage: Usage) -> float:

@@ -920,6 +920,145 @@ class PlaywrightPage:
     async def goto(self, url: str) -> None:
         await self._page.goto(url, wait_until="domcontentloaded", timeout=20000)
 
+    # -- Greenwich live viewport: coordinates + screencast frames ------------
+    async def send_input(self, kind: str, x: float = 0, y: float = 0,
+                         delta_x: float = 0, delta_y: float = 0,
+                         key: str = "", text: str = "") -> dict:
+        """Coordinate-based mouse/keyboard passthrough for the live viewport.
+
+        Unlike ``click``/``type_text`` this needs no catalog ref: the desktop
+        UI streams a frame and sends back the coordinates the user aimed at.
+        """
+        kind = (kind or "").lower()
+        try:
+            if kind == "click":
+                await self._page.mouse.click(float(x or 0), float(y or 0))
+            elif kind == "move":
+                await self._page.mouse.move(float(x or 0), float(y or 0))
+            elif kind == "scroll":
+                await self._page.mouse.wheel(float(delta_x or 0), float(delta_y or 0))
+            elif kind in ("keydown", "press"):
+                await self._page.keyboard.press(key or text or "Enter")
+            elif kind == "type":
+                if x or y:
+                    await self._page.mouse.click(float(x or 0), float(y or 0))
+                await self._page.keyboard.type(text or "")
+            else:
+                return {"ok": False, "error": f"unknown input type: {kind}"}
+            return {"ok": True, "type": kind, "x": x, "y": y}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)[:300]}
+
+    async def press_key(self, key: str) -> None:
+        """Press a key on whatever holds focus (no ref required)."""
+        await self._page.keyboard.press(key)
+
+    async def focused_ref(self) -> str:
+        """``data-jambu-ref`` of the focused element, or ``""``.
+
+        Lets the AX tree mark ``(focused)`` so a typing step is deterministic.
+        """
+        try:
+            return await self._page.evaluate(
+                "() => { const a = document.activeElement;"
+                " return (a && a.getAttribute && a.getAttribute('data-jambu-ref')) || ''; }"
+            ) or ""
+        except Exception:
+            return ""
+
+    async def screencast_jpeg(self, quality: int = 80) -> Optional[str]:
+        """One JPEG frame via CDP ``Page.captureScreenshot``.
+
+        Falls back to Playwright's own ``screenshot(type="jpeg")`` when CDP is
+        unavailable (non-Chromium), so the live view degrades instead of dying.
+        """
+        try:
+            session = await self._cdp_session()
+            try:
+                res = await session.send("Page.captureScreenshot",
+                                         {"format": "jpeg", "quality": int(quality)})
+                data = (res or {}).get("data")
+                if data:
+                    return data
+            finally:
+                try:
+                    await session.detach()
+                except Exception:
+                    log.debug("cdp detach failed after screencast", exc_info=True)
+        except Exception:
+            log.debug("CDP screencast unavailable; falling back to screenshot",
+                      exc_info=True)
+        try:
+            raw = await self._page.screenshot(type="jpeg", quality=int(quality))
+            return base64.b64encode(raw).decode()
+        except Exception:
+            return None
+
+    async def start_screencast(self, on_frame, *, quality: int = 80,
+                               every_nth_frame: int = 1,
+                               max_width: int = 0, max_height: int = 0) -> bool:
+        """Start a CDP ``Page.startScreencast`` push stream (spec §2).
+
+        ``on_frame`` receives each base64 JPEG and must not block: Chromium
+        drops the stream if frames are not acknowledged, so the required
+        ``Page.screencastFrameAck`` is sent here automatically. Returns False
+        (never raises) when the adapter has no CDP, so the caller can fall back
+        to polling ``screencast_jpeg``.
+        """
+        try:
+            session = await self._cdp_session()
+        except Exception:
+            log.debug("start_screencast unavailable (no CDP)", exc_info=True)
+            return False
+        self._screencast_session = session
+
+        def _on_frame(event):
+            event = event or {}
+            payload = event.get("data")
+            if payload:
+                try:
+                    on_frame(payload)
+                except Exception:
+                    log.debug("screencast frame callback failed", exc_info=True)
+            frame_id = event.get("sessionId")
+            if frame_id is not None:
+                try:
+                    asyncio.create_task(
+                        session.send("Page.screencastFrameAck", {"sessionId": frame_id})
+                    )
+                except Exception:
+                    log.debug("screencast ack failed", exc_info=True)
+
+        session.on("Page.screencastFrame", _on_frame)
+        params = {"format": "jpeg", "quality": int(quality),
+                  "everyNthFrame": int(every_nth_frame)}
+        if max_width:
+            params["maxWidth"] = int(max_width)
+        if max_height:
+            params["maxHeight"] = int(max_height)
+        try:
+            await session.send("Page.startScreencast", params)
+            return True
+        except Exception:
+            log.debug("Page.startScreencast rejected; polling instead", exc_info=True)
+            await self.stop_screencast()
+            return False
+
+    async def stop_screencast(self) -> None:
+        """Stop the push stream and detach its CDP session (idempotent)."""
+        session = getattr(self, "_screencast_session", None)
+        self._screencast_session = None
+        if session is None:
+            return
+        try:
+            await session.send("Page.stopScreencast")
+        except Exception:
+            log.debug("Page.stopScreencast failed", exc_info=True)
+        try:
+            await session.detach()
+        except Exception:
+            log.debug("screencast cdp detach failed", exc_info=True)
+
     # -- catalog: multi-frame + shadow DOM -----------------------------------
 
     @staticmethod

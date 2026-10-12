@@ -1,18 +1,15 @@
 """Research, search, scrape, and sandbox execution endpoints."""
-import asyncio
-import hashlib
-import json
 import logging
 import re
 import time
+import xml.etree.ElementTree as ET
 from typing import Optional
 
 import httpx
-import xml.etree.ElementTree as ET
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, validator
 
-from backend.core.audit import get_audit_logger, ActionCategory
+from backend.core.audit import ActionCategory, get_audit_logger
 from backend.core.database import get_db_cursor
 from backend.core.security import is_safe_url
 
@@ -26,11 +23,21 @@ except ImportError:
     make_async_client = httpx.AsyncClient
 
 from backend.engine_runtime import (
-    LATEST_LLM_CONFIG, CLOUD_PROVIDERS, active_tasks, _task_token_counts,
-    _task_token_starts, cancel_flags,
-    manager, _call_llm, _resolve_llm_config, _new_task_id, safe_task,
-    broadcast_agent_state, broadcast_agent_telemetry,
-    broadcast_task_start, broadcast_task_end, is_cancelled,
+    CLOUD_PROVIDERS,
+    LATEST_LLM_CONFIG,
+    _call_llm,
+    _new_task_id,
+    _resolve_llm_config,
+    _task_token_counts,
+    active_tasks,
+    broadcast_agent_state,
+    broadcast_agent_telemetry,
+    broadcast_task_end,
+    broadcast_task_start,
+    cancel_flags,
+    is_cancelled,
+    manager,
+    safe_task,
 )
 
 router = APIRouter(tags=["research"])
@@ -50,6 +57,7 @@ class ResearchRequest(BaseModel):
     use_agent: bool = False
     llm_provider: Optional[str] = None
     llm_config: Optional[dict] = None
+    sync_to_greenwich_memory: bool = False
 
     @validator("query")
     def validate_query(cls, v):
@@ -85,6 +93,7 @@ class ScrapeRequest(BaseModel):
     url: str
     query: str = ""
     client_id: str = "default"
+    sync_to_greenwich_memory: bool = False
 
     @validator("url")
     def validate_url(cls, v):
@@ -118,11 +127,22 @@ class InterruptRequest(BaseModel):
     client_id: str = "default"
 
 
+async def _greenwich_ingest(title: str, clean_markdown: str, url: str = "",
+                            citations: Optional[list] = None,
+                            metadata: Optional[dict] = None) -> dict:
+    """Fire-and-forget ingest into the Greenwich Memory Bridge (:8095)."""
+    from backend.modules.greenwich_bridge import ingest_memory
+
+    return await ingest_memory(title=title, clean_markdown=clean_markdown,
+                               url=url, citations=citations, metadata=metadata)
+
+
 async def _brain_only_research(query: str) -> dict:
     try:
-        from sentence_transformers import SentenceTransformer
         import numpy as np
-        from backend.core.vector_search import search_similar, is_sqlite_vec_available
+        from sentence_transformers import SentenceTransformer
+
+        from backend.core.vector_search import search_similar
 
         model = SentenceTransformer("all-MiniLM-L6-v2")
         query_vec = model.encode(query).astype(np.float32).tobytes()
@@ -330,7 +350,7 @@ async def _agent_response(req: "ResearchRequest", cid: str,
         return None
     try:
         from backend.agent import Agent
-        from backend.memory import get_memory, retrieve_relevant, format_context
+        from backend.memory import format_context, get_memory, retrieve_relevant
         mem = get_memory()
         hits = retrieve_relevant(req.query, user_id=cid, k=5)
         context_str = format_context(hits) if hits else ""
@@ -593,13 +613,25 @@ async def research(req: ResearchRequest):
         _task_token_counts[task_id] = _task_token_counts.get(task_id, 0) + completion
 
         await broadcast_task_end(cid, task_id, status="completed", result_preview=answer[:200])
-        return {
+        out = {
             "answer": answer,
             "context": context_text,
             "sources": [s["url"] for s in sources],
             "doc_count": len(sources),
             "usage": usage,
         }
+        if req.sync_to_greenwich_memory:
+            try:
+                from backend.engine_runtime import safe_task as _safe
+                _safe(_greenwich_ingest(
+                    title=req.query[:120], clean_markdown=answer,
+                    url=(sources[0].get("url", "") if sources else ""),
+                    citations=[s.get("url", "") for s in sources],
+                    metadata={"client_id": cid, "domain": req.domain}), label="greenwich-sync")
+                out["greenwich_sync"] = "queued"
+            except Exception:
+                log.debug("ignored failure", exc_info=True)
+        return out
     except Exception as e:
         await broadcast_task_end(cid, task_id, status="failed", result_preview=str(e))
         raise HTTPException(status_code=500, detail=str(e))
@@ -670,8 +702,8 @@ async def scrape(req: ScrapeRequest):
     # Try crawl4ai first, fallback to Playwright
     try:
         from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
-        from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
         from crawl4ai.content_filter_strategy import BM25ContentFilter
+        from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
 
         markdown_strategy = DefaultMarkdownGenerator(
             content_filter=BM25ContentFilter(user_query=req.query or "content", bm25_threshold=0.3),
@@ -702,12 +734,20 @@ async def scrape(req: ScrapeRequest):
                 },
                 session_id=req.client_id,
             )
-            return {
+            out = {
                 "success": True,
                 "url": req.url,
                 "markdown": sanitized_content,
                 "title": result.metadata.get("title", "") if result.metadata else "",
             }
+            if req.sync_to_greenwich_memory:
+                try:
+                    from backend.engine_runtime import safe_task as _safe2
+                    _safe2(_greenwich_ingest(title=out["title"] or req.url, clean_markdown=sanitized_content, url=req.url, citations=[req.url], metadata={"client_id": req.client_id, "engine": "crawl4ai"}), label="greenwich-sync")
+                    out["greenwich_sync"] = "queued"
+                except Exception:
+                    log.debug("ignored failure", exc_info=True)
+            return out
         return {"success": False, "url": req.url, "error": "Failed to scrape page"}
     except ImportError:
         pass
@@ -734,12 +774,20 @@ async def scrape(req: ScrapeRequest):
                 },
                 session_id=req.client_id,
             )
-            return {
+            out2 = {
                 "success": True,
                 "url": req.url,
                 "markdown": sanitized_content,
                 "title": result.get("title", ""),
             }
+            if req.sync_to_greenwich_memory:
+                try:
+                    from backend.engine_runtime import safe_task as _safe3
+                    _safe3(_greenwich_ingest(title=out2["title"] or req.url, clean_markdown=sanitized_content, url=req.url, citations=[req.url], metadata={"client_id": req.client_id, "engine": "playwright"}), label="greenwich-sync")
+                    out2["greenwich_sync"] = "queued"
+                except Exception:
+                    log.debug("ignored failure", exc_info=True)
+            return out2
         return {"success": False, "url": req.url, "error": result.get("error", "Failed to scrape page")}
     except Exception as e:
         audit.log(

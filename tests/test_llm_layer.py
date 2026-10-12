@@ -136,6 +136,7 @@ class TestConfig:
         assert c.model_for("ollama") == c.ollama_model
         assert c.model_for("mlx") == c.mlx_model
         assert c.model_for("minimax") == c.minimax_model
+        assert c.model_for("greenwich") == c.greenwich_model
         assert c.model_for("unknown") == ""
 
 
@@ -193,7 +194,7 @@ class TestRegistry:
         from backend.llm.registry import get_registry
         reg = get_registry()
         names = reg.list_available()
-        for expected in ["mock", "ollama", "mlx", "anthropic", "openai", "minimax"]:
+        for expected in ["mock", "ollama", "mlx", "anthropic", "openai", "minimax", "greenwich"]:
             assert expected in names, f"missing provider: {expected}"
 
     def test_get_provider_returns_provider(self):

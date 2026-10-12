@@ -42,9 +42,15 @@ class BrowserAgentService:
     """Manages agent sessions with caps, TTL, and real-browser creation."""
 
     def __init__(self, max_sessions: int = MAX_SESSIONS,
-                 ttl_seconds: int = SESSION_TTL_SECONDS):
+                 ttl_seconds: int = SESSION_TTL_SECONDS,
+                 idle_ttl_seconds: Optional[int] = None):
         self.max_sessions = max_sessions
         self.ttl_seconds = ttl_seconds
+        try:
+            from backend.modules.browser_agent import _idle_ttl_seconds as _agent_idle
+            self.idle_ttl_seconds = idle_ttl_seconds if idle_ttl_seconds is not None else _agent_idle()
+        except Exception:
+            self.idle_ttl_seconds = idle_ttl_seconds or 300
         self._sessions: dict[str, BrowserAgentSession] = {}
         self._browser_sessions: dict[str, Any] = {}
         self._artifacts: dict[str, dict] = {}
@@ -53,10 +59,20 @@ class BrowserAgentService:
         now = time.time()
         for sid in list(self._sessions):
             session = self._sessions[sid]
-            if session.closed or now - session.created_at > self.ttl_seconds:
+            idle = now - getattr(session, "last_activity", session.created_at)
+            if session.closed or now - session.created_at > self.ttl_seconds or idle > self.idle_ttl_seconds:
                 self._sessions.pop(sid, None)
-                self._browser_sessions.pop(sid, None)
+                browser_session = self._browser_sessions.pop(sid, None)
                 self._artifacts.pop(sid, None)
+                # Best-effort: close the underlying context so no zombie
+                # renderer/GPU process survives a reaped session.
+                if browser_session is not None:
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            loop.create_task(browser_session.stop())
+                    except Exception:
+                        log.debug("ignored failure", exc_info=True)
 
     async def open(
         self, *, allow_domains: list[str], require_approval: bool = True,
@@ -65,6 +81,7 @@ class BrowserAgentService:
         context_options: Optional[dict] = None, trace: bool = False,
         har: bool = False, video: bool = False,
         artifacts_dir: Optional[str] = None,
+        sync_to_greenwich_memory: bool = False,
     ) -> BrowserAgentSession:
         self._prune()
         if len(self._sessions) >= self.max_sessions:
@@ -150,6 +167,7 @@ class BrowserAgentService:
             require_approval=require_approval, scrub_pii=effective_scrub,
             allow_private=allow_private, artifacts_dir=artifacts_dir,
         )
+        agent.sync_to_greenwich_memory = bool(sync_to_greenwich_memory)
         self._sessions[session_id] = agent
         self._browser_sessions[session_id] = browser_session
         self._artifacts[session_id] = {
