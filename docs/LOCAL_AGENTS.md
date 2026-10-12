@@ -83,15 +83,24 @@ surface via `GET /mcp/tools/docs?format=json`.
 ```
 
 The desktop app spawns the same engine on launch (Rust orchestrator
-prefers `.venv/bin/python`). Opening the `.app` is enough; agents then
-connect via A, B, or C with zero extra setup.
+prefers a checkout's `.venv/bin/python`; with no checkout it boots the
+frozen `jambubrowser-engine` sidecar shipped inside the `.app`). Opening
+the `.app` is enough — even on a fresh machine with no Python — and agents
+then connect via A, B, or C with zero extra setup.
 
 ## macOS build (`.app` + `.dmg`)
 
 ```bash
-./scripts/build.sh --skip-signing   # unsigned, runs locally after
-                                    # right-click → Open (Gatekeeper)
+scripts/build_engine_sidecar.sh       # freeze the Python engine into
+                                      # src-tauri/binaries/ (~150MB, one-time
+                                      # per checkout change; bundles the full
+                                      # 289-route surface, no ML deps)
+./scripts/build.sh --skip-signing      # unsigned, runs locally after
+                                      # right-click → Open (Gatekeeper)
 ```
+
+Run the sidecar step **before** `tauri build` — the bundle fails if
+`externalBin` (`binaries/jambubrowser-engine-<triple>`) is missing.
 
 Signed/notarized (releases): set `APPLE_SIGNING_IDENTITY`, `APPLE_ID`,
 `APPLE_PASSWORD`, `APPLE_TEAM_ID` (see `scripts/build.sh`), or tag

@@ -9,9 +9,11 @@ configuration.
 >   runtime handler is not wired yet.
 > - The auto-updater plugin is configured, but the JS package, capability
 >   permission, and update-check UI are not shipped.
-> - The backend launcher assumes a repo checkout with system `python3`;
->   the self-contained sidecar (`externalBin`) is TODO. The
->   `llama-server`-in-`binaries/` layout below is aspirational.
+> - The backend launcher prefers a repo checkout; without one (DMG on a
+>   fresh machine) it boots the frozen `jambubrowser-engine` sidecar in
+>   `Contents/MacOS/` (built by `scripts/build_engine_sidecar.sh`, shipped
+>   via `externalBin`). The bundled app is self-contained — no system
+>   Python, no venv, no checkout required.
 > - The browser pane paints polled CDP screenshots (~1 FPS) — real
 >   multi-webview rendering is the next milestone.
 

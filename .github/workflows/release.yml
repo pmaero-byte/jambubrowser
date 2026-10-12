@@ -85,6 +85,21 @@ jobs:
           security list-keychain -d user -s $KEYCHAIN_PATH
           security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build frozen engine sidecar
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -r requirements.txt
+          bash scripts/build_engine_sidecar.sh
+        # Produces browser-app/src-tauri/binaries/jambubrowser-engine-<triple>;
+        # tauri.conf.json `externalBin` embeds it in the .app, and the Tauri
+        # bundle build fails outright if it is missing (so a sidecar-less
+        # UI-only bundle can never ship again).
+
       - name: Install npm deps
         working-directory: browser-app
         run: |

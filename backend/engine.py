@@ -39,6 +39,11 @@ except RuntimeError:
 # This ensures JAMBU_LLM_PROVIDER, MINIMAX_API_KEY, etc. are available
 # when the engine is started directly (e.g. `python3 -m uvicorn ...`).
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+# Bundled-app fallback: the frozen sidecar (PyInstaller, see
+# scripts/build_engine_sidecar.sh) has no checkout `.env` beside it, so also
+# honour a user-level env file. load_dotenv never overrides already-set vars,
+# so a checkout `.env` still wins in dev.
+load_dotenv(Path.home() / ".jambubrowser" / ".env")
 
 logging.basicConfig(
     level=logging.INFO,

@@ -24,6 +24,10 @@
         {
           "name": "python3.11",
           "args": ["-m", "uvicorn", "backend.engine:app", "--port", "8001"]
+        },
+        {
+          "name": "jambubrowser-engine",
+          "args": ["--host", "127.0.0.1", "--port", "8001"]
         }
       ]
     },

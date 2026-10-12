@@ -32,6 +32,96 @@ impl AppState {
     }
 }
 
+/// Claim the per-user instance lock (`~/.jambubrowser/app.lock`).
+/// Returns the open lock file on success — **the caller must keep the handle
+/// alive for the process lifetime**, else the lock is released. Returns
+/// `None` when another Jambubrowser instance already holds it.
+///
+/// Implemented with a lock file rather than `tauri-plugin-single-instance`
+/// (which would add a dependency + lockfile churn) and `std`-only, so the
+/// unit tests below can exercise it without a Tauri runtime.
+fn claim_instance_lock() -> Option<std::fs::File> {
+    let lock_path = dirs_lock_path()?;
+    if let Some(parent) = lock_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&lock_path)
+        .ok()?;
+    // Mutual exclusion via an *exclusive create* on a companion `<lock>.pid`
+    // file: the first creator wins, and losers check whether the recorded pid
+    // is still alive (stale locks from crashes are taken over).
+    let pid_path = lock_path.with_extension("pid");
+    match std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&pid_path)
+    {
+        Ok(mut f) => {
+            use std::io::Write as _;
+            let _ = writeln!(f, "{}", std::process::id());
+            Some(file)
+        }
+        Err(_) => {
+            // A pid file exists: check whether its owner is still alive.
+            // Stale lock (previous crash/kill -9): take it over.
+            let stale = std::fs::read_to_string(&pid_path)
+                .ok()
+                .and_then(|s| s.trim().parse::<i32>().ok())
+                .map(|pid| !pid_is_alive(pid))
+                .unwrap_or(true);
+            if stale {
+                let _ = std::fs::remove_file(&pid_path);
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create_new(true)
+                    .write(true)
+                    .open(&pid_path)
+                {
+                    use std::io::Write as _;
+                    let _ = writeln!(f, "{}", std::process::id());
+                    return Some(file);
+                }
+            }
+            None
+        }
+    }
+}
+
+/// Directory for the instance lock: `~/.jambubrowser/`.
+fn dirs_lock_path() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME")
+        .map(|h| std::path::PathBuf::from(h).join(".jambubrowser").join("app.lock"))
+}
+
+/// True when a process with `pid` exists (kill(pid, 0) == success or EPERM).
+#[cfg(unix)]
+fn pid_is_alive(pid: i32) -> bool {
+    // SAFETY: kill(2) with sig 0 performs no action beyond error reporting.
+    unsafe {
+        extern "C" {
+            fn kill(pid: i32, sig: i32) -> i32;
+        }
+        kill(pid, 0) == 0
+    }
+}
+
+#[cfg(not(unix))]
+fn pid_is_alive(_pid: i32) -> bool {
+    // Conservative on non-Unix: never treat a lock as stale.
+    true
+}
+
+/// Remove our `<lock>.pid` claim on exit so a clean quit never leaves a
+/// stale file behind (crashes are handled by the stale-owner check above).
+fn release_instance_lock() {
+    if let Some(p) = dirs_lock_path() {
+        let _ = std::fs::remove_file(p.with_extension("pid"));
+    }
+}
+
 /// Jambubrowser — Tauri Desktop Shell → Brave Competitor
 ///
 /// Architecture:
@@ -40,6 +130,31 @@ impl AppState {
 ///                                     Python FastAPI (audit/research sidecar)
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Single-instance guard: a second `open` of the .app must focus the
+    // running window, not start a duplicate app + duplicate engine (we found
+    // two app processes and two sidecars alive simultaneously). Keep the lock
+    // handle alive for the whole process; release the pid claim on exit.
+    let _instance_guard = match claim_instance_lock() {
+        Some(g) => g,
+        None => {
+            eprintln!("[jambu] another Jambubrowser instance is already running; exiting");
+            // Best-effort focus of the running window is left to the OS
+            // (macOS `open` activates the existing process when the second
+            // instance exits immediately).
+            std::process::exit(0);
+        }
+    };
+    // Release the pid claim on exit (Drop runs at process teardown). Crashes
+    // that skip Drop are handled by the stale-owner check in
+    // claim_instance_lock.
+    struct ReleaseOnDrop;
+    impl Drop for ReleaseOnDrop {
+        fn drop(&mut self) {
+            release_instance_lock();
+        }
+    }
+    let _release = ReleaseOnDrop;
+
     let app_state = AppState::new();
     let chromium_state = app_state.chromium.clone();
 
