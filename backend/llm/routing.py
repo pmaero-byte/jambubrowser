@@ -82,7 +82,7 @@ class _LatencyTracker:
 class Router:
     """Picks a provider per request based on a strategy."""
 
-    LOCAL_PROVIDERS = {"ollama", "mlx", "mock", "greenwich"}
+    LOCAL_PROVIDERS = {"ollama", "mlx", "mock", "greenwich", "dcm"}
     QUALITY_PREFERENCE = [
         "moa",       # Mixture-of-Agents (aggregates multiple perspectives)
         "anthropic",  # Claude Opus / Sonnet

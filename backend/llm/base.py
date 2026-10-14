@@ -62,7 +62,8 @@ class ChatMessage:
     tool_calls: Optional[list[dict]] = None
 
     def to_dict(self) -> dict:
-        d: dict[str, Any] = {"role": self.role.value, "content": self.content}
+        role_str = self.role.value if hasattr(self.role, "value") else str(self.role)
+        d: dict[str, Any] = {"role": role_str, "content": self.content}
         if self.name:
             d["name"] = self.name
         if self.tool_call_id:

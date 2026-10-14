@@ -48,7 +48,9 @@ class TestGreenwichProvider:
 
 
 class TestLocalWorkspaces:
-    def test_localhost_blocked_by_default(self):
+    def test_localhost_blocked_by_default(self, monkeypatch):
+        monkeypatch.delenv("ALLOW_LOCAL_WORKSPACES", raising=False)
+        monkeypatch.delenv("JAMBU_ALLOW_LOCAL_WORKSPACES", raising=False)
         from backend.core.security import is_safe_url
         assert is_safe_url("http://127.0.0.1:8085/v1") is False
         assert is_safe_url("http://localhost:3000/") is False
@@ -66,7 +68,9 @@ class TestLocalWorkspaces:
         inside.write_text("<h1>hi</h1>")
         assert is_safe_file_url(inside.as_uri()) is True
         assert is_safe_file_url("file:///etc/passwd") is False
-    def test_file_url_disabled_by_default(self):
+    def test_file_url_disabled_by_default(self, monkeypatch):
+        monkeypatch.delenv("ALLOW_LOCAL_WORKSPACES", raising=False)
+        monkeypatch.delenv("JAMBU_ALLOW_LOCAL_WORKSPACES", raising=False)
         from backend.core.security import is_safe_file_url
         assert is_safe_file_url("file:///Users/prabaharan/x.html") is False
 

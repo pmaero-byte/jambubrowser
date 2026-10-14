@@ -67,8 +67,10 @@ class GreenwichProvider:
 
     async def _post_chat(self, base: str, payload: dict, timeout: float):
         try:
-            async with httpx.AsyncClient() as client:
-                return await client.post(f"{base}/chat/completions", headers=self._headers(), json=payload, timeout=timeout)
+            connect_timeout = min(3.0, float(timeout) if timeout else 3.0)
+            req_timeout = httpx.Timeout(timeout, connect=connect_timeout)
+            async with httpx.AsyncClient(timeout=req_timeout) as client:
+                return await client.post(f"{base}/chat/completions", headers=self._headers(), json=payload)
         except httpx.TimeoutException as e:
             raise ProviderTimeout(f"Greenwich timeout: {e}") from e
         except httpx.ConnectError as e:
@@ -100,11 +102,13 @@ class GreenwichProvider:
     async def stream(self, messages, *, model=None, max_tokens=1024, temperature=0.3, tools=None, timeout=60.0):
         mdl = model or self.default_model
         payload = self._payload(messages, model=mdl, max_tokens=max_tokens, temperature=temperature, tools=tools, stream=True)
+        connect_timeout = min(3.0, float(timeout) if timeout else 3.0)
+        req_timeout = httpx.Timeout(timeout, connect=connect_timeout)
         last_err = None
         for base in self._candidate_bases():
             try:
-                async with httpx.AsyncClient() as client:
-                    async with client.stream("POST", f"{base}/chat/completions", headers=self._headers(), json=payload, timeout=timeout) as r:
+                async with httpx.AsyncClient(timeout=req_timeout) as client:
+                    async with client.stream("POST", f"{base}/chat/completions", headers=self._headers(), json=payload) as r:
                         if r.status_code != 200:
                             body = await r.aread()
                             last_err = ProviderError(f"Greenwich stream {r.status_code}: {body[:200]!r}")

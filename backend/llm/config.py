@@ -46,7 +46,7 @@ class LLMConfig:
     default_model: str = ""
 
     # Fallback chain (comma-separated)
-    fallback_chain: list[str] = field(default_factory=lambda: ["ollama"])
+    fallback_chain: list[str] = field(default_factory=lambda: ["greenwich", "ollama"])
 
     # Timeouts
     request_timeout: float = 30.0
@@ -99,7 +99,7 @@ class LLMConfig:
 
     @classmethod
     def from_env(cls) -> "LLMConfig":
-        chain_raw = _env("JAMBU_LLM_FALLBACK_CHAIN", "ollama,mlx,anthropic,openai,minimax")
+        chain_raw = _env("JAMBU_LLM_FALLBACK_CHAIN", "greenwich,ollama,mlx,anthropic,openai,minimax")
         chain = [c.strip() for c in chain_raw.split(",") if c.strip()]
         return cls(
             default_provider=_env("JAMBU_LLM_PROVIDER", "auto"),

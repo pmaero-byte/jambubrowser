@@ -124,7 +124,7 @@ class ProviderRegistry:
         for candidate in chain:
             if not self.has(candidate):
                 continue
-            if self._config.force_local_only and candidate not in ("ollama", "mlx", "mock", "dcm"):
+            if self._config.force_local_only and candidate not in ("ollama", "mlx", "mock", "dcm", "greenwich"):
                 continue
             try:
                 provider = self.get(candidate)

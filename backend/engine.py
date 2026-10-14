@@ -415,6 +415,10 @@ from backend.routes.media import router as media_router
 from backend.routes.audit import router as audit_router
 from backend.routes.audit_monitors import router as audit_monitors_router
 from backend.routes.browser_sessions import router as browser_sessions_router
+from backend.routes.browser_desktop import (
+    router as browser_desktop_router,
+    yaadhum_router,
+)
 from backend.routes.flow_monitors import router as flow_monitors_router
 from backend.routes.dev_servers import router as dev_servers_router
 from backend.routes.eval_cert import router as eval_cert_router
@@ -468,6 +472,8 @@ app.include_router(media_router)
 app.include_router(audit_router)
 app.include_router(audit_monitors_router)
 app.include_router(browser_sessions_router)
+app.include_router(browser_desktop_router)
+app.include_router(yaadhum_router)
 app.include_router(flow_monitors_router)
 app.include_router(dev_servers_router)
 app.include_router(eval_cert_router)
