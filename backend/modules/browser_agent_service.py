@@ -127,6 +127,14 @@ class BrowserAgentService:
                 opts["record_video_dir"] = artifacts_dir
 
         privacy = PrivacyLevel[privacy_level.upper()] if privacy_level else PrivacyLevel.ENHANCED
+        if "proxy" not in opts:
+            try:
+                from backend.modules.proxy_rotator import get_proxy_rotator
+                p = get_proxy_rotator().get_proxy(session_id)
+                if p:
+                    opts["proxy"] = p
+            except Exception:
+                pass
         browser_session = await BrowserManager.get_instance().get_session(
             session_id, mode=SessionMode.EPHEMERAL, privacy_level=privacy,
             context_options=opts or None,

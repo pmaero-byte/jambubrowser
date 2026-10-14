@@ -34,7 +34,15 @@ log = logging.getLogger("jambu.browser")
 
 # Lazy import for Playwright - only imported when first used
 _playwright = None
-_playwright_lock = Lock()
+_playwright_lock = None
+
+
+def _pw_lock():
+    global _playwright_lock
+    if _playwright_lock is None:
+        import asyncio as _aio
+        _playwright_lock = _aio.Lock()
+    return _playwright_lock
 
 # Single shared Chromium instance for BrowserContext multiplexing
 # (Improvement 1). Ephemeral sessions isolate via lightweight contexts
@@ -102,7 +110,7 @@ async def _get_playwright():
     if _playwright is not None:
         return _playwright
 
-    with _playwright_lock:
+    async with _pw_lock():
         if _playwright is not None:
             return _playwright
 
@@ -385,9 +393,13 @@ class BrowserSession:
 
         // Override console.debug to prevent detection
         const originalDebug = console.debug;
-        console.debug = function() { return originalDebug.apply(this, arguments); };
         """
         await self._context.add_init_script(privacy_js)
+        try:
+            from backend.modules.antibot_detector import AntiBotDetector
+            await AntiBotDetector.inject_stealth(self._context)
+        except Exception:
+            pass
 
     async def _block_trackers(self):
         """Block known tracking domains."""

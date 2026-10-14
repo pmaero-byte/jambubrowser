@@ -418,6 +418,8 @@ from backend.routes.browser_sessions import router as browser_sessions_router
 from backend.routes.browser_desktop import (
     router as browser_desktop_router,
     yaadhum_router,
+    swarm_router,
+    memory_checkpoint_router,
 )
 from backend.routes.flow_monitors import router as flow_monitors_router
 from backend.routes.dev_servers import router as dev_servers_router
@@ -474,6 +476,8 @@ app.include_router(audit_monitors_router)
 app.include_router(browser_sessions_router)
 app.include_router(browser_desktop_router)
 app.include_router(yaadhum_router)
+app.include_router(swarm_router)
+app.include_router(memory_checkpoint_router)
 app.include_router(flow_monitors_router)
 app.include_router(dev_servers_router)
 app.include_router(eval_cert_router)

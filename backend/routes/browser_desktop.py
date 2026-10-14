@@ -39,8 +39,10 @@ log = logging.getLogger("jambu.browser_desktop")
 
 router = APIRouter(prefix="/browser/desktop", tags=["browser-desktop"])
 
-# Secondary router for convenience alias (/browser/yaadhum/*)
+# Secondary routers for convenience aliases
 yaadhum_router = APIRouter(prefix="/browser/yaadhum", tags=["browser-yaadhum"])
+swarm_router = APIRouter(prefix="/browser/swarm", tags=["browser-swarm"])
+memory_checkpoint_router = APIRouter(prefix="/browser/memory", tags=["browser-memory"])
 
 
 # ---------------------------------------------------------------------------
@@ -82,6 +84,27 @@ class DesktopResearchRequest(BaseModel):
     prompt: Optional[str] = None
     max_tokens: int = 600
     sync_memory: bool = True
+
+
+class DesktopHitlResumeRequest(BaseModel):
+    session_id: str
+
+
+class SwarmStartRequest(BaseModel):
+    name: str = ""
+    targets: list[str] = Field(default_factory=list)
+    concurrency: int = 3
+    auto_sync_memory: bool = True
+    auto_checkpoint: bool = True
+
+
+class MemoryCheckpointRequest(BaseModel):
+    name: Optional[str] = None
+    description: str = ""
+
+
+class MemoryRestoreRequest(BaseModel):
+    name: str
 
 
 # ---------------------------------------------------------------------------
@@ -259,6 +282,17 @@ async def desktop_inspect(req: DesktopInspectRequest) -> dict[str, Any]:
         if captured:
             frame_b64 = captured
 
+    # Detect anti-bot challenges (Cloudflare Turnstile, Akamai, reCAPTCHA)
+    from backend.modules.antibot_detector import AntiBotDetector
+    challenge = await AntiBotDetector.detect(session.adapter)
+    if challenge.get("detected"):
+        setattr(session, "hitl_waiting", True)
+        setattr(session, "hitl_challenge", challenge)
+        setattr(session, "hitl_paused_at", time.time())
+    else:
+        setattr(session, "hitl_waiting", False)
+        setattr(session, "hitl_challenge", None)
+
     # Auto sync to memory bridge if requested
     mem_result: Optional[dict] = None
     if req.auto_sync_memory:
@@ -282,6 +316,8 @@ async def desktop_inspect(req: DesktopInspectRequest) -> dict[str, Any]:
         "text": clean_text,
         "frame_base64": frame_b64,
         "latency_ms": dur_ms,
+        "challenge": challenge if challenge.get("detected") else None,
+        "hitl_waiting": bool(challenge.get("detected")),
         "memory_synced": bool(mem_result and mem_result.get("ok")),
         "memory_details": mem_result,
     }
@@ -334,6 +370,16 @@ async def desktop_act(req: DesktopActRequest) -> dict[str, Any]:
     tree = session.ax_tree_text(state, focused_ref=focused)
     frame_b64 = await session.capture_frame(quality=req.frame_quality) or ""
 
+    # Re-evaluate anti-bot status (did human or action solve the challenge?)
+    from backend.modules.antibot_detector import AntiBotDetector
+    challenge = await AntiBotDetector.detect(session.adapter)
+    if challenge.get("detected"):
+        setattr(session, "hitl_waiting", True)
+        setattr(session, "hitl_challenge", challenge)
+    else:
+        setattr(session, "hitl_waiting", False)
+        setattr(session, "hitl_challenge", None)
+
     return {
         "ok": True,
         "session_id": session.id,
@@ -343,6 +389,8 @@ async def desktop_act(req: DesktopActRequest) -> dict[str, Any]:
         "ax_count": len(state.get("elements") or []),
         "focused_ref": focused,
         "frame_base64": frame_b64,
+        "challenge": challenge if challenge.get("detected") else None,
+        "hitl_waiting": bool(challenge.get("detected")),
     }
 
 
@@ -611,3 +659,204 @@ async def desktop_research(req: DesktopResearchRequest) -> dict[str, Any]:
         "memory_synced": bool(mem_result and mem_result.get("ok")),
         "memory_details": mem_result,
     }
+
+
+# ---------------------------------------------------------------------------
+# 6. Anti-Bot Shield & Human-in-the-Loop Handover
+# ---------------------------------------------------------------------------
+
+@router.post("/hitl/resume")
+@yaadhum_router.post("/hitl/resume")
+async def desktop_hitl_resume(req: DesktopHitlResumeRequest) -> dict[str, Any]:
+    """Evaluates whether an anti-bot challenge was solved and resumes agent flow."""
+    svc = get_browser_agent_service()
+    try:
+        session = svc.get(req.session_id)
+    except SessionRefused:
+        raise HTTPException(status_code=404, detail=f"No such session: {req.session_id}")
+
+    from backend.modules.antibot_detector import AntiBotDetector
+    challenge = await AntiBotDetector.detect(session.adapter)
+    solved = not challenge.get("detected")
+
+    if solved:
+        setattr(session, "hitl_waiting", False)
+        setattr(session, "hitl_challenge", None)
+    else:
+        setattr(session, "hitl_waiting", True)
+        setattr(session, "hitl_challenge", challenge)
+
+    state = await session.snapshot()
+    focused = await session.focused_ref()
+    tree = session.ax_tree_text(state, focused_ref=focused)
+    frame_b64 = await session.capture_frame(quality=80) or ""
+
+    return {
+        "ok": True,
+        "session_id": session.id,
+        "solved": solved,
+        "hitl_waiting": not solved,
+        "challenge": challenge if not solved else None,
+        "title": state.get("title") or "Untitled",
+        "url": state.get("url") or "",
+        "ax_tree": tree,
+        "ax_count": len(state.get("elements") or []),
+        "frame_base64": frame_b64,
+        "message": (
+            "Verification successful! Autonomous agent flow resumed."
+            if solved
+            else "Challenge still active. Please complete verification in the viewport."
+        ),
+    }
+
+
+@router.get("/hitl/status")
+@yaadhum_router.get("/hitl/status")
+async def desktop_hitl_status(session_id: str) -> dict[str, Any]:
+    """Inspects the anti-bot challenge status for a running session."""
+    svc = get_browser_agent_service()
+    try:
+        session = svc.get(session_id)
+    except SessionRefused:
+        raise HTTPException(status_code=404, detail=f"No such session: {session_id}")
+
+    challenge = getattr(session, "hitl_challenge", None)
+    waiting = bool(getattr(session, "hitl_waiting", False))
+    return {
+        "ok": True,
+        "session_id": session_id,
+        "hitl_waiting": waiting,
+        "challenge": challenge,
+    }
+
+
+@router.get("/proxy/status")
+@yaadhum_router.get("/proxy/status")
+async def desktop_proxy_status() -> dict[str, Any]:
+    """Returns the health and metrics of the residential proxy pool."""
+    from backend.modules.proxy_rotator import get_proxy_rotator
+    return {"ok": True, "proxy_rotator": get_proxy_rotator().status()}
+
+
+@router.post("/proxy/rotate")
+@yaadhum_router.post("/proxy/rotate")
+async def desktop_proxy_rotate(session_id: Optional[str] = None) -> dict[str, Any]:
+    """Forces an immediate rotation of the proxy assigned to a session."""
+    from backend.modules.proxy_rotator import get_proxy_rotator
+    new_proxy = get_proxy_rotator().get_proxy(session_id, rotate=True)
+    return {
+        "ok": True,
+        "session_id": session_id,
+        "assigned_proxy": new_proxy.get("server") if new_proxy else None,
+        "status": get_proxy_rotator().status(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# 7. Autonomous Multi-Tab Swarms
+# ---------------------------------------------------------------------------
+
+@router.post("/swarm/start")
+@yaadhum_router.post("/swarm/start")
+@swarm_router.post("/start")
+async def desktop_swarm_start(req: SwarmStartRequest) -> dict[str, Any]:
+    """Starts a concurrent multi-tab exploration and research swarm."""
+    from backend.modules.swarm_orchestrator import get_swarm_orchestrator
+    try:
+        job = await get_swarm_orchestrator().start_swarm(
+            name=req.name,
+            targets=req.targets,
+            concurrency=req.concurrency,
+            auto_sync_memory=req.auto_sync_memory,
+            auto_checkpoint=req.auto_checkpoint,
+        )
+        return {"ok": True, "swarm": job.to_dict()}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/swarm/{swarm_id}")
+@yaadhum_router.get("/swarm/{swarm_id}")
+@swarm_router.get("/{swarm_id}")
+async def desktop_swarm_status(swarm_id: str) -> dict[str, Any]:
+    """Fetches real-time status and cross-reference dossier of a swarm."""
+    from backend.modules.swarm_orchestrator import get_swarm_orchestrator
+    job = get_swarm_orchestrator().get_swarm(swarm_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"No such swarm: {swarm_id}")
+    return {"ok": True, "swarm": job.to_dict()}
+
+
+@router.post("/swarm/{swarm_id}/cancel")
+@yaadhum_router.post("/swarm/{swarm_id}/cancel")
+@swarm_router.post("/{swarm_id}/cancel")
+async def desktop_swarm_cancel(swarm_id: str) -> dict[str, Any]:
+    """Cancels a running swarm."""
+    from backend.modules.swarm_orchestrator import get_swarm_orchestrator
+    ok = get_swarm_orchestrator().cancel_swarm(swarm_id)
+    if not ok:
+        raise HTTPException(status_code=400, detail=f"Cannot cancel swarm {swarm_id}")
+    return {"ok": True, "cancelled": True}
+
+
+@router.get("/swarm")
+@yaadhum_router.get("/swarm")
+@swarm_router.get("")
+async def desktop_swarm_list() -> dict[str, Any]:
+    """Lists all active and completed exploration swarms."""
+    from backend.modules.swarm_orchestrator import get_swarm_orchestrator
+    return {"ok": True, "swarms": get_swarm_orchestrator().list_swarms()}
+
+
+# ---------------------------------------------------------------------------
+# 8. Automated Permanent SSM Memory Checkpointing
+# ---------------------------------------------------------------------------
+
+@router.post("/memory/checkpoint")
+@yaadhum_router.post("/memory/checkpoint")
+@memory_checkpoint_router.post("/checkpoint")
+async def desktop_memory_checkpoint(req: MemoryCheckpointRequest) -> dict[str, Any]:
+    """Explicitly triggers a snapshot checkpoint of the 144MB SSM state."""
+    from backend.modules.memory_checkpoint_scheduler import get_checkpoint_scheduler
+    res = await get_checkpoint_scheduler().trigger_checkpoint(
+        name=req.name,
+        description=req.description,
+        trigger="manual",
+    )
+    return res
+
+
+@router.get("/memory/checkpoints")
+@yaadhum_router.get("/memory/checkpoints")
+@memory_checkpoint_router.get("/checkpoints")
+async def desktop_memory_checkpoints_list() -> dict[str, Any]:
+    """Lists all historical permanent memory checkpoints and hashes."""
+    from backend.modules.memory_checkpoint_scheduler import get_checkpoint_scheduler
+    ckpts = await get_checkpoint_scheduler().list_checkpoints()
+    return {"ok": True, "checkpoints": ckpts, "count": len(ckpts)}
+
+
+@router.get("/memory/status")
+@yaadhum_router.get("/memory/status")
+@memory_checkpoint_router.get("/status")
+async def desktop_memory_scheduler_status() -> dict[str, Any]:
+    """Returns the operational status of the Memory Checkpoint Scheduler."""
+    from backend.modules.memory_checkpoint_scheduler import get_checkpoint_scheduler
+    return {"ok": True, "scheduler": get_checkpoint_scheduler().status()}
+
+
+@router.post("/memory/restore")
+@yaadhum_router.post("/memory/restore")
+@memory_checkpoint_router.post("/restore")
+async def desktop_memory_restore(req: MemoryRestoreRequest) -> dict[str, Any]:
+    """Restores the permanent SSM state to a previous snapshot checkpoint."""
+    from pathlib import Path
+    project_root = Path("/Users/prabaharan/yaadhum_ncp")
+    try:
+        from openmodels.memory.project_memory import ProjectMemoryManager
+        mgr = ProjectMemoryManager(str(project_root))
+        res = mgr.restore_snapshot(req.name)
+        res["ok"] = True
+        return res
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))

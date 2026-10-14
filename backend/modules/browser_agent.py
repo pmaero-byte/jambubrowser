@@ -442,6 +442,10 @@ class BrowserAgentSession:
         self.last_activity = time.time()
 
     @property
+    def adapter(self) -> PageAdapter:
+        return self.page
+
+    @property
     def idle_seconds(self) -> float:
         return time.time() - getattr(self, "last_activity", self.created_at)
 
