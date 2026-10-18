@@ -20,9 +20,10 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field as PField
 
+from backend.core.api_guard import require_api_key
 from backend.core.security import is_public_url
 from backend.modules.webgraph import (
     CrawlConfig,
@@ -33,13 +34,40 @@ from backend.modules.webgraph import (
 
 log = logging.getLogger("jambu.webdata")
 
-router = APIRouter(tags=["webdata"])
+# Every route on this surface is behind the key guard: it fetches arbitrary
+# URLs and can spend model budget. See backend/core/api_guard.py for the policy.
+router = APIRouter(tags=["webdata"], dependencies=[Depends(require_api_key)])
 
 _USER_AGENT = "JambuBrowser/3.4 (+webgraph; local)"
 
 
-async def _http_fetch(url: str):
-    """Plain-HTTP transport for map/crawl. Returns ``(status, body)``."""
+def _webdata_cache():
+    """Process-wide response cache for fetched pages (bounded, TTL'd)."""
+    global _CACHE
+    if _CACHE is None:
+        from backend.core.response_cache import ResponseCache
+
+        _CACHE = ResponseCache(max_size_bytes=32 * 1024 * 1024, default_ttl=300.0)
+    return _CACHE
+
+
+_CACHE = None
+
+
+async def _http_fetch(url: str, max_age: float = 0.0):
+    """Plain-HTTP transport for map/crawl. Returns ``(status, body)``.
+
+    ``max_age`` > 0 serves a cached copy when one is fresh enough, which is what
+    makes repeated crawls of the same site cheap. ``0`` always goes to the
+    network — stale data is worse than a slow answer when the point is to
+    observe the current state.
+    """
+    cache = _webdata_cache()
+    if max_age > 0:
+        hit = cache.get(url)
+        if hit is not None:
+            return hit.status_code, hit.body.decode("utf-8", "replace")
+
     try:
         from backend.core.socks import make_async_client
     except ImportError:  # pragma: no cover
@@ -48,7 +76,60 @@ async def _http_fetch(url: str):
 
     async with make_async_client(timeout=20.0, follow_redirects=True) as client:
         resp = await client.get(url, headers={"User-Agent": _USER_AGENT})
-        return resp.status_code, resp.text
+        status, text = resp.status_code, resp.text
+
+    if status == 200 and max_age > 0:
+        try:
+            from backend.core.response_cache import CachedResponse
+
+            cache.set(
+                url,
+                CachedResponse(
+                    body=text.encode("utf-8", "replace"),
+                    content_type=resp.headers.get("content-type", "text/html"),
+                    status_code=status,
+                ),
+                ttl=max_age,
+            )
+        except Exception:  # a cache failure must never fail the fetch
+            log.debug("web-data cache set failed", exc_info=True)
+    return status, text
+
+
+def _make_fetch(max_age: float):
+    """Bind a cache policy to the transport for one request."""
+
+    async def fetch(url: str):
+        return await _http_fetch(url, max_age)
+
+    return fetch
+
+
+def _cache_stats():
+    s = _webdata_cache().stats()
+    return {
+        "entries": s.entries,
+        "bytes_used": s.bytes_used,
+        "bytes_budget": s.bytes_budget,
+        "hits": s.hits,
+        "misses": s.misses,
+        "hit_rate": round(s.hit_rate, 4),
+        "evictions": s.evictions,
+        "expirations": s.expirations,
+    }
+
+
+@router.get("/v1/cache/stats")
+async def cache_stats():
+    """Fetch-cache health. `max_age > 0` on the other routes uses this cache."""
+    return _cache_stats()
+
+
+@router.delete("/v1/cache")
+async def cache_clear():
+    """Drop every cached page."""
+    _webdata_cache().clear()
+    return {"success": True, "cleared": True}
 
 
 def _guard(url: str) -> str:
@@ -77,6 +158,7 @@ class MapRequest(BaseModel):
     use_sitemap: bool = True
     same_domain: bool = True
     allow_subdomains: bool = False
+    max_age: float = PField(0, ge=0, le=604800)
 
 
 @router.post("/v1/map")
@@ -85,7 +167,7 @@ async def map_site(req: MapRequest):
     seed = _guard(req.url)
     out = await discover_urls(
         seed,
-        _http_fetch,
+        _make_fetch(req.max_age),
         limit=req.limit,
         use_sitemap=req.use_sitemap,
         same_domain=req.same_domain,
@@ -109,6 +191,7 @@ class CrawlRequest(BaseModel):
     exclude_patterns: List[str] = []
     respect_robots: bool = True
     use_sitemap: bool = False
+    max_age: float = PField(0, ge=0, le=604800)
 
 
 @router.post("/v1/crawl")
@@ -125,7 +208,7 @@ async def crawl_site(req: CrawlRequest):
         respect_robots=req.respect_robots,
         use_sitemap=req.use_sitemap,
     )
-    result = await crawl(seed, _http_fetch, cfg)
+    result = await crawl(seed, _make_fetch(req.max_age), cfg)
     return {
         "success": True,
         "url": result.seed,
@@ -154,13 +237,14 @@ class ScrapeRequest(BaseModel):
     url: str
     formats: List[str] = ["markdown"]
     max_chars: int = PField(20000, ge=0, le=200000)
+    max_age: float = PField(0, ge=0, le=604800)
 
 
 @router.post("/v1/scrape")
 async def scrape_one(req: ScrapeRequest):
     """Fetch one URL. Always returns a receipt, even on a non-200."""
     seed = _guard(req.url)
-    status, body = await _http_fetch(seed)
+    status, body = await _http_fetch(seed, req.max_age)
 
     from backend.core.untrusted import sanitize_untrusted
     from backend.modules.webgraph import extract_links, make_receipt
@@ -203,6 +287,7 @@ class ExtractRequest(BaseModel):
     url: str
     fields: List[FieldSpec]
     max_chars: int = PField(8000, ge=100, le=100000)
+    max_age: float = PField(0, ge=0, le=604800)
 
 
 def build_schema(name: str, specs: List[FieldSpec]):
@@ -256,7 +341,7 @@ async def extract_structured(req: ExtractRequest):
     seed = _guard(req.url)
     schema = build_schema("caller_extract", req.fields)
 
-    status, body = await _http_fetch(seed)
+    status, body = await _http_fetch(seed, req.max_age)
 
     from backend.core.observations import registry_chat
     from backend.core.quarantine import quarantine_extract
