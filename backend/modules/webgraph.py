@@ -21,11 +21,14 @@ module never assumes a transport.
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 import time
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 from urllib.parse import urljoin, urlparse, urlunparse
+
+log = logging.getLogger("jambu.webgraph")
 
 # ---------------------------------------------------------------------------
 # URL handling
@@ -359,6 +362,7 @@ class CrawlResult:
     errors: List[Dict[str, str]] = field(default_factory=list)
     skipped_robots: List[str] = field(default_factory=list)
     truncated: bool = False
+    cancelled: bool = False
 
     @property
     def count(self) -> int:
@@ -447,12 +451,18 @@ async def crawl(
     config: Optional[CrawlConfig] = None,
     *,
     sanitize=None,
+    on_page: Optional[Callable[[CrawlPage], None]] = None,
+    cancel: Optional[Callable[[], bool]] = None,
 ) -> CrawlResult:
     """Breadth-first crawl, bounded by depth, page count, robots and patterns.
 
     ``fetch`` must return ``(status, body)``. ``sanitize`` defaults to the
     untrusted-content guard so every stored page carries its injection markers
     and stripped-character count in its receipt.
+
+    ``on_page`` is called as each page lands, so a caller running this as a
+    background job can expose partial results while the crawl is still going.
+    ``cancel`` is polled between pages for cooperative cancellation.
     """
     cfg = config or CrawlConfig()
     if sanitize is None:
@@ -470,6 +480,10 @@ async def crawl(
     queue: List[Tuple[str, int]] = [(seed, 0)]
 
     while queue and len(result.pages) < cfg.page_limit:
+        if cancel is not None and cancel():
+            result.cancelled = True
+            break
+
         url, depth = queue.pop(0)
 
         if cfg.respect_robots and not robots.allowed(urlparse(url).path or "/"):
@@ -485,12 +499,16 @@ async def crawl(
         cleaned = sanitize(body or "")
         receipt = make_receipt(url, status, body or "", cleaned)
         links = extract_links(body or "", url)
-        result.pages.append(
-            CrawlPage(
-                url=url, depth=depth, status=status,
-                text=cleaned.text, receipt=receipt, links_found=len(links),
-            )
+        page = CrawlPage(
+            url=url, depth=depth, status=status,
+            text=cleaned.text, receipt=receipt, links_found=len(links),
         )
+        result.pages.append(page)
+        if on_page is not None:
+            try:
+                on_page(page)
+            except Exception:  # a progress callback must never break the crawl
+                log.debug("crawl on_page callback failed", exc_info=True)
 
         if depth < cfg.max_depth:
             for link in links:
@@ -499,6 +517,6 @@ async def crawl(
                 visited.add(link)
                 queue.append((link, depth + 1))
 
-    if queue:
+    if queue and not result.cancelled:
         result.truncated = True
     return result

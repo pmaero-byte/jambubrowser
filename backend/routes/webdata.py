@@ -192,11 +192,18 @@ class CrawlRequest(BaseModel):
     respect_robots: bool = True
     use_sitemap: bool = False
     max_age: float = PField(0, ge=0, le=604800)
+    sync: bool = False
 
 
 @router.post("/v1/crawl")
 async def crawl_site(req: CrawlRequest):
-    """Breadth-first crawl, bounded by depth, page count, robots and patterns."""
+    """Start a crawl.
+
+    Returns a job id immediately and runs the crawl in the background — at a few
+    hundred pages this takes minutes, which is not a request/response shape. Poll
+    `GET /v1/crawl/{id}`. Set `sync=true` only for small jobs where blocking is
+    acceptable (the result is returned inline).
+    """
     seed = _guard(req.url)
     cfg = CrawlConfig(
         max_depth=req.max_depth,
@@ -208,24 +215,79 @@ async def crawl_site(req: CrawlRequest):
         respect_robots=req.respect_robots,
         use_sitemap=req.use_sitemap,
     )
-    result = await crawl(seed, _make_fetch(req.max_age), cfg)
+    fetch = _make_fetch(req.max_age)
+
+    if req.sync:
+        result = await crawl(seed, fetch, cfg)
+        return {
+            "success": True,
+            "sync": True,
+            "url": result.seed,
+            "status": "cancelled" if result.cancelled else "completed",
+            "count": result.count,
+            "truncated": result.truncated,
+            "skipped_robots": result.skipped_robots,
+            "errors": result.errors,
+            "data": [
+                {
+                    "url": p.url,
+                    "depth": p.depth,
+                    "status": p.status,
+                    "markdown": p.text,
+                    "receipt": p.receipt.to_dict(),
+                }
+                for p in result.pages
+            ],
+        }
+
+    from backend.modules.crawl_jobs import get_crawl_jobs
+
+    job = get_crawl_jobs().submit(seed, fetch, cfg)
     return {
         "success": True,
-        "url": result.seed,
-        "count": result.count,
-        "truncated": result.truncated,
-        "skipped_robots": result.skipped_robots,
-        "errors": result.errors,
-        "data": [
-            {
-                "url": p.url,
-                "depth": p.depth,
-                "status": p.status,
-                "markdown": p.text,
-                "receipt": p.receipt.to_dict(),
-            }
-            for p in result.pages
-        ],
+        "sync": False,
+        "id": job.id,
+        "url": job.seed,
+        "status": job.status.value,
+        "poll": f"/v1/crawl/{job.id}",
+    }
+
+
+@router.get("/v1/crawl/{job_id}")
+async def crawl_status(job_id: str, include_pages: bool = True):
+    """Poll a crawl job. Results expire `JAMBU_CRAWL_RESULT_TTL` after it ends."""
+    from backend.modules.crawl_jobs import get_crawl_jobs
+
+    job = get_crawl_jobs().get(job_id)
+    if job is None:
+        raise HTTPException(
+            status_code=404,
+            detail="unknown or expired crawl job (results are not kept forever)",
+        )
+    return {"success": True, **job.to_dict(include_pages=include_pages)}
+
+
+@router.delete("/v1/crawl/{job_id}")
+async def crawl_cancel(job_id: str):
+    """Request cancellation. Cooperative — it takes effect between pages."""
+    from backend.modules.crawl_jobs import get_crawl_jobs
+
+    job = get_crawl_jobs().cancel(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="unknown or expired crawl job")
+    return {"success": True, "id": job.id, "status": job.status.value}
+
+
+@router.get("/v1/crawl")
+async def crawl_list():
+    """Recent crawl jobs (newest first)."""
+    from backend.modules.crawl_jobs import get_crawl_jobs
+
+    jobs = get_crawl_jobs().list_jobs()
+    return {
+        "success": True,
+        "count": len(jobs),
+        "jobs": [j.to_dict(include_pages=False) for j in jobs],
     }
 
 

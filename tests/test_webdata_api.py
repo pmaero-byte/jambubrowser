@@ -11,6 +11,19 @@ import json
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def clean_crawl_jobs():
+    """Job state is process-global and asyncio primitives bind to a loop.
+
+    TestClient creates a fresh event loop per context, so a manager left over
+    from a previous test would hold a Semaphore attached to a dead loop.
+    """
+    from backend.modules.crawl_jobs import reset_crawl_jobs
+    reset_crawl_jobs()
+    yield
+    reset_crawl_jobs()
+
+
 @pytest.fixture
 def api_key():
     """Create a real API key so the auth path is exercised, not bypassed."""
@@ -88,31 +101,52 @@ class TestMapEndpoint:
 # crawl
 # ---------------------------------------------------------------------------
 
+def _crawl_sync(client, payload):
+    """Run a crawl inline (sync=true) and return the body."""
+    payload = {**payload, "sync": True}
+    r = client.post("/v1/crawl", json=payload)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _crawl_async(client, payload, timeout=15.0):
+    """Submit a crawl, poll it to a terminal state, return the final status."""
+    import time
+
+    r = client.post("/v1/crawl", json=payload)
+    assert r.status_code == 200, r.text
+    submitted = r.json()
+    assert submitted["id"].startswith("crawl_")
+    assert submitted["status"] in ("pending", "running")
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        s = client.get(f"/v1/crawl/{submitted['id']}")
+        assert s.status_code == 200, s.text
+        body = s.json()
+        if body["status"] in ("completed", "failed", "cancelled"):
+            return body
+        time.sleep(0.02)
+    raise AssertionError("crawl job did not reach a terminal state")
+
+
 class TestCrawlEndpoint:
-    def test_crawls_and_carries_receipts(self, client, fake_fetch):
-        r = client.post("/v1/crawl", json={
-            "url": "https://site.test/", "max_depth": 1, "page_limit": 10,
-        })
-        assert r.status_code == 200
-        body = r.json()
+    def test_sync_crawl_carries_receipts(self, client, fake_fetch):
+        body = _crawl_sync(client, {"url": "https://site.test/", "max_depth": 1, "page_limit": 10})
         assert body["count"] >= 2
         for page in body["data"]:
             assert len(page["receipt"]["content_sha256"]) == 64
             assert page["receipt"]["status"] == 200
 
-    def test_robots_disallow_is_honoured(self, client, fake_fetch):
-        r = client.post("/v1/crawl", json={
-            "url": "https://site.test/", "max_depth": 2, "page_limit": 20,
-        })
-        urls = [p["url"] for p in r.json()["data"]]
+    def test_sync_robots_disallow_is_honoured(self, client, fake_fetch):
+        body = _crawl_sync(client, {"url": "https://site.test/", "max_depth": 2, "page_limit": 20})
+        urls = [p["url"] for p in body["data"]]
         assert "https://site.test/b" not in urls
-        assert "https://site.test/b" in r.json()["skipped_robots"]
+        assert "https://site.test/b" in body["skipped_robots"]
 
-    def test_page_limit_is_enforced(self, client, fake_fetch):
-        r = client.post("/v1/crawl", json={
-            "url": "https://site.test/", "max_depth": 3, "page_limit": 2,
-        })
-        assert r.json()["count"] == 2
+    def test_sync_page_limit_is_enforced(self, client, fake_fetch):
+        body = _crawl_sync(client, {"url": "https://site.test/", "max_depth": 3, "page_limit": 2})
+        assert body["count"] == 2
 
     def test_rejects_unsafe_url(self, client, fake_fetch):
         assert client.post("/v1/crawl", json={"url": "http://10.0.0.1/"}).status_code == 400
@@ -120,6 +154,191 @@ class TestCrawlEndpoint:
     def test_depth_is_bounded(self, client, fake_fetch):
         r = client.post("/v1/crawl", json={"url": "https://site.test/", "max_depth": 99})
         assert r.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# The async job model (the default path)
+# ---------------------------------------------------------------------------
+
+class TestCrawlJobs:
+    def test_submit_returns_immediately(self, client, fake_fetch):
+        r = client.post("/v1/crawl", json={"url": "https://site.test/", "page_limit": 5})
+        body = r.json()
+        assert body["sync"] is False
+        assert body["id"].startswith("crawl_")
+        assert body["poll"] == f"/v1/crawl/{body['id']}"
+
+    def test_job_reaches_completed_with_pages_and_receipts(self, client, fake_fetch):
+        done = _crawl_async(client, {"url": "https://site.test/", "max_depth": 1, "page_limit": 10})
+        assert done["status"] == "completed"
+        assert done["completed"] >= 2
+        assert done["data"]
+        for page in done["data"]:
+            assert len(page["receipt"]["content_sha256"]) == 64
+        assert done["completed_at"] is not None
+
+    def test_completed_job_expiry_is_reported(self, client, fake_fetch):
+        done = _crawl_async(client, {"url": "https://site.test/", "page_limit": 5})
+        assert done["expires_at"] > done["completed_at"]
+
+    def test_unknown_job_is_404(self, client, fake_fetch):
+        assert client.get("/v1/crawl/crawl_deadbeef").status_code == 404
+
+    def test_cancel_takes_effect_mid_crawl(self, client, monkeypatch):
+        """Cancellation must actually stop the crawl, not just flag it.
+
+        The fake transport sleeps, so the job is genuinely in flight when the
+        DELETE arrives — which is the only way to test cooperative cancellation.
+        """
+        import asyncio as _a
+        import time
+
+        from backend.routes import webdata
+
+        pages = {"https://slow.test/": '<a href="/p0">n</a>'}
+        pages.update({f"https://slow.test/p{i}": f'<a href="/p{i + 1}">n</a>' for i in range(40)})
+
+        async def slow(url, max_age=0.0):
+            if url.endswith("/robots.txt"):
+                return (200, "")
+            await _a.sleep(0.03)
+            return (200, pages.get(url, ""))
+
+        monkeypatch.setattr(webdata, "_http_fetch", slow)
+
+        r = client.post("/v1/crawl", json={
+            "url": "https://slow.test/", "page_limit": 100, "max_depth": 2,
+        })
+        jid = r.json()["id"]
+        c = client.delete(f"/v1/crawl/{jid}")
+        assert c.status_code == 200
+
+        deadline = time.time() + 15
+        body = {}
+        while time.time() < deadline:
+            body = client.get(f"/v1/crawl/{jid}").json()
+            if body["status"] in ("completed", "cancelled", "failed"):
+                break
+            time.sleep(0.02)
+
+        assert body["status"] == "cancelled", f"cancel did not take effect: {body['status']}"
+        assert body["completed"] < 40, "crawl ran to completion despite cancellation"
+
+    def test_cancel_unknown_job_is_404(self, client, fake_fetch):
+        assert client.delete("/v1/crawl/crawl_nope").status_code == 404
+
+    def test_list_shows_recent_jobs(self, client, fake_fetch):
+        _crawl_async(client, {"url": "https://site.test/", "page_limit": 5})
+        body = client.get("/v1/crawl").json()
+        assert body["count"] >= 1
+        assert body["jobs"][0]["status"] in ("completed", "running", "cancelled")
+
+    def test_status_can_omit_pages(self, client, fake_fetch):
+        r = client.post("/v1/crawl", json={"url": "https://site.test/", "page_limit": 5})
+        jid = r.json()["id"]
+        body = client.get(f"/v1/crawl/{jid}?include_pages=false").json()
+        assert "data" not in body
+
+    def test_failing_job_is_failed_not_a_crash(self, client, monkeypatch):
+        from backend.routes import webdata
+
+        async def boom(url, max_age=0.0):
+            raise RuntimeError("transport exploded")
+
+        monkeypatch.setattr(webdata, "_http_fetch", boom)
+        done = _crawl_async(client, {"url": "https://site.test/", "page_limit": 5})
+        # A fetch that always raises surfaces as per-URL errors, not a dead job.
+        assert done["status"] == "completed"
+        assert done["errors"]
+
+    def test_jobs_are_isolated_from_each_other(self, client, fake_fetch):
+        a = _crawl_async(client, {"url": "https://site.test/", "page_limit": 2})
+        b = _crawl_async(client, {"url": "https://site.test/", "page_limit": 5})
+        assert a["id"] != b["id"]
+        assert a["completed"] <= 2
+
+
+# ---------------------------------------------------------------------------
+# Job manager internals
+# ---------------------------------------------------------------------------
+
+class TestCrawlJobManager:
+    def _manager(self):
+        from backend.modules.crawl_jobs import CrawlJobManager
+        return CrawlJobManager()
+
+    def test_finished_jobs_are_reaped_after_ttl(self, monkeypatch):
+        """Results must not accumulate forever."""
+        monkeypatch.setenv("JAMBU_CRAWL_RESULT_TTL", "60")
+        from backend.modules.crawl_jobs import CrawlJob, JobStatus
+
+        m = self._manager()
+        job = CrawlJob(id="crawl_old", seed="https://x.test/")
+        job.status = JobStatus.COMPLETED
+        job.completed_at = 1.0  # long in the past
+        m._jobs[job.id] = job
+
+        m._reap()
+        assert m.get("crawl_old") is None
+
+    def test_running_jobs_are_not_reaped(self, monkeypatch):
+        monkeypatch.setenv("JAMBU_CRAWL_RESULT_TTL", "60")
+        from backend.modules.crawl_jobs import CrawlJob, JobStatus
+
+        m = self._manager()
+        job = CrawlJob(id="crawl_live", seed="https://x.test/")
+        job.status = JobStatus.RUNNING
+        m._jobs[job.id] = job
+
+        m._reap()
+        assert m.get("crawl_live") is not None
+
+    def test_hard_cap_drops_oldest_finished_jobs(self):
+        from backend.modules.crawl_jobs import CrawlJob, JobStatus
+
+        m = self._manager()
+        m._max_jobs = 3
+        for i in range(6):
+            job = CrawlJob(id=f"crawl_{i}", seed="https://x.test/", created_at=float(i))
+            job.status = JobStatus.COMPLETED
+            job.completed_at = 1e12  # not expired
+            m._jobs[job.id] = job
+
+        m._reap()
+        assert len(m._jobs) <= 3
+
+    def test_cancel_on_a_finished_job_is_refused(self):
+        from backend.modules.crawl_jobs import CrawlJob, JobStatus
+
+        job = CrawlJob(id="crawl_done", seed="https://x.test/")
+        job.status = JobStatus.COMPLETED
+        assert job.cancel() is False
+
+    def test_cancel_on_a_live_job_is_accepteded_and_pollable(self):
+        from backend.modules.crawl_jobs import CrawlJob
+
+        job = CrawlJob(id="crawl_live", seed="https://x.test/")
+        assert job.cancel() is True
+        assert job.should_stop is True
+
+    def test_to_dict_reports_expiry_only_once_finished(self):
+        from backend.modules.crawl_jobs import CrawlJob, JobStatus
+
+        job = CrawlJob(id="crawl_x", seed="https://x.test/", page_limit=7)
+        assert job.to_dict()["expires_at"] is None
+        job.status = JobStatus.COMPLETED
+        job.completed_at = 1000.0
+        assert job.to_dict()["expires_at"] is not None
+
+    def test_concurrency_env_is_honoured(self, monkeypatch):
+        monkeypatch.setenv("JAMBU_CRAWL_CONCURRENCY", "7")
+        from backend.modules.crawl_jobs import _max_concurrent
+        assert _max_concurrent() == 7
+
+    def test_bad_concurrency_env_falls_back(self, monkeypatch):
+        monkeypatch.setenv("JAMBU_CRAWL_CONCURRENCY", "not-a-number")
+        from backend.modules.crawl_jobs import _max_concurrent
+        assert _max_concurrent() == 3
 
 
 # ---------------------------------------------------------------------------
