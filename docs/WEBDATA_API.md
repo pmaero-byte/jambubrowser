@@ -65,7 +65,18 @@ never fails the fetch. `GET /v1/cache/stats`, `DELETE /v1/cache`.
 pollable. Pages stream into a job as they land, so a poller sees partial
 results. Cancellation is cooperative (checked between pages).
 
-**Scope:** jobs are in-process and do not survive a restart.
+**Durability.** Job records are written to SQLite on every state change, and
+results are written once at completion (stored page text is capped, since the
+full text was already returned to you). A poll therefore still answers after a
+restart — `GET /v1/crawl/{id}` and `GET /v1/batch/{id}` fall back to the store
+when the in-memory record is gone.
+
+A job the process died inside is marked **`interrupted`** at the next startup
+rather than left at `running`, so a poller is never left waiting on work that
+will never advance. `interrupted` is terminal.
+
+Job ids are not interchangeable: a crawl id read through the batch endpoint
+returns 404, and vice versa.
 
 ### Crawling behaviour
 
@@ -118,4 +129,6 @@ shown is the text that was fetched. No hosted scraping API ships this.
 - **Anti-bot / CAPTCHA handling** — this is a plain client plus a local browser;
   it does not proxy or evade. Protected sites will fail, and the receipt will
   say so.
-- **Durable job queue** — jobs are in memory.
+- **Resuming a partially-completed crawl** — jobs are durable for *status and
+  results*, but an interrupted crawl is not resumed; it is reported as
+  interrupted and must be re-submitted.

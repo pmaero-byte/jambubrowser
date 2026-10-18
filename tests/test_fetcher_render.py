@@ -188,10 +188,12 @@ class TestRenderPolicy:
 class TestRenderWiring:
     @pytest.fixture(autouse=True)
     def _jobs(self):
-        from backend.modules.crawl_jobs import reset_crawl_jobs
+        from backend.modules.crawl_jobs import clear_job_store, reset_crawl_jobs
         reset_crawl_jobs()
+        clear_job_store()
         yield
         reset_crawl_jobs()
+        clear_job_store()
 
     @pytest.fixture
     def client(self, monkeypatch):

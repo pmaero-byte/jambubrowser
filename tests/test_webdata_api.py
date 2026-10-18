@@ -13,15 +13,18 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def clean_crawl_jobs():
-    """Job state is process-global and asyncio primitives bind to a loop.
+    """Job state is process-global, durable, and asyncio primitives bind to a loop.
 
     TestClient creates a fresh event loop per context, so a manager left over
-    from a previous test would hold a Semaphore attached to a dead loop.
+    from a previous test would hold a Semaphore attached to a dead loop; and
+    jobs are now persisted, so rows must not leak between tests either.
     """
-    from backend.modules.crawl_jobs import reset_crawl_jobs
+    from backend.modules.crawl_jobs import clear_job_store, reset_crawl_jobs
     reset_crawl_jobs()
+    clear_job_store()
     yield
     reset_crawl_jobs()
+    clear_job_store()
 
 
 @pytest.fixture

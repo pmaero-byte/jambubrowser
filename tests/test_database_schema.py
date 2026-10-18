@@ -22,6 +22,8 @@ from backend.core.database import init_db
 # order sqlite reports them. 69 objects.
 EXPECTED_OBJECTS = [
         ("index", "idx_a2a_tasks"),
+        ("index", "idx_crawl_jobs_created"),
+        ("index", "idx_crawl_jobs_status"),
         ("index", "idx_dismissed_url"),
         ("index", "idx_evidence_bundles"),
         ("index", "idx_flow_monitor_runs"),
@@ -44,6 +46,7 @@ EXPECTED_OBJECTS = [
         ("table", "audit_monitors"),
         ("table", "audit_usage"),
         ("table", "browser_sessions"),
+        ("table", "crawl_jobs"),
         ("table", "credential_vault"),
         ("table", "custom_tools"),
         ("table", "dismissed_findings"),

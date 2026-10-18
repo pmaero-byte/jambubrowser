@@ -13,10 +13,13 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def clean_crawl_jobs():
-    from backend.modules.crawl_jobs import reset_crawl_jobs
+    """Jobs are durable now, so tests must not inherit each other's rows."""
+    from backend.modules.crawl_jobs import clear_job_store, reset_crawl_jobs
     reset_crawl_jobs()
+    clear_job_store()
     yield
     reset_crawl_jobs()
+    clear_job_store()
 
 
 @pytest.fixture(autouse=True)

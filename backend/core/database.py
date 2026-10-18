@@ -119,6 +119,7 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
     _schema_meshpay_walleting(cursor)
     _schema_simulation(cursor)
     _schema_page_changes(cursor)
+    _schema_crawl_jobs(cursor)
     conn.commit()
     return conn
 
@@ -1403,4 +1404,37 @@ def _schema_page_changes(cursor: sqlite3.Cursor) -> None:
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_page_changes_url "
         "ON page_changes(url, changed_at DESC)"
+    )
+
+
+def _schema_crawl_jobs(cursor: sqlite3.Cursor) -> None:
+    """Durable crawl/batch job records (see backend.modules.crawl_jobs).
+
+    Job metadata is small and written on every state change, so status survives
+    a restart. Results are written once at the end and the stored text is capped:
+    a 500-page crawl of long articles would otherwise put tens of megabytes into
+    the database for data the caller has already retrieved.
+    """
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS crawl_jobs (
+            id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            target TEXT,
+            status TEXT NOT NULL,
+            total INTEGER DEFAULT 0,
+            completed INTEGER DEFAULT 0,
+            error TEXT,
+            meta TEXT,
+            results TEXT,
+            created_at REAL,
+            started_at REAL,
+            completed_at REAL,
+            expires_at REAL
+        )
+    """)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_crawl_jobs_status ON crawl_jobs(status)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_crawl_jobs_created ON crawl_jobs(created_at DESC)"
     )
