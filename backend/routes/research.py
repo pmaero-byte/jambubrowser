@@ -1,5 +1,6 @@
 """Research, search, scrape, and sandbox execution endpoints."""
 import logging
+import os
 import re
 import time
 import xml.etree.ElementTree as ET
@@ -12,6 +13,7 @@ from pydantic import BaseModel, validator
 from backend.core.audit import ActionCategory, get_audit_logger
 from backend.core.database import get_db_cursor
 from backend.core.security import is_safe_url
+from backend.core.untrusted import sanitize_untrusted
 
 log = logging.getLogger("jambu.research")
 from backend.core.privacy import sanitize_content_for_storage
@@ -220,7 +222,17 @@ async def _expand_query(query: str, client_id: str, llm_config: dict) -> list:
             return [query]
 
 
-async def _assess_url_risk(url: str, client_id: str, llm_config: Optional[dict]) -> bool:
+async def _assess_url_risk(url: str, client_id: str, llm_config: Optional[dict]) -> Optional[bool]:
+    """Ask the local model whether a URL looks risky.
+
+    Returns ``True`` (risky), ``False`` (assessed as safe), or ``None`` when the
+    assessment could not be performed at all.
+
+    The tri-state matters: this used to return ``False`` on any exception, i.e.
+    "cannot assess" was silently reported as "safe". A security check that
+    fails open is worse than no check, because the caller believes it ran.
+    Callers now decide what an unknown URL means (see ``_screen_sources``).
+    """
     # llm_config may be None if the caller didn't supply it — default to
     # an empty dict so the .get() chain doesn't crash on the first call.
     cfg = llm_config or {}
@@ -237,10 +249,12 @@ async def _assess_url_risk(url: str, client_id: str, llm_config: Optional[dict])
                 json={"model": model_id, "messages": [{"role": "user", "content": prompt}], "temperature": 0.1},
                 timeout=10.0,
             )
+            resp.raise_for_status()
             analysis = resp.json()["choices"][0]["message"]["content"]
             return "RISKY" in analysis.upper()
-        except Exception:
-            return False
+        except Exception as e:
+            log.warning("URL risk assessment unavailable for %s: %s", url, e)
+            return None
 
 
 async def _fetch_arxiv(query: str) -> list:
@@ -446,12 +460,30 @@ async def _screen_sources(req: "ResearchRequest", results: list[dict],
     Runs on the *search* URLs rather than on the scraped content, so a hostile
     page is never fetched at all. A URL that survives here is not guaranteed
     safe — it is guaranteed worth reading.
+
+    A URL the assessment could not judge is *unknown*, not safe. Whether to keep
+    or drop it is a policy choice: ``JAMBU_RESEARCH_STRICT_URLS=1`` drops it
+    (fail-closed, right for untrusted networks), while the default keeps it and
+    logs the shortfall — otherwise a stopped local model would silently empty
+    every research run.
     """
+    strict = os.environ.get("JAMBU_RESEARCH_STRICT_URLS", "").strip().lower() in ("1", "true", "yes")
     safe_urls = []
+    unknown = 0
     for r in results:
         is_risky = await _assess_url_risk(r["url"], cid, req.llm_config)
-        if not is_risky:
-            safe_urls.append(r)
+        if is_risky is True:
+            continue
+        if is_risky is None:
+            unknown += 1
+            if strict:
+                continue
+        safe_urls.append(r)
+    if unknown:
+        log.warning(
+            "URL risk assessment unavailable for %d/%d source(s)%s",
+            unknown, len(results), " — dropped (strict mode)" if strict else " — kept unverified",
+        )
     return safe_urls
 
 
@@ -644,20 +676,42 @@ async def _scrape_source(url: str) -> Optional[str]:
     'content' / 'markdown' / etc.), not a string as the type hint suggested.
     We coerce here so the caller can safely "\n\n".join() the results.
     """
+    def _clean(text: str) -> Optional[str]:
+        """Normalise untrusted scraped text before it can reach a prompt.
+
+        Removes invisible/bidi characters and hidden markup, and logs any
+        injection markers found. See ``backend.core.untrusted`` for why this is
+        visibility hygiene plus signal, not an injection "fix".
+        """
+        cleaned = sanitize_untrusted(str(text)[:10000], max_chars=10000)
+        if cleaned.suspicious:
+            log.warning(
+                "Possible prompt injection in scraped content from %s: %s",
+                url, ", ".join(cleaned.injection_markers),
+            )
+        return cleaned.text or None
+
     try:
         from backend.modules.scraper import scrape_url
         result = await scrape_url(url, "")
         if result is None:
             return None
         if isinstance(result, str):
-            return result
+            return _clean(result)
         if isinstance(result, dict):
             # Prefer markdown if available, fall back to text content
             for key in ("markdown", "content", "text", "body"):
                 if key in result and result[key]:
-                    return str(result[key])[:10000]
-            # Last resort: stringify the dict
-            return str(result)[:10000]
+                    return _clean(result[key])
+            # Last resort: collect only scalar text values. Stringifying the
+            # whole dict dragged raw `html` into the prompt — the largest
+            # wasted-token item on this path, and an injection surface too.
+            textish = " ".join(
+                str(v) for k, v in result.items()
+                if k not in ("html", "links", "headers", "screenshot", "images")
+                and isinstance(v, (str, int, float))
+            )
+            return _clean(textish) if textish.strip() else None
     except Exception:
         log.debug("tool result exposed no readable text field", exc_info=True)
     try:
@@ -665,7 +719,7 @@ async def _scrape_source(url: str) -> Optional[str]:
             resp = await cl.get(url, headers={"User-Agent": "Mozilla/5.0"})
             if resp.status_code == 200:
                 text = resp.text[:10000]
-                return re.sub(r"<[^>]+>", "", text)[:5000]
+                return _clean(re.sub(r"<[^>]+>", "", text)[:5000])
     except Exception:
         return None
 

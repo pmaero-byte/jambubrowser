@@ -38,6 +38,8 @@ from .base import (
     ProviderTimeout,
     ProviderAuthError,
     ProviderRateLimit,
+    LOCAL_PROVIDERS,
+    LocalOnlyViolation,
     estimate_cost_for_model,
     normalize_llm_response,
 )
@@ -66,6 +68,8 @@ __all__ = [
     "ProviderTimeout",
     "ProviderAuthError",
     "ProviderRateLimit",
+    "LOCAL_PROVIDERS",
+    "LocalOnlyViolation",
     "estimate_cost_for_model",
     "normalize_llm_response",
     # Registry

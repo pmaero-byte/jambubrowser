@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from backend.decentralized.a2a import agent_card, handle_rpc
+from backend.core.ingress import Source, authorize_ingress
 
 router = APIRouter(tags=["a2a"])
 
@@ -68,6 +69,23 @@ async def a2a_rpc(request: Request):
             ),
             headers={"WWW-Authenticate": 'Bearer realm="jambubrowser-a2a"'},
         )
+    # A2A is a data-only surface by architecture. The "declared skill" check in
+    # `resolve_skill` (SKILL_REQUIRED / SKILL_NOT_FOUND) is what makes a remote
+    # caller unable to author a free-form agent instruction; this records the
+    # provenance and fails loudly if that ever stops being true, rather than
+    # leaving "inputs only via local" as an unstated assumption.
+    ingress = authorize_ingress(
+        Source.A2A,
+        client_host=request.client.host if request.client else None,
+        authenticated=_has_api_key(request),
+    )
+    if not ingress.is_data_only:
+        raise HTTPException(
+            status_code=500,
+            detail="A2A ingress is misconfigured: this surface must be data-only",
+        )
+    request.state.ingress = ingress
+
     try:
         payload = await request.json()
     except Exception:

@@ -44,6 +44,15 @@ class ProviderUnavailable(ProviderError):
     """Provider is not reachable (connection refused, DNS, etc.)."""
 
 
+class LocalOnlyViolation(ProviderError):
+    """A cloud provider was requested while local-only mode is enforced.
+
+    This is raised rather than silently falling back to a local provider: a
+    request that explicitly names a cloud model under a "no cloud" guarantee is
+    a misconfiguration, and hiding it would make the guarantee unverifiable.
+    """
+
+
 # ---------------------------------------------------------------------------
 # Data types
 # ---------------------------------------------------------------------------
@@ -196,6 +205,11 @@ _PRICING_TABLE: list[tuple[str, str, float, float]] = [
 # user-operated compute mesh — DCT metering happens mesh-side, not in USD.
 # Greenwich is the Greenwich Studio local stack (:8085/:8090) — also local.
 _LOCAL_PROVIDERS = {"ollama", "mlx", "mock", "dcm", "greenwich"}
+
+# Public alias. This is the single source of truth for "runs on your machine /
+# costs nothing in USD" — import it rather than re-listing provider names, so a
+# new local provider cannot be added in one place and forgotten in another.
+LOCAL_PROVIDERS = _LOCAL_PROVIDERS
 
 
 def estimate_cost_for_model(provider: str, model: str, usage: Usage) -> float:

@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Jambubrowser vs AI Browsers — Capability &amp; Cost Comparison (2026)</title>
+<style>
+  :root{
+    --bg:#f7f8fa; --panel:#ffffff; --ink:#0d1117; --muted:#5b6472;
+    --line:#e6e9ee; --line2:#eef1f5;
+    --teal:#0f9d8f; --green:#3bb273; --lime:#8bc34a; --yellow:#e6c419;
+    --amber:#f0932b; --orange:#e8590c; --red:#d63031;
+    --jambu:#0f9d8f; --shadow:0 1px 2px rgba(16,24,40,.06),0 8px 24px rgba(16,24,40,.06);
+    --radius:14px;
+  }
+  html[data-theme="dark"]{
+    --bg:#0b0f14; --panel:#111721; --ink:#e8eef6; --muted:#93a0b3;
+    --line:#1e2733; --line2:#18202b;
+    --shadow:0 1px 2px rgba(0,0,0,.5),0 10px 30px rgba(0,0,0,.45);
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1120px;margin:0 auto;padding:40px 22px 90px}
+  header.top{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;flex-wrap:wrap}
+  .eyebrow{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:700}
+  h1{font-size:clamp(26px,4vw,40px);line-height:1.12;margin:8px 0 10px;letter-spacing:-.02em}
+  h1 .jb{color:var(--jambu)}
+  .sub{color:var(--muted);max-width:64ch;margin:0}
+  .theme-btn{
+    border:1px solid var(--line);background:var(--panel);color:var(--ink);
+    border-radius:999px;padding:8px 14px;font-size:13px;cursor:pointer;font-weight:600;box-shadow:var(--shadow)
+  }
+  .theme-btn:hover{border-color:var(--jambu)}
+
+  h2{font-size:13px;letter-spacing:.13em;text-transform:uppercase;color:var(--muted);margin:0 0 4px;font-weight:800}
+  .h2line{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin:46px 0 6px}
+  .h2line h3{font-size:clamp(19px,2.4vw,25px);margin:0;letter-spacing:-.01em}
+  .h2line p{margin:0;color:var(--muted);font-size:13.5px}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
+  .pad{padding:22px}
+
+  /* ---------- bar chart ---------- */
+  .chart{padding:26px 22px 16px;position:relative;overflow:hidden}
+  .chart-title{font-size:16px;font-weight:800;margin:0 0 2px;letter-spacing:-.01em}
+  .chart-sub{font-size:12.5px;color:var(--muted);margin:0 0 22px}
+  .bars{display:flex;align-items:flex-end;gap:clamp(10px,2.4vw,30px);padding:0 6px}
+  .bar-col{flex:1;display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0}
+  .bar-val{font-size:13px;font-weight:800;white-space:nowrap}
+  .bar-track{width:100%;display:flex;align-items:flex-end;height:230px}
+  .bar{
+    width:100%;border-radius:9px 9px 5px 5px;
+    background:var(--c,var(--jambu));
+    transition:filter .2s;
+    position:relative;box-shadow:inset 0 -1px 0 rgba(0,0,0,.08);
+    transform-origin:bottom
+  }
+  .bar-col:hover .bar{filter:brightness(1.07) saturate(1.1)}
+  .bar.free{background:linear-gradient(180deg,#18b3a3,#0f9d8f)}
+  .bar.retired{background:repeating-linear-gradient(45deg,#c9d0da,#c9d0da 6px,#dfe4ea 6px,#dfe4ea 12px);height:34px !important}
+  .bar-name{font-size:12.5px;font-weight:700;text-align:center;line-height:1.25}
+  .bar-name small{display:block;font-weight:500;color:var(--muted);font-size:11px}
+  .baseline{height:1px;background:var(--line);margin:0 6px 10px}
+  .chart-note{font-size:11.5px;color:var(--muted);margin:12px 4px 0;line-height:1.5}
+
+  /* ---------- matrix ---------- */
+  .matrix-wrap{overflow-x:auto;border-radius:var(--radius)}
+  table.matrix{border-collapse:separate;border-spacing:0;width:100%;min-width:820px;font-size:13.5px}
+  table.matrix th,table.matrix td{padding:11px 12px;text-align:left;border-bottom:1px solid var(--line2)}
+  table.matrix thead th{
+    position:sticky;top:0;background:var(--panel);z-index:2;
+    font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:800;
+    border-bottom:1px solid var(--line)
+  }
+  table.matrix th.jb,table.matrix td.jb{background:color-mix(in srgb,var(--jambu) 8%,var(--panel))}
+  table.matrix thead th.jb{color:var(--jambu)}
+  table.matrix td.cap{font-weight:600}
+  table.matrix td.cap small{display:block;font-weight:400;color:var(--muted);font-size:11.5px;margin-top:1px}
+  .mk{font-size:16px;font-weight:700;text-align:center}
+  .yes{color:var(--green)} .part{color:var(--amber)} .no{color:#c2c9d2} .ret{color:#9aa4b0;font-size:12px}
+  html[data-theme="dark"] .no{color:#3c4655}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin:12px 2px 0}
+  .legend b{font-weight:700}
+
+  /* ---------- pillar grid ---------- */
+  .pillars{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;margin-top:14px}
+  .pillar{padding:18px 18px 14px}
+  .pillar h4{margin:0 0 2px;font-size:15px;letter-spacing:-.01em}
+  .pillar .ptag{display:inline-block;font-size:10.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--jambu);margin-bottom:8px}
+  .pillar ul{list-style:none;margin:8px 0 0;padding:0}
+  .pillar li{display:flex;gap:9px;align-items:flex-start;padding:5px 0;font-size:13px;border-top:1px dashed var(--line2)}
+  .pillar li:first-child{border-top:0}
+  .d{flex:0 0 auto;font-size:12px;line-height:1.5;font-weight:800}
+  .d-full{color:var(--green)} .d-part{color:var(--amber)} .d-lib{color:#9aa4b0}
+  .pillar li span.t{color:var(--ink)}
+  .pillar li span.t em{font-style:normal;color:var(--muted);display:block;font-size:11.5px}
+
+  /* ---------- callouts ---------- */
+  .cols2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:760px){.cols2{grid-template-columns:1fr}}
+  .win li,.gap li{margin:6px 0}
+  .win h4,.gap h4{margin:0 0 8px;font-size:15px}
+  .win ul,.gap ul{margin:0;padding-left:18px;font-size:13.5px}
+  .gap{background:color-mix(in srgb,var(--amber) 7%,var(--panel));border-color:color-mix(in srgb,var(--amber) 30%,var(--line))}
+  footer{margin-top:44px;padding-top:18px;border-top:1px solid var(--line);font-size:12px;color:var(--muted)}
+  footer a{color:var(--jambu);text-decoration:none}
+  footer a:hover{text-decoration:underline}
+  .srcs li{margin:4px 0}
+  .badge{display:inline-block;font-size:10.5px;font-weight:800;padding:2px 7px;border-radius:6px;letter-spacing:.05em;text-transform:uppercase}
+  .badge.mit{background:color-mix(in srgb,var(--jambu) 14%,transparent);color:var(--jambu)}
+  .badge.ret{background:#eceff3;color:#7a8595}
+  html[data-theme="dark"] .badge.ret{background:#1c2531;color:#93a0b3}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div>
+      <div class="eyebrow">Comparison · October 2026</div>
+      <h1><span class="jb">Jambubrowser</span> vs the AI browsers:<br/>abilities &amp; cost at a glance</h1>
+      <p class="sub">A grounded side-by-side of what each agentic browser can actually do and what it
+      costs to run — plus the full breadth of Jambu's own surface, marked by how deeply each
+      capability is wired and tested.</p>
+    </div>
+    <button class="theme-btn" id="tbtn" aria-label="Toggle colour theme">◐ Dark mode</button>
+  </header>
+
+  <!-- ============ COST CHART ============ -->
+  <div class="h2line">
+    <h2>01</h2>
+    <h3>The cost picture</h3>
+    <p>Monthly price to get the full agentic tier</p>
+  </div>
+
+  <div class="card chart">
+    <p class="chart-title">AI Browser Pricing Comparison — monthly, 2026</p>
+    <p class="chart-sub">Full agentic tier. Green = you pay nothing.</p>
+
+    <div class="bars" id="bars">
+      <!-- heights are % of max (20) set inline -->
+      <div class="bar-col"><div class="bar-val">$0</div><div class="bar-track"><div class="bar free" style="height:10px"></div></div><div class="bar-name">Jambu<small>self-hosted, MIT</small></div></div>
+      <div class="bar-col"><div class="bar-val">$0*</div><div class="bar-track"><div class="bar free" style="height:10px"></div></div><div class="bar-name">Edge Copilot<small>free “limited time”</small></div></div>
+      <div class="bar-col"><div class="bar-val">$0 / $20</div><div class="bar-track"><div class="bar free" style="height:10px"></div></div><div class="bar-name">Perplexity Comet<small>free · Pro $20</small></div></div>
+      <div class="bar-col"><div class="bar-val">$19.99</div><div class="bar-track"><div class="bar" style="height:190px;--c:var(--amber)"></div></div><div class="bar-name">Gemini in Chrome<small>Google AI Pro</small></div></div>
+      <div class="bar-col"><div class="bar-val">$20</div><div class="bar-track"><div class="bar" style="height:190px;--c:var(--orange)"></div></div><div class="bar-name">Dia<small>“Better Answers”</small></div></div>
+      <div class="bar-col"><div class="bar-val"><span class="ret">retired</span></div><div class="bar-track"><div class="bar retired" style="height:34px"></div></div><div class="bar-name">ChatGPT Atlas<small>stopped 9 Aug 2026</small></div></div>
+    </div>
+    <div class="baseline"></div>
+    <p class="chart-note">
+      <b>*</b> Edge Copilot Mode is free “for a limited time” — Microsoft has not published the end date.
+      Comet has been free to download since Oct 2025; the $20 Perplexity Pro tier is optional.
+      Jambu is <b>$0 with local models</b> (Ollama / MLX on your own machine) and works with any cloud key you already own — there is no vendor subscription.
+    </p>
+  </div>
+
+  <!-- ============ MATRIX ============ -->
+  <div class="h2line">
+    <h2>02</h2>
+    <h3>Abilities, side by side</h3>
+    <p>What each browser can do — the dimensions that actually differ</p>
+  </div>
+
+  <div class="card matrix-wrap">
+    <table class="matrix">
+      <thead>
+        <tr>
+          <th style="width:34%">Capability</th>
+          <th class="jb">Jambu</th>
+          <th>Perplexity Comet</th>
+          <th>Dia</th>
+          <th>Gemini in Chrome</th>
+          <th>Edge Copilot</th>
+          <th>Atlas</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="cap">Agentic browsing<small>acts inside your logged-in session</small></td>
+          <td class="jb mk yes">●</td><td class="mk yes">●</td><td class="mk part">◐</td>
+          <td class="mk yes">●</td><td class="mk yes">●</td><td class="mk ret">retired</td>
+        </tr>
+        <tr>
+          <td class="cap">Runs fully local / offline<small>on-device models, no cloud round-trip</small></td>
+          <td class="jb mk yes">●</td><td class="mk no">○</td><td class="mk no">○</td>
+          <td class="mk no">○</td><td class="mk no">○</td><td class="mk ret">—</td>
+        </tr>
+        <tr>
+          <td class="cap">Open source<small>MIT — audit and fork the stack</small></td>
+          <td class="jb mk yes">●</td><td class="mk no">○</td><td class="mk no">○</td>
+          <td class="mk no">○</td><td class="mk no">○</td><td class="mk ret">—</td>
+        </tr>
+        <tr>
+          <td class="cap">Self-hostable<small>run the whole engine on your own box</small></td>
+          <td class="jb mk yes">●</td><td class="mk no">○</td><td class="mk no">○</td>
+          <td class="mk no">○</td><td class="mk no">○</td><td class="mk ret">—</td>
+        </tr>
+        <tr>
+          <td class="cap">Private search, own index<small>no dependency on one search cloud</small></td>
+          <td class="jb mk yes">●</td><td class="mk no">○</td><td class="mk no">○</td>
+          <td class="mk no">○</td><td class="mk no">○</td><td class="mk ret">—</td>
+        </tr>
+        <tr>
+          <td class="cap">Privacy modes + PII redaction<small>tiered privacy, auto-redact sensitives</small></td>
+          <td class="jb mk yes">●</td><td class="mk part">◐</td><td class="mk part">◐</td>
+          <td class="mk part">◐</td><td class="mk part">◐</td><td class="mk ret">—</td>
+        </tr>
+        <tr>
+          <td class="cap">Tor / SOCKS / VPN egress<small>anonymous, fail-closed routing</small></td>
+          <td class="jb mk yes">●</td><td class="mk no">○</td><td class="mk no">○</td>
+          <td class="mk no">○</td><td class="mk no">○</td><td class="mk ret">—</td>
+        </tr>
+        <tr>
+          <td class="cap">Encrypted credential vault<small>AES-256, autofill with approval</small></td>
+          <td class="jb mk yes">●</td><td class="mk part">◐</td><td class="mk part">◐</td>
+          <td class="mk part">◐</td><td class="mk part">◐</td><td class="mk ret">—</td>
+        </tr>
+        <tr>
+          <td class="cap">Web-app auditing<small>security · performance · a11y · SEO · UX</small></td>
+          <td class="jb mk yes">●</td><td class="mk no">○</td><td class="mk no">○</td>
+          <td class="mk no">○</td><td class="mk no">○</td><td class="mk ret">—</td>
+        </tr>
+        <tr>
+          <td class="cap">Headless automation + CI<small>scripted flows, exit codes, SARIF</small></td>
+          <td class="jb mk yes">●</td><td class="mk no">○</td><td class="mk no">○</td>
+          <td class="mk no">○</td><td class="mk no">○</td><td class="mk ret">—</td>
+        </tr>
+        <tr>
+          <td class="cap">Agent interop (MCP / A2A)<small>other agents can call it as a tool</small></td>
+          <td class="jb mk yes">●</td><td class="mk no">○</td><td class="mk no">○</td>
+          <td class="mk no">○</td><td class="mk no">○</td><td class="mk ret">—</td>
+        </tr>
+        <tr>
+          <td class="cap">Signed evidence / audit trail<small>tamper-evident, independently verifiable</small></td>
+          <td class="jb mk yes">●</td><td class="mk no">○</td><td class="mk no">○</td>
+          <td class="mk no">○</td><td class="mk no">○</td><td class="mk ret">—</td>
+        </tr>
+        <tr>
+          <td class="cap">Monthly cost, full tier</td>
+          <td class="jb mk" style="font-weight:800;color:var(--jambu)">$0</td>
+          <td class="mk">$0 / $20</td><td class="mk">$20</td>
+          <td class="mk">$19.99</td><td class="mk">$0*</td><td class="mk ret">—</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="legend">
+    <span><b class="yes">●</b> shipped / documented</span>
+    <span><b class="part">◐</b> partial or limited</span>
+    <span><b class="no">○</b> not offered publicly</span>
+    <span><b style="color:#8b95a3">—</b> retired</span>
+  </div>
+
+  <div class="card pad" style="margin-top:14px">
+    <p style="margin:0;font-size:12.5px;color:var(--muted)">
+      <b>How to read the competitor columns.</b> Marks reflect each vendor's public documentation and
+      press as of October 2026. A <b class="no">○</b> means <em>no public offering was found</em> — not
+      proof that nothing exists internally. The universal rows are limited on purpose: they are the
+      dimensions where the products genuinely differ. Jambu's own long tail is listed in full below,
+      with each item marked by how deeply it is wired and tested in the codebase.
+    </p>
+  </div>
+
+  <!-- ============ JAMBU FULL BREADTH ============ -->
+  <div class="h2line">
+    <h2>03</h2>
+    <h3>Jambubrowser — full breadth</h3>
+    <p>Everything it ships, grouped by the four pillars, with real depth</p>
+  </div>
+
+  <div class="pillars">
+
+    <div class="card pillar">
+      <div class="ptag">Pillar 01 · Harness</div>
+      <h4>Multi-agent orchestration</h4>
+      <ul>
+        <li><span class="d d-full">●</span><span class="t">Unified LLM layer — 7 providers<em>Anthropic, OpenAI, Ollama, MLX, MiniMax, DecentraCode Mesh, Mock behind one protocol</em></span></li>
+        <li><span class="d d-full">●</span><span class="t">Smart routing + cost tracking<em>cheapest / fastest / quality / fallback / local-only, per request</em></span></li>
+        <li><span class="d d-full">●</span><span class="t">ReAct agent loop<em>Plan → Execute → Verify → Replan, streamed over SSE, budget-aware</em></span></li>
+        <li><span class="d d-full">●</span><span class="t">Mixture-of-Agents fan-out<em>N reference models vote, one aggregates</em></span></li>
+        <li><span class="d d-full">●</span><span class="t">4-store memory<em>profile · session · semantic vectors · procedural success rates, hybrid 60/30/10 recall</em></span></li>
+        <li><span class="d d-full">●</span><span class="t">Plan library<em>proven plans cached as templates; runs start warm, verify live</em></span></li>
+        <li><span class="d d-lib">○</span><span class="t">AEGIS evolution / co-evolution<em>library-only by product decision — not a shipped route</em></span></li>
+      </ul>
+    </div>
+
+    <div class="card pillar">
+      <div class="ptag">Pillar 02 · Browser</div>
+      <h4>Eyes and hands on the live web</h4>
+      <ul>
+        <li><span class="d d-full">●</span><span class="t">6 specialist audit “employees”<em>Security · Performance · UX/UI · Accessibility · SEO · Code-Quality, parallel dispatch</em></span></li>
+        <li><span class="d d-full">●</span><span class="t">Real browser telemetry<em>DOM, network, console, accessibility tree, perf metrics via Playwright</em></span></li>
+        <li><span class="d d-full">●</span><span class="t">One-call test flows<em>40–50 raw calls collapsed to 1, telemetry attached</em></span></li>
+        <li><span class="d d-full">●</span><span class="t">Deterministic addressing<em>@eN refs, CSS/XPath, or JS — gated by approval</em></span></li>
+        <li><span class="d d-full">●</span><span class="t">Debug loop<em>fault injection, cause attribution, trace / HAR / video, source maps</em></span></li>
+        <li><span class="d d-full">●</span><span class="t">QA team<em>managed cases, datasets, flake quarantine, JUnit + SARIF</em></span></li>
+        <li><span class="d d-full">●</span><span class="t">Anti-bot shield + fingerprint rotation<em>hardened sessions, per-session profiles</em></span></li>
+        <li><span class="d d-full">●</span><span class="t">Computer use + vision<em>macOS screen capture, OCR, UI element grounding</em></span></li>
+        <li><span class="d d-part">◐</span><span class="t">Native tabs<em>pre-production: downloads / find / copy disabled, no crash fallback yet</em></span></li>
+      </ul>
+    </div>
+
+    <div class="card pillar">
+      <div class="ptag">Pillar 03 · DeepNet</div>
+      <h4>Reaching what the surface web hides</h4>
+      <ul>
+        <li><span class="d d-full">●</span><span class="t">Multi-engine private search<em>SearXNG (90+ engines) → DuckDuckGo → Google fallback</em></span></li>
+        <li><span class="d d-full">●</span><span class="t">Hybrid RAG + knowledge graph<em>sqlite-vec vector search, entities, relations, clustering</em></span></li>
+        <li><span class="d d-full">●</span><span class="t">Swarm research<em>complex queries decomposed into parallel sub-missions</em></span></li>
+        <li><span class="d d-full">●</span><span class="t">Dynamic VPN egress<em>WireGuard/OpenVPN tunnel + rotating proxy pool, fail-closed by default</em></span></li>
+        <li><span class="d d-full">●</span><span class="t">Tor / SOCKS routing<em>anonymous research mode</em></span></li>
+        <li><span class="d d-full">●</span><span class="t">4 privacy modes + PII redaction<em>emails, phones, SSNs, cards, IPs, passports</em></span></li>
+        <li><span class="d d-full">●</span><span class="t">Scheduled missions<em>cron-style background research with result diffing</em></span></li>
+      </ul>
+    </div>
+
+    <div class="card pillar">
+      <div class="ptag">Pillar 04 · Developer</div>
+      <h4>Embed it anywhere</h4>
+      <ul>
+        <li><span class="d d-full">●</span><span class="t">~290 HTTP endpoints<em>34 routers behind one FastAPI engine, 9 security middlewares</em></span></li>
+        <li><span class="d d-full">●</span><span class="t">CLI with 20 command groups<em>jambu test · audit · sim · dcm · vpn · monitor</em></span></li>
+        <li><span class="d d-full">●</span><span class="t">Remote MCP server — 52 tools<em>Streamable HTTP + public server card, profile-scoped</em></span></li>
+        <li><span class="d d-full">●</span><span class="t">A2A agent card<em>other agents can hire it via JSON-RPC</em></span></li>
+        <li><span class="d d-full">●</span><span class="t">CI action + exit codes<em>audit/quick --fail-on, SARIF and JUnit out</em></span></li>
+        <li><span class="d d-full">●</span><span class="t">Desktop + iOS<em>Tauri shell with CDP screencast and human takeover; iOS dashboard reads live engine data</em></span></li>
+        <li><span class="d d-part">◐</span><span class="t">Packaging<em>PyPI / Homebrew runbook ready but not yet published; billing is a stub</em></span></li>
+      </ul>
+    </div>
+
+    <div class="card pillar">
+      <div class="ptag">Pillar 05 · Decentralised</div>
+      <h4>Verified compute on a mesh</h4>
+      <ul>
+        <li><span class="d d-full">●</span><span class="t">Replicated, numerically verified jobs<em>spec hashed before dispatch, replicas compared as numbers, consensus vs median</em></span></li>
+        <li><span class="d d-full">●</span><span class="t">Health vs reputation<em>failing nodes quarantined; disagreement deprioritised via scorecards</em></span></li>
+        <li><span class="d d-full">●</span><span class="t">MeshPay / USDC settlement<em>epoch Merkle roots, receipts, payout planning and reconciliation</em></span></li>
+        <li><span class="d d-full">●</span><span class="t">x402 paywall<em>paid routes, atomic nonce-claim</em></span></li>
+        <li><span class="d d-full">●</span><span class="t">Ed25519 evidence bundles<em>signed audits with a standalone verifier script</em></span></li>
+        <li><span class="d d-part">◐</span><span class="t">P2P / federated RAG / consensus<em>two real engines verified in tests; remaining gap is the DCM-mesh leg and CI wiring</em></span></li>
+      </ul>
+    </div>
+
+  </div>
+
+  <!-- ============ WHERE IT WINS + CAVEATS ============ -->
+  <div class="h2line">
+    <h2>04</h2>
+    <h3>The honest summary</h3>
+  </div>
+
+  <div class="cols2">
+    <div class="card pad win">
+      <h4>Where Jambu is the only one doing it</h4>
+      <ul>
+        <li><b>Sovereignty at $0.</b> MIT-licensed and self-hostable — you can run the whole engine with local models and pay no subscription to anyone.</li>
+        <li><b>Auditing, not just answering.</b> The specialised auditors + signed evidence turn browsing into a defensible, CI-ready artefact — no other agentic browser ships this.</li>
+        <li><b>Own search + own egress.</b> A private multi-engine index and fail-closed Tor/VPN routing instead of a single vendor's search cloud.</li>
+        <li><b>It is a platform.</b> 52 MCP tools, an A2A card and ~290 endpoints mean other agents can hire it — the others are closed surfaces.</li>
+        <li><b>Proof, not vibes.</b> Tamper-evident logs and Ed25519 evidence bundles that a third party can verify independently.</li>
+      </ul>
+    </div>
+    <div class="card pad gap">
+      <h4>Fair caveats — where Jambu is behind</h4>
+      <ul>
+        <li><b>Polished everyday browsing.</b> Native tabs are pre-production (downloads, find, copy disabled). Comet, Dia and Edge are finished browsers today.</li>
+        <li><b>Distribution.</b> PyPI / Homebrew packaging is documented but not published; the competitors are one-click installs.</li>
+        <li><b>Zero-setup.</b> Jambu asks you to run an engine and pick a model — the others just open.</li>
+        <li><b>Single-node mesh.</b> Decentralised pieces are exercised by a two-engine test, but no second node runs in CI yet.</li>
+        <li><b>No billing.</b> The paid tiers exist in the model; checkout is still a stub.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ============ SOURCES ============ -->
+  <footer>
+    <p style="margin:0 0 8px"><b>Evidence basis.</b> Jambu figures: this repository at v3.4.0
+      (<code>README.md</code>, <code>docs/FEATURE_MAP.md</code>, <code>docs/BREADTH_DEPTH.md</code>,
+      <code>docs/CAPABILITY_REPORT.md</code> — MIT, 2026). Competitor figures: vendor documentation and
+      press, October 2026.</p>
+    <ul class="srcs">
+      <li>Perplexity Comet — Chromium-based, free download since Oct 2025; assistant summarises, emails and buys; see Wikipedia, <a href="https://en.wikipedia.org/wiki/Comet_(browser)">Comet (browser)</a>, and the <a href="https://layerxsecurity.com/blog/cometjacking-how-one-click-can-turn-perplexitys-comet-ai-browser-against-you/">CometJacking disclosure</a>.</li>
+      <li>ChatGPT Atlas — <a href="https://help.openai.com/en/articles/20001371-chatgpt-atlas-retirement">retired by OpenAI</a>; stopped working 9 Aug 2026, capabilities moved into ChatGPT and Codex (<a href="https://techcrunch.com/2026/07/09/openai-is-shutting-down-atlas-but-its-ai-browser-ambitions-are-still-growing/">TechCrunch</a>).</li>
+      <li>Dia — <a href="https://www.diabrowser.com/plans">plans</a>: free organised browser, $20/mo “Better Answers”, $100/mo “Better Days”; The Browser Company acquired by Atlassian.</li>
+      <li>Gemini in Chrome — sidebar Gemini + “auto browse”, for Google AI Pro ($19.99/mo) and Ultra subscribers (<a href="https://blog.google/products-and-platforms/products/chrome/gemini-3-auto-browse/">Google blog</a>, <a href="https://techcrunch.com/2026/01/28/chrome-takes-on-ai-browsers-with-tighter-gemini-integration-agentic-features-for-autonomous-tasks/">TechCrunch</a>).</li>
+      <li>Edge Copilot Mode — agentic multi-step workflows across tabs, free “for a limited time” (<a href="https://blogs.windows.com/msedgedev/2025/10/23/meet-copilot-mode-in-edge-your-ai-browser/">Windows blog</a>, <a href="https://www.computerworld.com/article/4078700/microsoft-adds-copilot-mode-to-edge-as-ai-browser-race-heats-up.html">Computerworld</a>).</li>
+    </ul>
+    <p style="margin:10px 0 0">Prices and features move fast — treat every number here as a dated snapshot, not a contract.</p>
+  </footer>
+
+</div>
+
+<script>
+  // theme toggle
+  var html = document.documentElement, btn = document.getElementById('tbtn');
+  var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  if (prefersDark) { html.setAttribute('data-theme','dark'); btn.textContent='◑ Light mode'; }
+  btn.addEventListener('click', function () {
+    var dark = html.getAttribute('data-theme') === 'dark';
+    html.setAttribute('data-theme', dark ? 'light' : 'dark');
+    btn.textContent = dark ? '◐ Dark mode' : '◑ Light mode';
+  });
+</script>
+</body>
+</html>

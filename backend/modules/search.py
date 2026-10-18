@@ -8,6 +8,7 @@ and other search providers when SearXNG is unavailable.
 
 import httpx
 import logging
+import os
 import re
 
 log = logging.getLogger("jambu.search")
@@ -25,7 +26,32 @@ except ImportError:
     make_async_client = httpx.AsyncClient
     is_tor_enabled = lambda: False
 
-SEARXNG_URL = "http://localhost:8888/search"
+DEFAULT_SEARXNG_URL = "http://localhost:8888/search"
+
+
+def searxng_url() -> str:
+    """Resolve the SearXNG endpoint, honouring ``SEARXNG_URL``.
+
+    This module used to hardcode ``localhost:8888`` while the engine and
+    ``docker-compose.yml`` both advertised a configurable ``SEARXNG_URL`` (the
+    compose file points the engine at ``http://searxng:8080/search``). The
+    result was that a self-hosted SearXNG in Docker was never actually used and
+    every search silently fell through to the public DuckDuckGo/Bing/Google
+    scrapers — which is both slower and a privacy leak.
+
+    Re-read on each call so tests and runtime reconfiguration both take effect.
+    """
+    raw = (os.environ.get("SEARXNG_URL") or DEFAULT_SEARXNG_URL).strip()
+    if not raw:
+        raw = DEFAULT_SEARXNG_URL
+    if not raw.rstrip("/").endswith("/search"):
+        raw = raw.rstrip("/") + "/search"
+    return raw
+
+
+# Back-compat: resolved once at import. Prefer searxng_url(), which re-reads
+# the environment.
+SEARXNG_URL = searxng_url()
 
 # Fallback search providers
 DUCKDUCKGO_API = "https://api.duckduckgo.com/"
@@ -259,7 +285,7 @@ async def multi_engine_search(query: str, engines: str = "google,bing,duckduckgo
     try:
         async with make_async_client() as client:
             resp = await client.get(
-                SEARXNG_URL, 
+                searxng_url(), 
                 params={"q": query, "format": "json", "engines": engines}, 
                 timeout=15.0
             )

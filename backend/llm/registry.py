@@ -24,6 +24,8 @@ from typing import AsyncIterator, Callable, Optional
 from .base import (
     ChatMessage,
     ChatResponse,
+    LOCAL_PROVIDERS,
+    LocalOnlyViolation,
     Provider,
     ProviderError,
     ProviderUnavailable,
@@ -113,18 +115,45 @@ class ProviderRegistry:
 
     # -- default resolution --------------------------------------------------
 
+    def _enforce_local_only(self, provider: Provider) -> Provider:
+        """Refuse a cloud provider when local-only mode is enforced.
+
+        Raising here (rather than silently substituting a local provider) keeps
+        the guarantee falsifiable: a request that asked for a cloud model either
+        fails loudly or is served locally, but never quietly leaves the machine.
+        """
+        if self._config.force_local_only and provider.name not in LOCAL_PROVIDERS:
+            raise LocalOnlyViolation(
+                f"local-only mode is on (JAMBU_LLM_LOCAL_ONLY=1): refusing cloud "
+                f"provider '{provider.name}'. Allowed: "
+                f"{', '.join(sorted(LOCAL_PROVIDERS))}."
+            )
+        return provider
+
+    def _resolve_provider(self, name: Optional[str]) -> Provider:
+        """Resolve a provider for a call, enforcing local-only either way.
+
+        `force_local_only` used to be consulted only inside `get_default()`, so
+        any caller that named a provider explicitly (`engine_runtime._call_llm`,
+        the research routes) could still reach a cloud endpoint. Routing every
+        resolution through here is what makes the guarantee actually hold.
+        """
+        if name is None:
+            return self.get_default()
+        return self._enforce_local_only(self.get(name))
+
     def get_default(self) -> Provider:
         """Resolve the default provider based on env config + health."""
         name = self._config.default_provider
         if name and name != "auto":
-            return self.get(name)
+            return self._enforce_local_only(self.get(name))
 
         # "auto": pick the first healthy provider in fallback chain
         chain = self._config.fallback_chain
         for candidate in chain:
             if not self.has(candidate):
                 continue
-            if self._config.force_local_only and candidate not in ("ollama", "mlx", "mock", "dcm", "greenwich"):
+            if self._config.force_local_only and candidate not in LOCAL_PROVIDERS:
                 continue
             try:
                 provider = self.get(candidate)
@@ -151,7 +180,7 @@ class ProviderRegistry:
         tools: Optional[list[dict]] = None,
         timeout: Optional[float] = None,
     ) -> ChatResponse:
-        prov = self.get(provider) if provider else self.get_default()
+        prov = self._resolve_provider(provider)
         cfg = self._config
         response = await prov.chat(
             messages,
@@ -184,7 +213,7 @@ class ProviderRegistry:
         tools: Optional[list[dict]] = None,
         timeout: Optional[float] = None,
     ) -> AsyncIterator[StreamChunk]:
-        prov = self.get(provider) if provider else self.get_default()
+        prov = self._resolve_provider(provider)
         cfg = self._config
         async for chunk in prov.stream(
             messages,

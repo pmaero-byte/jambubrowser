@@ -450,11 +450,29 @@ class BrowserAgentSession:
         return time.time() - getattr(self, "last_activity", self.created_at)
 
     def _scrub(self, text: str) -> str:
-        if not self.scrub_pii or not text:
+        if not text:
             return text
+        # Untrusted-content hygiene runs regardless of the PII policy. Masking
+        # PII is a *privacy* control; removing invisible characters and flagging
+        # injection markers is *visibility parity* — it stops a page hiding
+        # instructions from the human while the model still reads them. Element
+        # names and hrefs are attacker-controlled text, so this is the front
+        # door of the boundary and must not be conditional.
+        from backend.core.untrusted import sanitize_untrusted
+
+        cleaned = sanitize_untrusted(text, detect=True)
+        if cleaned.injection_markers:
+            log.warning(
+                "possible prompt injection in page content: %s",
+                ", ".join(cleaned.injection_markers),
+            )
+
+        masked = cleaned.text
+        if not self.scrub_pii:
+            return masked
+
         from backend.core.privacy import PIIDetector
 
-        masked = text
         for pii_type in PIIDetector.PATTERNS:
             masked = PIIDetector.mask_pii(masked, pii_type)
         return masked

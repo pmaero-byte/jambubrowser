@@ -131,6 +131,17 @@ class McpAuthMiddleware:
             return await self.app(scope, receive, send)
         if not check_token(_extract_token(scope)):
             return await _unauthorized()(scope, receive, send)
+        # Record provenance: a remote MCP client may request data operations,
+        # but it is a data-only surface and can never author an agent
+        # instruction. Downstream tool handlers can read this from the scope.
+        from backend.core.ingress import Source, authorize_ingress
+
+        client = scope.get("client")
+        scope["jambu_ingress"] = authorize_ingress(
+            Source.MCP,
+            client_host=client[0] if client else None,
+            authenticated=True,
+        )
         await self.app(scope, receive, send)
 
 

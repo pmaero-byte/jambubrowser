@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from typing import AsyncIterator, Optional
 
 from backend.llm import ChatMessage, Role, Usage, get_default
+from backend.core.untrusted import fence_untrusted
 
 from .events import (
     AgentEvent,
@@ -610,15 +611,26 @@ class Agent:
     async def _synthesize(self, query: str, plan: Plan, total_usage: Usage) -> str:
         """Synthesize a final answer from the plan's observations when no
         explicit final_answer step was provided."""
+        from backend.core.observations import (
+            quarantine_enabled, quarantine_observation, registry_chat,
+        )
+
         obs_parts: list[str] = []
         for s in plan.steps:
             if s.result and s.status == StepStatus.SUCCEEDED:
                 data = s.result.get("data")
-                if isinstance(data, dict):
+                if quarantine_enabled():
+                    # Untrusted tool prose never reaches this prompt: it is
+                    # extracted into typed fields by the quarantined model.
+                    obs_parts.append(await quarantine_observation(s.tool, data, registry_chat))
+                elif isinstance(data, dict):
                     obs_parts.append(json.dumps(data)[:1500])
                 else:
                     obs_parts.append(str(data)[:1500])
         observations = "\n\n".join(obs_parts) or "(no tool observations)"
+        # In the non-quarantined path the text is at least fenced and labelled.
+        if obs_parts and not quarantine_enabled():
+            observations = fence_untrusted(observations, label="UNTRUSTED TOOL OBSERVATIONS")
 
         # Use config-driven synthesis prompt if available, else hardcoded default
         if self._prompts and self._prompts.synthesis_user_template:
