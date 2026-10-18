@@ -87,17 +87,36 @@ async def web_search(
 
 async def scrape_url(
     url: Annotated[str, "URL to scrape"],
-    format: Annotated[str, "Output format: 'markdown' or 'text'"] = "markdown",
+    format: Annotated[str, "Output format: 'markdown', 'text' or 'html'"] = "markdown",
 ) -> dict:
-    """Scrape a single URL and return the cleaned text/markdown content."""
+    """Scrape a single URL and return the cleaned content.
+
+    ``backend.modules.scraper.scrape_url`` returns a dict
+    (``{url, markdown, html, metadata}``). This wrapper previously called it with
+    a ``format=`` kwarg it does not accept *and* sliced the result as if it were
+    a string, so every invocation raised ``TypeError`` into the ``except`` and the
+    agent's scrape tool silently returned ``{"error": ...}`` for every URL.
+    """
     try:
         from backend.modules.scraper import scrape_url as do_scrape
-        content = await do_scrape(url, format=format)
+
+        result = await do_scrape(url)
+        if isinstance(result, dict):
+            if format == "html":
+                text = result.get("html") or ""
+            else:
+                # "markdown" and "text" are the same payload: the scraper's
+                # markdown is already the readable text form.
+                text = result.get("markdown") or ""
+        else:
+            text = str(result or "")
+
+        limit = 5000
         return {
             "url": url,
-            "content": content[:5000] if content else "",
-            "truncated": len(content) > 5000 if content else False,
-            "length": len(content) if content else 0,
+            "content": text[:limit],
+            "truncated": len(text) > limit,
+            "length": len(text),
         }
     except Exception as e:
         return {"url": url, "error": str(e)}

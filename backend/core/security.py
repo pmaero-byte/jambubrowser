@@ -72,6 +72,33 @@ def is_safe_url(url: str, allow_private: bool = False) -> bool:
         return False
 
 
+def is_public_url(url: str) -> bool:
+    """Strict SSRF check that never honours the local-workspace relaxation.
+
+    Use this for endpoints that fetch an arbitrary *user-supplied* URL. The
+    ``ALLOW_LOCAL_WORKSPACES`` flag exists so Greenwich can preview locally
+    generated EPUB/PDF output; it must not widen the attack surface of a
+    scraping API, which would otherwise be able to reach loopback services —
+    including this engine's own endpoints.
+    """
+    if not is_safe_url(url):
+        return False
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except Exception:
+        return False
+    if not host or host in ("localhost", "127.0.0.1", "0.0.0.0", "::1"):
+        return False
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        return True  # a hostname; caller-side DNS checks still apply
+    return not (
+        addr.is_loopback or addr.is_private or addr.is_link_local
+        or addr.is_reserved or addr.is_multicast
+    )
+
+
 def _local_workspaces_allowed() -> bool:
     """True when ``ALLOW_LOCAL_WORKSPACES`` / ``JAMBU_ALLOW_LOCAL_WORKSPACES`` is truthy."""
     for key in ("ALLOW_LOCAL_WORKSPACES", "JAMBU_ALLOW_LOCAL_WORKSPACES"):

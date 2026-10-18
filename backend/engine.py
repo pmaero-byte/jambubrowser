@@ -395,6 +395,7 @@ app.add_middleware(X402Middleware, routes=DEFAULT_PAID_ROUTES)
 from backend.routes.system import router as system_router
 from backend.routes.ws import router as ws_router
 from backend.routes.research import router as research_router
+from backend.routes.webdata import router as webdata_router
 from backend.routes.browser import router as browser_router
 from backend.routes.vault import router as vault_router
 from backend.routes.knowledge import router as knowledge_router
@@ -454,6 +455,7 @@ from backend.routes.mcp import router as mcp_router
 app.include_router(system_router)
 app.include_router(ws_router)
 app.include_router(research_router)
+app.include_router(webdata_router)
 app.include_router(browser_router)
 app.include_router(vault_router)
 app.include_router(knowledge_router)
