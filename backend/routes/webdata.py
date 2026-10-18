@@ -125,6 +125,114 @@ async def cache_stats():
     return _cache_stats()
 
 
+# ---------------------------------------------------------------------------
+# batch
+# ---------------------------------------------------------------------------
+
+class BatchRequest(BaseModel):
+    urls: List[str] = PField(..., min_length=1, max_length=500)
+    max_age: float = PField(0, ge=0, le=604800)
+    max_chars: int = PField(20000, ge=0, le=200000)
+
+
+@router.post("/v1/batch")
+async def batch_scrape(req: BatchRequest):
+    """Scrape a fixed list of URLs concurrently. Returns a job id immediately."""
+    from backend.modules.crawl_jobs import get_crawl_jobs
+
+    seeds = []
+    for raw in req.urls:
+        seeds.append(_guard(raw))
+
+    job = get_crawl_jobs().submit_batch(
+        seeds, _make_fetch(req.max_age), max_chars=req.max_chars
+    )
+    return {
+        "success": True,
+        "id": job.id,
+        "total": job.total,
+        "status": job.status.value,
+        "poll": f"/v1/batch/{job.id}",
+    }
+
+
+@router.get("/v1/batch/{job_id}")
+async def batch_status(job_id: str, include_pages: bool = True):
+    from backend.modules.crawl_jobs import get_crawl_jobs
+
+    job = get_crawl_jobs().get(job_id)
+    if job is None or getattr(job, "urls", None) is None:
+        raise HTTPException(status_code=404, detail="unknown or expired batch job")
+    return {"success": True, **job.to_dict(include_pages=include_pages)}
+
+
+@router.delete("/v1/batch/{job_id}")
+async def batch_cancel(job_id: str):
+    from backend.modules.crawl_jobs import get_crawl_jobs
+
+    job = get_crawl_jobs().cancel(job_id)
+    if job is None or getattr(job, "urls", None) is None:
+        raise HTTPException(status_code=404, detail="unknown or expired batch job")
+    return {"success": True, "id": job.id, "status": job.status.value}
+
+
+# ---------------------------------------------------------------------------
+# change tracking
+# ---------------------------------------------------------------------------
+
+class CheckRequest(BaseModel):
+    url: str
+    max_age: float = PField(0, ge=0, le=604800)
+    include_diff: bool = True
+
+
+@router.post("/v1/changes/check")
+async def check_change(req: CheckRequest):
+    """Fetch a URL and report whether it changed since the last check.
+
+    The first check for a URL is recorded but not reported as a change — there
+    is nothing to compare against, and alerting on it would fire once per new URL.
+    """
+    seed = _guard(req.url)
+    status, body = await _http_fetch(seed, req.max_age)
+
+    from backend.core.untrusted import sanitize_untrusted
+    from backend.modules.changes import record_check
+
+    cleaned = sanitize_untrusted(body or "", max_chars=200000)
+    decision = record_check(seed, cleaned.text)
+    return {
+        "success": status == 200,
+        "http_status": status,
+        "markers": cleaned.injection_markers,
+        **decision.to_dict(include_diff=req.include_diff),
+    }
+
+
+@router.get("/v1/changes")
+async def list_changes(url: Optional[str] = None, limit: int = 50):
+    """Watched URLs (newest checked first), or the change log for one URL."""
+    from backend.modules.changes import list_watched, recent_changes
+
+    if url:
+        return {"success": True, "url": url, "changes": recent_changes(url, limit=limit)}
+    return {"success": True, "watched": list_watched(limit=limit)}
+
+
+class ForgetRequest(BaseModel):
+    url: str
+
+
+@router.delete("/v1/changes")
+async def forget_change(req: ForgetRequest):
+    """Stop tracking a URL and drop its snapshot and history."""
+    from backend.modules.changes import forget
+    from backend.modules.webgraph import normalize_url
+
+    seed = normalize_url(req.url) or req.url
+    return {"success": True, "url": seed, "forgotten": forget(seed)}
+
+
 @router.delete("/v1/cache")
 async def cache_clear():
     """Drop every cached page."""

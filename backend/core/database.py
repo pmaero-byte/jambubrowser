@@ -118,6 +118,7 @@ def init_db(db_path: str = None) -> sqlite3.Connection:
     _schema_decentralized(cursor)
     _schema_meshpay_walleting(cursor)
     _schema_simulation(cursor)
+    _schema_page_changes(cursor)
     conn.commit()
     return conn
 
@@ -1365,3 +1366,41 @@ def get_analytics_summary(days: int = 7, db_path: str = None) -> dict:
             "uptime_s": uptime_s,
             "days": days,
         }
+
+
+def _schema_page_changes(cursor: sqlite3.Cursor) -> None:
+    """Content change tracking for watched URLs (see backend.modules.changes).
+
+    One row per watched URL holding the latest snapshot, plus an append-only
+    log of changes. Keeping the text in the snapshot row is what makes a diff
+    possible on the next check; the log stores only hashes and line counts, so
+    it stays small even for a frequently changing page.
+    """
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS page_snapshots (
+            url TEXT PRIMARY KEY,
+            content_sha256 TEXT NOT NULL,
+            text TEXT,
+            bytes INTEGER DEFAULT 0,
+            first_seen REAL,
+            last_checked REAL,
+            last_changed REAL,
+            check_count INTEGER DEFAULT 0,
+            change_count INTEGER DEFAULT 0
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS page_changes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            url TEXT NOT NULL,
+            changed_at REAL,
+            hash_before TEXT,
+            hash_after TEXT,
+            added_lines INTEGER DEFAULT 0,
+            removed_lines INTEGER DEFAULT 0
+        )
+    """)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_page_changes_url "
+        "ON page_changes(url, changed_at DESC)"
+    )

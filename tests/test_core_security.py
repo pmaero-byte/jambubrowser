@@ -247,6 +247,13 @@ class TestRateLimiter:
     def test_get_limiter_singleton(self):
         from backend.core.rate_limiter import get_limiter
         import backend.core.rate_limiter as rl
+        # Restore the original in `finally`, do not merely null it: the engine's
+        # middleware holds a reference to the configured singleton, so leaving
+        # the global as None orphans it. A later get_limiter() then builds a
+        # fresh, *unconfigured* limiter while the middleware keeps rate-limiting
+        # against the old one — which surfaces as unexplained 429s in whatever
+        # test happens to run next.
+        original = rl._limiter
         rl._limiter = None
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -256,7 +263,7 @@ class TestRateLimiter:
             assert a is b
         finally:
             loop.close()
-            rl._limiter = None
+            rl._limiter = original
 
     def test_cleanup_old_buckets(self):
         from backend.core.rate_limiter import RateLimiter, TokenBucket

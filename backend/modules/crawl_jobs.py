@@ -129,11 +129,80 @@ class CrawlJob:
         return out
 
 
+@dataclass
+class BatchJob:
+    """A batch scrape: a fixed list of URLs fetched concurrently.
+
+    Unlike a crawl this never discovers new URLs, so it is bounded, predictable
+    and the natural fit for "fetch these 200 pages I already know about".
+    """
+
+    id: str
+    urls: List[str] = field(default_factory=list)
+    status: JobStatus = JobStatus.PENDING
+    created_at: float = field(default_factory=time.time)
+    started_at: Optional[float] = None
+    completed_at: Optional[float] = None
+    results: List[Dict[str, Any]] = field(default_factory=list)
+    errors: List[Dict[str, str]] = field(default_factory=list)
+    error: Optional[str] = None
+    _cancel: bool = False
+
+    @property
+    def total(self) -> int:
+        return len(self.urls)
+
+    @property
+    def finished(self) -> bool:
+        return self.status in TERMINAL
+
+    def cancel(self) -> bool:
+        if self.finished:
+            return False
+        self._cancel = True
+        return True
+
+    @property
+    def should_stop(self) -> bool:
+        return self._cancel
+
+    def expires_at(self) -> Optional[float]:
+        if self.completed_at is None:
+            return None
+        return self.completed_at + _result_ttl()
+
+    def to_dict(self, *, include_pages: bool = True) -> Dict[str, Any]:
+        out: Dict[str, Any] = {
+            "id": self.id,
+            "kind": "batch",
+            "status": self.status.value,
+            "total": self.total,
+            "completed": len(self.results),
+            "errors": self.errors,
+            "created_at": self.created_at,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+            "expires_at": self.expires_at(),
+        }
+        if self.error:
+            out["error"] = self.error
+        if include_pages:
+            out["data"] = list(self.results)
+        return out
+
+
+def _batch_concurrency() -> int:
+    try:
+        return max(1, int(os.environ.get("JAMBU_BATCH_CONCURRENCY", "5")))
+    except ValueError:
+        return 5
+
+
 class CrawlJobManager:
-    """In-process registry of background crawls."""
+    """In-process registry of background jobs (crawls and batches)."""
 
     def __init__(self, max_jobs: int = 200):
-        self._jobs: Dict[str, CrawlJob] = {}
+        self._jobs: Dict[str, Any] = {}
         self._tasks: Dict[str, asyncio.Task] = {}
         self._max_jobs = max_jobs
         self._sem: Optional[asyncio.Semaphore] = None
@@ -231,24 +300,92 @@ class CrawlJobManager:
         if ev is not None:
             ev.set()
 
+    # -- batch -------------------------------------------------------------
+
+    def submit_batch(
+        self,
+        urls: List[str],
+        fetch: Callable,
+        *,
+        max_chars: int = 20000,
+        concurrency: Optional[int] = None,
+    ) -> "BatchJob":
+        """Register and start a batch scrape over a fixed URL list."""
+        self._reap()
+        job = BatchJob(id=f"batch_{uuid.uuid4().hex[:16]}", urls=list(urls))
+        self._jobs[job.id] = job
+        self._done_events[job.id] = asyncio.Event()
+        try:
+            self._tasks[job.id] = asyncio.create_task(
+                self._run_batch(job, fetch, max_chars, concurrency or _batch_concurrency())
+            )
+        except RuntimeError as e:
+            self._jobs.pop(job.id, None)
+            raise RuntimeError("batch jobs require a running event loop") from e
+        return job
+
+    async def _run_batch(self, job: "BatchJob", fetch: Callable, max_chars: int, concurrency: int) -> None:
+        from backend.core.untrusted import sanitize_untrusted
+        from backend.modules.webgraph import make_receipt
+
+        async with self._semaphore():
+            job.status = JobStatus.RUNNING
+            job.started_at = time.time()
+            gate = asyncio.Semaphore(max(1, concurrency))
+
+            async def one(url: str) -> None:
+                if job.should_stop:
+                    return
+                async with gate:
+                    if job.should_stop:
+                        return
+                    try:
+                        status, body = await fetch(url)
+                    except Exception as e:  # noqa: BLE001 — one bad URL is not a bad batch
+                        job.errors.append({"url": url, "error": str(e)})
+                        return
+                    cleaned = sanitize_untrusted(body or "", max_chars=max_chars)
+                    job.results.append({
+                        "url": url,
+                        "status": status,
+                        "markdown": cleaned.text,
+                        "receipt": make_receipt(url, status, body or "", cleaned).to_dict(),
+                    })
+
+            try:
+                await asyncio.gather(*(one(u) for u in job.urls))
+                job.status = JobStatus.CANCELLED if job.should_stop else JobStatus.COMPLETED
+            except asyncio.CancelledError:
+                job.status = JobStatus.CANCELLED
+                raise
+            except Exception as e:  # noqa: BLE001
+                log.warning("batch job %s failed: %r", job.id, e)
+                job.status = JobStatus.FAILED
+                job.error = str(e)
+            finally:
+                if job.status is JobStatus.RUNNING:
+                    job.status = JobStatus.COMPLETED
+                job.completed_at = time.time()
+                self._fire(job.id)
+
     # -- access ------------------------------------------------------------
 
-    def get(self, job_id: str) -> Optional[CrawlJob]:
+    def get(self, job_id: str) -> Optional[Any]:
         self._reap()
         return self._jobs.get(job_id)
 
-    def list_jobs(self) -> List[CrawlJob]:
+    def list_jobs(self) -> List[Any]:
         self._reap()
         return sorted(self._jobs.values(), key=lambda j: j.created_at, reverse=True)
 
-    def cancel(self, job_id: str) -> Optional[CrawlJob]:
+    def cancel(self, job_id: str) -> Optional[Any]:
         job = self._jobs.get(job_id)
         if job is None:
             return None
         job.cancel()
         return job
 
-    async def wait(self, job_id: str, timeout: float = 10.0) -> Optional[CrawlJob]:
+    async def wait(self, job_id: str, timeout: float = 10.0) -> Optional[Any]:
         """Await completion. Used by tests; the API path polls instead."""
         ev = self._done_events.get(job_id)
         if ev is None:
