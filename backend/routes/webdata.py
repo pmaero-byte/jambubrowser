@@ -96,13 +96,35 @@ async def _http_fetch(url: str, max_age: float = 0.0):
     return status, text
 
 
-def _make_fetch(max_age: float):
-    """Bind a cache policy to the transport for one request."""
+async def _fetch_page(url: str, render: str, max_age: float) -> Dict[str, object]:
+    """Fetch through the render policy, with injectable transports."""
+    from backend.modules.fetcher import fetch_page
+
+    return await fetch_page(
+        url, render=render, max_age=max_age,
+        http_get=_http_fetch, browser_get=_browser_fetch,
+    )
+
+
+def _make_fetch(render: str, max_age: float):
+    """Bind a render policy and cache policy to the transport for one request."""
 
     async def fetch(url: str):
-        return await _http_fetch(url, max_age)
+        result = await _fetch_page(url, render, max_age)
+        return result["status"], result["body"]
 
     return fetch
+
+
+async def _browser_fetch(url: str):
+    """Render a page with the engine's own browser. Returns HTML or None.
+
+    Separate from ``_http_fetch`` so tests (and deployments without Playwright)
+    can exercise the escalation policy without a browser.
+    """
+    from backend.modules.fetcher import _default_browser_get
+
+    return await _default_browser_get(url)
 
 
 def _cache_stats():
@@ -133,6 +155,7 @@ class BatchRequest(BaseModel):
     urls: List[str] = PField(..., min_length=1, max_length=500)
     max_age: float = PField(0, ge=0, le=604800)
     max_chars: int = PField(20000, ge=0, le=200000)
+    render: str = PField("auto", pattern="^(never|auto|always)$")
 
 
 @router.post("/v1/batch")
@@ -145,7 +168,7 @@ async def batch_scrape(req: BatchRequest):
         seeds.append(_guard(raw))
 
     job = get_crawl_jobs().submit_batch(
-        seeds, _make_fetch(req.max_age), max_chars=req.max_chars
+        seeds, _make_fetch(req.render, req.max_age), max_chars=req.max_chars
     )
     return {
         "success": True,
@@ -183,6 +206,7 @@ async def batch_cancel(job_id: str):
 class CheckRequest(BaseModel):
     url: str
     max_age: float = PField(0, ge=0, le=604800)
+    render: str = PField("auto", pattern="^(never|auto|always)$")
     include_diff: bool = True
 
 
@@ -194,7 +218,8 @@ async def check_change(req: CheckRequest):
     is nothing to compare against, and alerting on it would fire once per new URL.
     """
     seed = _guard(req.url)
-    status, body = await _http_fetch(seed, req.max_age)
+    fetched = await _fetch_page(seed, req.render, req.max_age)
+    status, body = fetched["status"], fetched["body"]
 
     from backend.core.untrusted import sanitize_untrusted
     from backend.modules.changes import record_check
@@ -204,6 +229,9 @@ async def check_change(req: CheckRequest):
     return {
         "success": status == 200,
         "http_status": status,
+        "transport": fetched["transport"],
+        "rendered": fetched["rendered"],
+        **({"note": fetched["note"]} if fetched.get("note") else {}),
         "markers": cleaned.injection_markers,
         **decision.to_dict(include_diff=req.include_diff),
     }
@@ -267,6 +295,7 @@ class MapRequest(BaseModel):
     same_domain: bool = True
     allow_subdomains: bool = False
     max_age: float = PField(0, ge=0, le=604800)
+    render: str = PField("auto", pattern="^(never|auto|always)$")
 
 
 @router.post("/v1/map")
@@ -275,7 +304,7 @@ async def map_site(req: MapRequest):
     seed = _guard(req.url)
     out = await discover_urls(
         seed,
-        _make_fetch(req.max_age),
+        _make_fetch(req.render, req.max_age),
         limit=req.limit,
         use_sitemap=req.use_sitemap,
         same_domain=req.same_domain,
@@ -301,6 +330,7 @@ class CrawlRequest(BaseModel):
     use_sitemap: bool = False
     max_age: float = PField(0, ge=0, le=604800)
     sync: bool = False
+    render: str = PField("auto", pattern="^(never|auto|always)$")
 
 
 @router.post("/v1/crawl")
@@ -323,7 +353,7 @@ async def crawl_site(req: CrawlRequest):
         respect_robots=req.respect_robots,
         use_sitemap=req.use_sitemap,
     )
-    fetch = _make_fetch(req.max_age)
+    fetch = _make_fetch(req.render, req.max_age)
 
     if req.sync:
         result = await crawl(seed, fetch, cfg)
@@ -408,13 +438,15 @@ class ScrapeRequest(BaseModel):
     formats: List[str] = ["markdown"]
     max_chars: int = PField(20000, ge=0, le=200000)
     max_age: float = PField(0, ge=0, le=604800)
+    render: str = PField("auto", pattern="^(never|auto|always)$")
 
 
 @router.post("/v1/scrape")
 async def scrape_one(req: ScrapeRequest):
     """Fetch one URL. Always returns a receipt, even on a non-200."""
     seed = _guard(req.url)
-    status, body = await _http_fetch(seed, req.max_age)
+    fetched = await _fetch_page(seed, req.render, req.max_age)
+    status, body = fetched["status"], fetched["body"]
 
     from backend.core.untrusted import sanitize_untrusted
     from backend.modules.webgraph import extract_links, make_receipt
@@ -425,8 +457,12 @@ async def scrape_one(req: ScrapeRequest):
     out: Dict[str, Any] = {
         "success": status == 200,
         "url": seed,
+        "transport": fetched["transport"],
+        "rendered": fetched["rendered"],
         "receipt": receipt.to_dict(),
     }
+    if fetched.get("note"):
+        out["note"] = fetched["note"]
     if "markdown" in req.formats:
         out["markdown"] = cleaned.text
     if "html" in req.formats:
@@ -458,6 +494,7 @@ class ExtractRequest(BaseModel):
     fields: List[FieldSpec]
     max_chars: int = PField(8000, ge=100, le=100000)
     max_age: float = PField(0, ge=0, le=604800)
+    render: str = PField("auto", pattern="^(never|auto|always)$")
 
 
 def build_schema(name: str, specs: List[FieldSpec]):
@@ -511,7 +548,8 @@ async def extract_structured(req: ExtractRequest):
     seed = _guard(req.url)
     schema = build_schema("caller_extract", req.fields)
 
-    status, body = await _http_fetch(seed, req.max_age)
+    fetched = await _fetch_page(seed, req.render, req.max_age)
+    status, body = fetched["status"], fetched["body"]
 
     from backend.core.observations import registry_chat
     from backend.core.quarantine import quarantine_extract
