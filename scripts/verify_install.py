@@ -45,6 +45,7 @@ REQUIRED_MODULES = [
     ("pydantic", "request models"),
     ("sqlite_vec", "the vector store imported by backend.core"),
     ("markdownify", "scrape + browser paths"),
+    ("pypdf", "PDF parsing"),
     ("crawl4ai", "browser rendering"),
     ("playwright", "browser rendering"),
 ]
@@ -295,8 +296,23 @@ def check_batch(client: Client, report: Report) -> None:
                f"{done.get('completed')}/{len(urls)}")
 
 
+def check_pdf(client: Client, report: Report) -> None:
+    section("9. PDF parsing")
+    # A long-standing one-page W3C test document.
+    pdf_url = "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"
+    status, body = client.post("/v1/scrape", {"url": pdf_url, "render": "never"})
+    if status != 200 or not isinstance(body, dict):
+        report.add("POST /v1/scrape (PDF)", False, f"HTTP {status}: {str(body)[:160]}")
+        return
+    md = body.get("markdown") or ""
+    report.add("PDF marker reports page counts",
+               md.startswith("[PDF document") and "pages=" in md, md.splitlines()[:1])
+    report.add("PDF text was extracted", "Dummy PDF file" in md, f"{len(md)} chars")
+    report.add("raw PDF bytes were not returned verbatim", "%PDF-" not in md)
+
+
 def check_extract(client: Client, report: Report) -> None:
-    section("9. Structured extraction (quarantine boundary)")
+    section("10. Structured extraction (quarantine boundary)")
     status, body = client.post("/v1/extract", {
         "url": STATIC_URL,
         "render": "never",
@@ -325,7 +341,7 @@ def check_extract(client: Client, report: Report) -> None:
 
 
 def check_changes(client: Client, report: Report) -> None:
-    section("10. Change tracking")
+    section("11. Change tracking")
     first = client.post("/v1/changes/check", {"url": STATIC_URL, "render": "never"})
     if first[0] != 200 or not isinstance(first[1], dict):
         report.add("POST /v1/changes/check", False, f"HTTP {first[0]}: {str(first[1])[:160]}")
@@ -344,7 +360,7 @@ def check_changes(client: Client, report: Report) -> None:
 
 
 def check_security(client: Client, report: Report) -> None:
-    section("11. Guards")
+    section("12. Guards")
     status, _ = client.post("/v1/scrape", {"url": "http://127.0.0.1:8001/health"})
     report.add("refuses a loopback URL", status == 400, f"HTTP {status}")
 
@@ -380,8 +396,8 @@ def run(base_url: str, skip_network: bool, as_json: bool) -> int:
         section("Network checks")
         report.add("live-site checks", None, "--skip-network")
     else:
-        for fn in (check_scrape_static, check_scrape_js, check_map, check_crawl,
-                   check_batch, check_extract, check_changes):
+        for fn in (check_scrape_static, check_scrape_js, check_pdf, check_map,
+                   check_crawl, check_batch, check_extract, check_changes):
             try:
                 fn(client, report)
             except Exception as e:  # noqa: BLE001 — one broken check must not stop the run

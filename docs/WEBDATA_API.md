@@ -123,12 +123,30 @@ Every page carries:
 The hash is the point: it lets a third party verify that the text they were
 shown is the text that was fetched. No hosted scraping API ships this.
 
+## PDF
+
+A URL ending in `.pdf` — or served as `application/pdf`, since many servers use
+`application/octet-stream` — is converted to text rather than returned as
+bytes. The response's `markdown` begins with a marker:
+
+```
+[PDF document — pages=12, read=12]
+```
+
+`max_pages` defaults to 50 and the extracted text is capped, so a 400-page
+document cannot flood a caller. Three outcomes are distinguished, because they
+are different facts: **text extracted**, **no text layer** (a scanned document —
+this does not OCR), and **unreadable** (the file could not be parsed). A PDF
+failure is reported in the text, never as a request error, and raw PDF bytes are
+never returned verbatim.
+
 ## Not implemented
 
-- **PDF parsing** — a `.pdf` URL is not decoded.
 - **Anti-bot / CAPTCHA handling** — this is a plain client plus a local browser;
   it does not proxy or evade. Protected sites will fail, and the receipt will
   say so.
+- **OCR** — a scanned PDF is reported as having no text layer rather than
+  silently returning an empty page.
 - **Resuming a partially-completed crawl** — jobs are durable for *status and
   results*, but an interrupted crawl is not resumed; it is reported as
   interrupted and must be re-submitted.

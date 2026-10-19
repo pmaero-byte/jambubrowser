@@ -61,6 +61,10 @@ async def _http_fetch(url: str, max_age: float = 0.0):
     makes repeated crawls of the same site cheap. ``0`` always goes to the
     network — stale data is worse than a slow answer when the point is to
     observe the current state.
+
+    A PDF response is converted to text here rather than returned as bytes: the
+    surface promises text, and decoding a PDF's bytes as text yields noise that
+    looks like a page with content.
     """
     cache = _webdata_cache()
     if max_age > 0:
@@ -76,7 +80,13 @@ async def _http_fetch(url: str, max_age: float = 0.0):
 
     async with make_async_client(timeout=20.0, follow_redirects=True) as client:
         resp = await client.get(url, headers={"User-Agent": _USER_AGENT})
-        status, text = resp.status_code, resp.text
+        status = resp.status_code
+        content_type = resp.headers.get("content-type", "")
+
+        from backend.modules.pdf import looks_like_pdf
+
+        is_pdf = looks_like_pdf(url, content_type)
+        text = _pdf_to_text(url, resp.content) if is_pdf else resp.text
 
     if status == 200 and max_age > 0:
         try:
@@ -86,7 +96,7 @@ async def _http_fetch(url: str, max_age: float = 0.0):
                 url,
                 CachedResponse(
                     body=text.encode("utf-8", "replace"),
-                    content_type=resp.headers.get("content-type", "text/html"),
+                    content_type="text/markdown" if is_pdf else content_type,
                     status_code=status,
                 ),
                 ttl=max_age,
@@ -104,6 +114,39 @@ async def _fetch_page(url: str, render: str, max_age: float) -> Dict[str, object
         url, render=render, max_age=max_age,
         http_get=_http_fetch, browser_get=_browser_fetch,
     )
+
+
+def _pdf_to_text(url: str, data: bytes) -> str:
+    """Convert PDF bytes to markdown-ish text, reporting failures honestly.
+
+    A PDF that cannot be read comes back as an explanatory note rather than an
+    empty string — an empty page and an unreadable page are different facts and
+    the caller should be able to tell them apart.
+    """
+    try:
+        from backend.modules.pdf import extract
+
+        result = extract(data)
+    except Exception as e:  # noqa: BLE001 — a bad PDF is not a request failure
+        log.info("PDF extraction failed for %s: %r", url, e)
+        return f"[PDF: could not be read — {type(e).__name__}]"
+
+    header_bits = [f"pages={result.pages}", f"read={result.pages_read}"]
+    if result.truncated:
+        header_bits.append("truncated")
+    if result.encrypted:
+        header_bits.append("encrypted")
+    # A plain-text marker, not an HTML comment: the untrusted-content guard
+    # strips comments before this text reaches a caller, so a comment header
+    # silently disappeared.
+    header = f"[PDF document — {', '.join(header_bits)}]\n"
+
+    if result.text:
+        return header + result.text
+    if result.no_text_layer:
+        return header + "[PDF: no text layer found — this looks like a scanned document]"
+    detail = "; ".join(result.problems) or "no extractable text"
+    return header + f"[PDF: no text extracted — {detail}]"
 
 
 def _make_fetch(render: str, max_age: float):

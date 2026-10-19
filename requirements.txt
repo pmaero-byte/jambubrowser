@@ -37,6 +37,9 @@ cryptography>=41.0.0
 # Markdown processing
 markdownify>=0.11.0
 
+# PDF text extraction (backend/modules/pdf.py). Pure Python, no system deps.
+pypdf>=4.0.0
+
 # Browser automation — powers the AI-employee audit engine (Playwright
 # drives a real headless browser to collect DOM/network/console/a11y data).
 # After install, fetch the browser binary: python -m playwright install chromium
