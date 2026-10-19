@@ -160,16 +160,24 @@ async def _default_http_get(url: str, max_age: float = 0.0) -> Tuple[int, str]:
 
 
 async def _default_browser_get(url: str) -> Optional[str]:
-    """Render with the engine's own scraper (crawl4ai → Playwright).
+    """Render with the engine's browser. Raises when the browser is unavailable.
 
-    Imported lazily: crawl4ai and Playwright are optional dependencies, and the
-    web-data surface must keep working over plain HTTP without them.
+    Deliberately does **not** call ``backend.modules.scraper.scrape_url``: that
+    function catches every exception — including "crawl4ai is not installed" —
+    and silently falls back to a plain HTTP fetch. Using it here made a missing
+    browser look like a successful render, so ``render="always"`` reported
+    ``transport: "browser", rendered: true`` for a page that was never rendered
+    and whose receipt therefore described the wrong bytes.
+
+    This path goes straight to the crawl4ai browser, so a missing browser raises
+    and the caller reports an honest HTTP fallback instead.
     """
-    from backend.modules.scraper import scrape_url as do_scrape
+    from backend.modules.scraper import get_sovereign_crawler
 
-    result = await do_scrape(url)
-    if isinstance(result, dict):
-        # Prefer the rendered HTML so link extraction sees the real DOM; fall
-        # back to markdown when the engine only returned text.
-        return result.get("html") or result.get("markdown") or None
-    return str(result) if result else None
+    crawler = await get_sovereign_crawler()
+    result = await crawler.arun(url=url)
+    if not getattr(result, "success", False):
+        error = getattr(result, "error", "unknown error")
+        raise RuntimeError(f"browser render failed: {error}")
+    # Prefer the rendered HTML so link extraction sees the real DOM.
+    return getattr(result, "html", None) or getattr(result, "markdown", None) or None

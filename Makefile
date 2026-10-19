@@ -124,6 +124,18 @@ report:
 	fi
 
 # ---------------------------------------------------------------------------
+# Install verification
+# ---------------------------------------------------------------------------
+
+.PHONY: verify verify-fast
+verify:
+	@bash scripts/verify_install.sh
+
+# Skip the live-site checks: guards, health and imports only.
+verify-fast:
+	@SKIP_NETWORK=1 bash scripts/verify_install.sh
+
+# ---------------------------------------------------------------------------
 # Help
 # ---------------------------------------------------------------------------
 
@@ -145,6 +157,8 @@ help:
 	@echo "  make test-e2e              thin wrapper (legacy entry)"
 	@echo ""
 	@echo "Tier 3 (probes):"
+	@echo "  make verify                clean-machine install check, one command"
+	@echo "  make verify-fast           same, but skip checks that reach live sites"
 	@echo "  make engine               boot engine in foreground"
 	@echo "  make bench-browser        browser efficiency benchmark"
 	@echo "  make bench-harness        harnessX efficiency benchmark"
