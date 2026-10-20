@@ -205,11 +205,30 @@ def grade_table(predicted: Sequence[dict], gold: Sequence[dict],
     )
 
 
+def grade_answer_in_text(prediction: str, expected: str) -> Grade:
+    """Does the retrieved text actually contain the answer?
+
+    A deterministic stand-in for the BrowseComp-Plus judge: the official
+    metric is an LLM judge, which is neither free nor reproducible, so this
+    asks the stricter question — is the gold answer present in the context the
+    agent was given? An agent cannot answer from a context that does not
+    contain the answer, so this is a sound (if strict) upper bound.
+    """
+    got = normalise(prediction)
+    want = normalise(expected)
+    if not want:
+        return Grade(score=0.0, metric="answer_in_text", detail={"reason": "no expected answer"})
+    ok = want in got
+    return Grade(score=1.0 if ok else 0.0, metric="answer_in_text",
+                 detail={"expected": want[:80], "found": ok})
+
+
 GRADERS = {
     "exact": grade_exact,
     "f1_items": grade_f1_items,
     "entities": grade_entities,
     "table_f1": grade_table,
+    "answer_in_text": grade_answer_in_text,
 }
 
 
@@ -238,4 +257,6 @@ def grade(task: Any, prediction: Any) -> Grade:
         return grader(prediction or [], expected)
     if metric == "table_f1":
         return grader(prediction or [], expected)
+    if metric == "answer_in_text":
+        return grader(str(prediction or ""), expected)
     raise ValueError(f"unhandled metric {metric!r}")

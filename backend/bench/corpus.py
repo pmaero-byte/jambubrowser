@@ -101,7 +101,7 @@ class LocalIndex:
                 scored.append((score, doc))
         scored.sort(key=lambda item: item[0], reverse=True)
         return [
-            {"url": doc.url, "title": doc.title, "content": doc.content,
+            {"id": doc.id, "url": doc.url, "title": doc.title, "content": doc.content,
              "entities": list(doc.entities), "facts": list(doc.facts),
              "score": round(score, 4)}
             for score, doc in scored[:limit]

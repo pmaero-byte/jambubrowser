@@ -173,6 +173,44 @@ re-ranking regression, the grader bug, and would catch a broken fusion — and
 **cannot demonstrate a semantic win**. That claim needs the neural encoder on
 a corpus large enough for it to mean something.
 
+### The real benchmark, loaded and running
+
+`backend/bench/suites.py` loads **BrowseComp-Plus** (`Tevatron/browsecomp-plus`),
+the one public benchmark with a local system on it:
+
+- The queries and answers are **canary-encrypted**. The loader decrypts them in
+  memory using the key the benchmark authors publish, and **never writes
+  decrypted content inside the repository** — `cache_dir()` refuses a
+  `JAMBU_BENCH_CACHE` that points into the repo, and there is a test for it.
+- The **published protocol** is honoured: *top-5 documents per search, 512
+  tokens of context* ("across all methods for fair comparison").
+- The **official metric is an LLM judge**, which is neither free nor
+  reproducible. We do not reproduce it. Instead:
+  - `answer_in_text` — the strict, deterministic question: *is the gold answer
+    present in the context the agent was given?* An agent cannot answer from a
+    context that lacks the answer, so it is a sound upper bound.
+  - **judge-free retrieval metrics** — recall@5, gold-hit@5 and nDCG@5 against
+    the benchmark's own relevance judgements (gold = 2, evidence = 1).
+
+`jambu bench --suite browsecomp-plus --limit 10 --results-per-search 5`, run
+against the live dataset:
+
+| Retriever | answer-in-text | recall@5 | gold-hit@5 | nDCG@5 |
+|---|---|---|---|---|
+| **lexical** | **0.30** | **0.112** | 0.20 | **0.135** |
+| dense (LSA) | 0.00 | 0.070 | 0.10 | 0.073 |
+| hybrid (RRF) | 0.30 | 0.075 | 0.20 | 0.089 |
+
+**These are not comparable to the published 70.1 / 59.9 / 3.86.** That
+comparison uses the full 830-query, ~100K-document corpus, an LLM agent reading
+the retrieved pages, and a judge. This run is 10 queries over a 226-document
+corpus with no LLM in the loop. What it *is*: proof that the pipeline is real
+and reproducible against the genuine dataset, and a regression gate for the
+retrieval work.
+
+The lexical-beats-dense pattern repeats here, for the same reason: a 226-document
+corpus is still a corpus with nothing to learn co-occurrence statistics from.
+
 ## 5. The plan, in priority order
 
 1. **Evaluate the neural encoder on BrowseComp-Plus.** The dataset is

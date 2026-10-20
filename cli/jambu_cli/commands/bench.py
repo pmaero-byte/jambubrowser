@@ -45,22 +45,57 @@ def _build_index(args, retriever: str = None):
     return built, reason
 
 
+def _load_browsecomp_plus(args):
+    """Load BrowseComp-Plus: queries, the corpus, and the relevance judgements.
+
+    The full set is large, so ``--limit`` bounds it. The corpus is built from
+    the documents the rows carry (gold + evidence + mined negatives).
+    """
+    from backend.bench.suites import (
+        corpus_from_rows, load_browsecomp_plus, qrels_from_rows, tasks_from_rows,
+    )
+
+    rows = load_browsecomp_plus(limit=args.limit)
+    tasks = tasks_from_rows(rows)
+    corpus = corpus_from_rows(rows)
+    qrels = qrels_from_rows(rows)
+    if not tasks:
+        raise SystemExit("BrowseComp-Plus returned no usable rows")
+    from backend.bench.runner import Task
+
+    return [Task.from_dict(t) for t in tasks], corpus, qrels
+
+
 def cmd_bench(args):
     from backend.bench.runner import format_report, load_local_suite, run_suite
 
-    try:
-        tasks = load_local_suite(args.suite)
-    except FileNotFoundError as e:
-        print(f"✗ {e}")
-        return core.EXIT_ERROR
+    qrels = None
+    if args.suite in ("browsecomp-plus", "bcp"):
+        try:
+            tasks, corpus_rows, qrels = _load_browsecomp_plus(args)
+        except Exception as e:  # noqa: BLE001
+            print(f"✗ could not load {args.suite}: {type(e).__name__}: {e}")
+            return core.EXIT_ERROR
+        from backend.modules.semantic import build_index
 
-    try:
-        index, unavailable = _build_index(args)
-    except Exception as e:  # noqa: BLE001
-        print(f"✗ could not build the {args.retriever} retriever: {type(e).__name__}: {e}")
-        return core.EXIT_ERROR
-    if unavailable:
-        print(f"! dense retriever unavailable ({unavailable}); falling back to lexical")
+        built = build_index(corpus_rows, retriever=args.retriever,
+                            embedder_kind=args.embedder)
+        if hasattr(built, "dense_weight"):
+            built.dense_weight = args.dense_weight
+        index = built
+    else:
+        try:
+            tasks = load_local_suite(args.suite)
+        except FileNotFoundError as e:
+            print(f"✗ {e}")
+            return core.EXIT_ERROR
+        try:
+            index, unavailable = _build_index(args)
+        except Exception as e:  # noqa: BLE001
+            print(f"✗ could not build the {args.retriever} retriever: {type(e).__name__}: {e}")
+            return core.EXIT_ERROR
+        if unavailable:
+            print(f"! dense retriever unavailable ({unavailable}); falling back to lexical")
 
     policy = _policy(args.policy)
 
@@ -77,6 +112,16 @@ def cmd_bench(args):
     )
 
     print(f"\n{format_report(report)}")
+
+    if qrels:
+        from backend.bench.suites import evaluate_retrieval
+
+        runs = {}
+        for row in report.results:
+            qid = row.task_id.replace("bcp_", "")
+            runs[qid] = [str(r) for r in (row.detail.get("retrieved") or [])]
+        metrics = evaluate_retrieval(runs, qrels, k=args.results_per_search)
+        print(f"\nretrieval-only (judge-free): {metrics}")
 
     if args.compare:
         print("\n— comparison —")
@@ -129,7 +174,10 @@ def register(subparsers) -> None:
         "bench",
         help="Run the local agentic-search benchmark (deterministic, offline)",
     )
-    p.add_argument("--suite", default="local", help="Suite name (default: local)")
+    p.add_argument("--suite", default="local",
+                   help="Suite: local | browsecomp-plus (downloads from Hugging Face)")
+    p.add_argument("--limit", type=int, default=25,
+                   help="Max rows to load for a downloaded suite (default: 25)")
     p.add_argument(
         "--policy", default="retrieval",
         help="Retrieval policy: naive | retrieval_no_expansion | retrieval",

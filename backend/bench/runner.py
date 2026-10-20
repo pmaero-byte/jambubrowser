@@ -234,6 +234,12 @@ def run_suite(
             if fn.exhausted and not _submitted(prediction):
                 fn.degraded = True
             g: Grade = grade(task, prediction)
+            # Record what was actually retrieved, so a retrieval-only score can
+            # be computed against relevance judgements without a judge model.
+            g.detail = dict(g.detail or {})
+            g.detail["retrieved"] = [
+                str(r.get("id") or r.get("url") or "") for r in fn.evidence
+            ]
             report.results.append(RunResult(
                 task_id=task.id, score=g.score, metric=g.metric,
                 normalised=g.normalised_score(),
