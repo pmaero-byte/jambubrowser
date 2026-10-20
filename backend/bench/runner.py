@@ -22,6 +22,7 @@ a leaderboard entry.
 
 from __future__ import annotations
 
+import inspect
 import json
 import random
 import time
@@ -166,6 +167,7 @@ class SearchFn:
     """
 
     search: Callable[[str, int], List[dict]]
+    get_document: Optional[Callable[[str], Optional[dict]]] = None
     rounds_used: int = 0
     searches_used: int = 0
     max_rounds: int = DEFAULT_MAX_ROUNDS
@@ -197,6 +199,29 @@ class SearchFn:
             self.context_truncations += 1
         return rows
 
+    def call_get(self, docid: str) -> Optional[dict]:
+        """Fetch one document by id — the protocol's second tool.
+
+        Kept separate from ``call`` because a document fetch is not a search:
+        it does not consume a round's result budget, but it does consume
+        context, so it is accounted for.
+        """
+        if self.get_document is None:
+            return None
+        try:
+            doc = self.get_document(str(docid))
+        except Exception:  # noqa: BLE001 — a missing document is not a run failure
+            return None
+        if doc is None:
+            return None
+        row = dict(doc)
+        self.context_used += len(str(row.get("title", ""))) + len(str(row.get("content", "")))
+        while self.context_used > self.context_chars and len(self.evidence) > 1:
+            dropped = self.evidence.pop(0)
+            self.context_used -= len(str(dropped.get("title", ""))) + len(str(dropped.get("content", "")))
+            self.context_truncations += 1
+        return row
+
     @property
     def exhausted(self) -> bool:
         return self.rounds_used >= self.max_rounds
@@ -206,7 +231,7 @@ class SearchFn:
 # Runner
 # ---------------------------------------------------------------------------
 
-def run_suite(
+async def run_suite(
     tasks: Sequence[Task],
     policy: Policy,
     *,
@@ -215,22 +240,28 @@ def run_suite(
     max_rounds: int = DEFAULT_MAX_ROUNDS,
     results_per_search: int = DEFAULT_RESULTS_PER_SEARCH,
     context_chars: int = DEFAULT_CONTEXT_CHARS,
+    get_document: Optional[Callable[[str], Optional[dict]]] = None,
 ) -> BenchReport:
     """Run a policy over a task set and grade the results.
 
     ``search`` is the raw search backend under test — ``(query, limit) -> rows``.
+    ``get_document`` is the protocol's second tool, optional.
     """
     report = BenchReport(name=name)
     for task in tasks:
         started = time.time()
         fn = SearchFn(
             search=search,
+            get_document=get_document,
             max_rounds=max_rounds,
             results_per_search=results_per_search,
             context_chars=context_chars,
         )
         try:
             prediction = policy(task, fn)
+            # An agent policy is asynchronous; a scripted one is not.
+            if inspect.isawaitable(prediction):
+                prediction = await prediction
             if fn.exhausted and not _submitted(prediction):
                 fn.degraded = True
             g: Grade = grade(task, prediction)

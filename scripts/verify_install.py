@@ -380,8 +380,10 @@ def check_bench(client: Client, report: Report) -> None:
     tasks = load_local_suite("local")
     kwargs = {"search": lambda q, l: index.search(q, limit=l)}
 
-    naive = run_suite(tasks, naive_policy, **kwargs)
-    better = run_suite(tasks, retrieval_policy, **kwargs)
+    import asyncio
+
+    naive = asyncio.run(run_suite(tasks, naive_policy, **kwargs))
+    better = asyncio.run(run_suite(tasks, retrieval_policy, **kwargs))
     report.add("benchmark runs cleanly", naive.failures == 0, f"{naive.n} tasks")
     report.add(
         "retrieval beats the naive baseline",

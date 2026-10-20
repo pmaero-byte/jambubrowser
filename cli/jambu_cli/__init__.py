@@ -9,6 +9,8 @@ module is the only place that knows the mapping from subcommand to handler.
 from __future__ import annotations
 
 import argparse
+import asyncio
+import inspect
 
 from cli.jambu_cli import core
 from cli.jambu_cli.commands import audit as audit_cmds
@@ -91,4 +93,7 @@ def main(argv=None) -> int:
         handler = qa_cmds.cmd_qa_dataset
 
     result = handler(args)
+    # A handler may be async (the benchmark agent puts a model in the loop).
+    if inspect.isawaitable(result):
+        result = asyncio.run(result)
     return core.EXIT_OK if result is None else result

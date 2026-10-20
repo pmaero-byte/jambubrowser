@@ -66,7 +66,32 @@ def _load_browsecomp_plus(args):
     return [Task.from_dict(t) for t in tasks], corpus, qrels
 
 
-def cmd_bench(args):
+def _agent_policy(args):
+    """Build an agent policy: the model in the loop, over the retrieval backend.
+
+    The model is taken from the engine's own provider registry, so the agent
+    obeys ``JAMBU_LLM_LOCAL_ONLY`` like the rest of the product — a benchmark
+    that quietly called a cloud model would not be measuring the local system.
+    """
+    from backend.bench.agent import registry_chat, run_agent
+
+    async def policy(task, fn):
+        run = await run_agent(task, fn, registry_chat,
+                              max_rounds=args.agent_rounds,
+                              top_k=args.results_per_search)
+        if run.error:
+            # A model failure is an infrastructure error, not a zero score.
+            # Letting it through as "the agent scored nothing" would hide the
+            # difference between "the model was unavailable" and "the agent got
+            # every answer wrong" — which is the difference between a broken
+            # setup and a broken retriever.
+            raise RuntimeError(run.error)
+        return run.answer or ""
+
+    return policy
+
+
+async def cmd_bench(args):
     from backend.bench.runner import format_report, load_local_suite, run_suite
 
     qrels = None
@@ -97,17 +122,25 @@ def cmd_bench(args):
         if unavailable:
             print(f"! dense retriever unavailable ({unavailable}); falling back to lexical")
 
-    policy = _policy(args.policy)
-
     def search(query: str, limit: int = 10) -> list:
         return index.search(query, limit=limit)
 
-    report = run_suite(
+    def get_document(docid: str):
+        getter = getattr(index, "get_document", None)
+        return getter(docid) if getter else None
+
+    if args.policy == "agent":
+        policy = _agent_policy(args)
+    else:
+        policy = _policy(args.policy)
+
+    report = await run_suite(
         tasks,
         policy,
         search=search,
+        get_document=get_document,
         name=args.suite,
-        max_rounds=args.max_rounds,
+        max_rounds=args.agent_rounds if args.policy == "agent" else args.max_rounds,
         results_per_search=args.results_per_search,
     )
 
@@ -129,7 +162,7 @@ def cmd_bench(args):
         for name in ("naive", "retrieval_no_expansion", "retrieval"):
             if name == args.policy:
                 continue
-            other = run_suite(
+            other = await run_suite(
                 tasks,
                 _policy(name),
                 search=search,
@@ -153,7 +186,7 @@ def cmd_bench(args):
             if reason:
                 print(f"  {name:28} unavailable ({reason})")
                 continue
-            other = run_suite(
+            other = await run_suite(
                 tasks,
                 policy,
                 search=lambda q, l, _i=other_index: _i.search(q, limit=l),
@@ -180,8 +213,11 @@ def register(subparsers) -> None:
                    help="Max rows to load for a downloaded suite (default: 25)")
     p.add_argument(
         "--policy", default="retrieval",
-        help="Retrieval policy: naive | retrieval_no_expansion | retrieval",
+        help="Policy: naive | retrieval_no_expansion | retrieval | agent "
+             "(agent puts a model in the loop, like the published harness)",
     )
+    p.add_argument("--agent-rounds", type=int, default=8,
+                   help="Rounds for the agent policy (default: 8)")
     p.add_argument(
         "--retriever", default="lexical", choices=("lexical", "dense", "hybrid"),
         help="Search backend under test (default: lexical)",

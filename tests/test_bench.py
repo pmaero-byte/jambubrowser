@@ -373,10 +373,10 @@ class TestRunner:
         from backend.bench.policies import naive_policy
         from backend.bench.runner import load_local_suite, run_suite
         index = self._index()
-        report = run_suite(
+        report = asyncio.run(run_suite(
             load_local_suite("local"), naive_policy,
             search=lambda q, l: index.search(q, limit=l),
-        )
+        ))
         assert report.n == 16
         assert report.failures == 0
 
@@ -384,10 +384,10 @@ class TestRunner:
         from backend.bench.policies import naive_policy
         from backend.bench.runner import load_local_suite, run_suite
         index = self._index()
-        report = run_suite(
+        report = asyncio.run(run_suite(
             load_local_suite("local"), naive_policy,
             search=lambda q, l: index.search(q, limit=l),
-        )
+        ))
         lo, hi = report.bootstrap_ci()
         assert 0.0 <= lo <= hi <= 1.0
 
@@ -399,8 +399,8 @@ class TestRunner:
         index = self._index()
         tasks = load_local_suite("local")
         kwargs = {"search": lambda q, l: index.search(q, limit=l)}
-        naive = run_suite(tasks, naive_policy, **kwargs)
-        better = run_suite(tasks, retrieval_policy, **kwargs)
+        naive = asyncio.run(run_suite(tasks, naive_policy, **kwargs))
+        better = asyncio.run(run_suite(tasks, retrieval_policy, **kwargs))
         assert better.mean > naive.mean, (
             f"retrieval {better.mean:.4f} did not beat naive {naive.mean:.4f}"
         )
@@ -409,11 +409,11 @@ class TestRunner:
         from backend.bench.policies import retrieval_policy
         from backend.bench.runner import load_local_suite, run_suite
         index = self._index()
-        report = run_suite(
+        report = asyncio.run(run_suite(
             load_local_suite("local"), retrieval_policy,
             search=lambda q, l: index.search(q, limit=l),
             max_rounds=1,
-        )
+        ))
         assert all(r.rounds_used <= 1 for r in report.results)
 
     def test_a_broken_task_does_not_stop_the_run(self):
@@ -424,7 +424,7 @@ class TestRunner:
             raise RuntimeError("backend down")
 
         tasks = [Task(id="a", query="x", metric="exact", expected="x")]
-        report = run_suite(tasks, naive_policy, search=boom)
+        report = asyncio.run(run_suite(tasks, naive_policy, search=boom))
         assert report.n == 1
         assert report.failures == 1
         assert report.results[0].error
@@ -433,10 +433,10 @@ class TestRunner:
         from backend.bench.policies import naive_policy
         from backend.bench.runner import load_local_suite, run_suite
         index = self._index()
-        report = run_suite(
+        report = asyncio.run(run_suite(
             load_local_suite("local"), naive_policy,
             search=lambda q, l: index.search(q, limit=l),
-        )
+        ))
         payload = report.to_dict()
         assert payload["tasks"] == 16
         assert "ci95" in payload and len(payload["ci95"]) == 2

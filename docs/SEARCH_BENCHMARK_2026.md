@@ -249,3 +249,51 @@ cannot make yet:** that it would score in that table. It would not today —
 we have no index, and the benchmarks reward recall over a corpus we do not
 have. The table is a *destination*, and the work above is the road to the
 first credible row in it.
+
+---
+
+## 7. Two evaluation systems, and why
+
+The repository now contains two evaluation harnesses. They are not duplicates,
+and the distinction is worth stating so nobody has to reverse-engineer it:
+
+- **`backend/eval/`** — a general *agent task* harness. Tasks, providers,
+  runners, metrics and reports; it already ships a `webarena-mini` suite that
+  exercises `web_search` / `scrape_url`. Grading is provider-based.
+- **`backend/bench/`** — a *retrieval* harness. Swap-able search backends,
+  corpora, relevance judgements, deterministic graders and judge-free metrics
+  (recall@k, gold-hit@k, nDCG@k). It exists because the published numbers are
+  retrieval numbers: the benchmark swaps the search backend and holds the agent
+  fixed.
+
+If the two ever need to meet, the bridge is small: `backend/bench` produces
+graded results, and `backend/eval` knows how to run and report agent tasks.
+
+---
+
+## 8. The agent in the loop
+
+`backend/bench/agent.py` adds the piece the published scores actually measure:
+a model driving the search, rather than a scripted policy.
+
+- Two tools, matching the reference protocol: `search(query, top_k)` and
+  `get_document(docid)`. The agent stops when it calls the final tool, when the
+  round budget runs out, or when the model stops producing a usable action.
+- **Untrusted content stays in a labelled channel.** Retrieved documents are
+  attacker-influenced text; the system prompt states that document content is
+  data and never instructions, and the content is embedded **JSON-encoded** so a
+  document cannot close a quote and continue the instruction. That is the
+  pattern the research recommends for indirect injection.
+- The model comes from the engine's own provider registry, so the agent obeys
+  `JAMBU_LLM_LOCAL_ONLY` like everything else — a benchmark that quietly called
+  a cloud model would not be measuring the local system.
+- A **model failure is reported as an error, not a zero score.** "The model was
+  unavailable" and "the agent got every answer wrong" are different facts, and
+  only one of them is a retriever problem.
+
+**What is not verified:** the agent path has never run against a real model
+here — the configured provider's key is exhausted in this environment, so a run
+correctly reports 16 errors. The loop, the tool protocol, the untrusted-content
+channel and the failure modes are covered by tests with a scripted model, but
+the end-to-end agent number is pending a working provider — the same blocker as
+the browser-rendering path.

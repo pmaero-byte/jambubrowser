@@ -73,6 +73,13 @@ class LocalIndex:
 
     # -- querying ----------------------------------------------------------
 
+    def get_document(self, docid: str) -> Optional[dict]:
+        """Fetch one document by id — the protocol's second tool."""
+        for doc in self.documents:
+            if doc.id == str(docid) or doc.url == str(docid):
+                return doc.to_dict()
+        return None
+
     def search(self, query: str, limit: int = 10, k1: float = 1.5, b: float = 0.75) -> List[dict]:
         """Return the top ``limit`` documents for a query, as result dicts."""
         query_terms = terms(query)
