@@ -28,7 +28,14 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+# Run from anywhere: the repo root must be importable for the in-process
+# checks (the benchmark harness lives in backend/bench/).
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 # A static page and a JavaScript-rendered page, both long-standing and used by
 # scraping tutorials. The JS one is the point of the render check: over plain
@@ -359,6 +366,31 @@ def check_changes(client: Client, report: Report) -> None:
     report.add("change log is readable", status == 200 and isinstance(body, dict), f"HTTP {status}")
 
 
+def check_bench(client: Client, report: Report) -> None:
+    section("13. Retrieval benchmark")
+    try:
+        from backend.bench.corpus import LocalIndex
+        from backend.bench.policies import naive_policy, retrieval_policy
+        from backend.bench.runner import load_local_suite, local_suite_dir, run_suite
+    except Exception as e:  # noqa: BLE001
+        report.add("benchmark harness imports", False, f"{type(e).__name__}: {e}")
+        return
+
+    index = LocalIndex.load(local_suite_dir() / "corpus.jsonl")
+    tasks = load_local_suite("local")
+    kwargs = {"search": lambda q, l: index.search(q, limit=l)}
+
+    naive = run_suite(tasks, naive_policy, **kwargs)
+    better = run_suite(tasks, retrieval_policy, **kwargs)
+    report.add("benchmark runs cleanly", naive.failures == 0, f"{naive.n} tasks")
+    report.add(
+        "retrieval beats the naive baseline",
+        better.mean > naive.mean,
+        f"retrieval={better.mean:.4f} vs naive={naive.mean:.4f} "
+        f"(CI95 {better.bootstrap_ci()[0]:.3f}-{better.bootstrap_ci()[1]:.3f})",
+    )
+
+
 def check_security(client: Client, report: Report) -> None:
     section("12. Guards")
     status, _ = client.post("/v1/scrape", {"url": "http://127.0.0.1:8001/health"})
@@ -403,10 +435,11 @@ def run(base_url: str, skip_network: bool, as_json: bool) -> int:
             except Exception as e:  # noqa: BLE001 — one broken check must not stop the run
                 report.add(fn.__name__, False, f"{type(e).__name__}: {e}")
 
-    try:
-        check_security(client, report)
-    except Exception as e:  # noqa: BLE001
-        report.add("check_security", False, f"{type(e).__name__}: {e}")
+    for fn in (check_security, check_bench):
+        try:
+            fn(client, report)
+        except Exception as e:  # noqa: BLE001
+            report.add(fn.__name__, False, f"{type(e).__name__}: {e}")
 
     report.summary()
     if as_json:

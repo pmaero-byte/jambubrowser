@@ -1,0 +1,16 @@
+{"id": "t01", "query": "How much weight can the second generation gripper lift?", "metric": "exact", "expected": "40 kg payloads", "aliases": ["40 kg", "40kg"]}
+{"id": "t02", "query": "What request quota does the Atlas API v3 apply by default?", "metric": "exact", "expected": "600 requests per minute", "aliases": ["600 requests per minute"]}
+{"id": "t03", "query": "Who is the CTO of Atlas Robotics?", "metric": "exact", "expected": "Dr. Lena Ortiz", "aliases": ["Lena Ortiz"]}
+{"id": "t04", "query": "What uptime does the premium support SLA from Atlas Robotics promise?", "metric": "exact", "expected": "99.95 percent uptime", "aliases": ["99.95%", "99.95"]}
+{"id": "t05", "query": "When did Atlas API v3.2 ship?", "metric": "exact", "expected": "June 2025", "aliases": ["2025-06", "June 2025"]}
+{"id": "t06", "query": "How many parcels per hour does the Atlas Sorter S1 handle?", "metric": "exact", "expected": "2,400 parcels per hour", "aliases": ["2400 parcels per hour"]}
+{"id": "t07", "query": "What are the monthly prices for the Atlas Robotics subscription tiers?", "metric": "f1_items", "expected": "Basic $500/month; Pro $2,000/month; Enterprise contact sales"}
+{"id": "t08", "query": "In which countries can Atlas Robotics customers choose data residence?", "metric": "f1_items", "expected": "EU; United States", "aliases": ["EU; US"]}
+{"id": "t09", "query": "In which cities does Atlas Robotics have job openings?", "metric": "f1_items", "expected": "Rotterdam; Austin"}
+{"id": "t10", "query": "Which commercial products does Atlas Robotics currently sell?", "metric": "entities", "expected": ["Atlas Gripper G2", "Atlas Sorter S1"]}
+{"id": "t11", "query": "Who are the named executives at Atlas Robotics?", "metric": "entities", "expected": ["Dr. Lena Ortiz", "Marcus Bell", "Priya Raman"]}
+{"id": "t12", "query": "What is the maximum fleet size for a single Atlas deployment?", "metric": "exact", "expected": "250 Atlas Gripper G2 units", "aliases": ["250 units", "250"]}
+{"id": "t13", "query": "Which compliance certification does Atlas Robotics hold?", "metric": "exact", "expected": "SOC 2 Type II", "aliases": ["SOC 2"]}
+{"id": "t14", "query": "By how much did Northwind Logistics cut its picking time?", "metric": "exact", "expected": "38 percent", "aliases": ["38%"]}
+{"id": "t15", "query": "How many units can one Atlas Fleet Manager deployment control?", "metric": "exact", "expected": "250 Atlas Gripper G2 units", "aliases": ["250 units", "250"]}
+{"id": "t16", "query": "What throughput does the announced second generation sorter target?", "metric": "exact", "expected": "3,100 parcels per hour", "aliases": ["3100 parcels per hour"]}

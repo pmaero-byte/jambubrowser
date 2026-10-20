@@ -127,13 +127,17 @@ report:
 # Install verification
 # ---------------------------------------------------------------------------
 
-.PHONY: verify verify-fast
+.PHONY: verify verify-fast bench
 verify:
 	@bash scripts/verify_install.sh
 
 # Skip the live-site checks: guards, health and imports only.
 verify-fast:
 	@SKIP_NETWORK=1 bash scripts/verify_install.sh
+
+# Local agentic-search benchmark: deterministic, offline, no judge model.
+bench:
+	@$(PYTHON) -m cli.jambu bench --compare
 
 # ---------------------------------------------------------------------------
 # Help
@@ -159,6 +163,7 @@ help:
 	@echo "Tier 3 (probes):"
 	@echo "  make verify                clean-machine install check, one command"
 	@echo "  make verify-fast           same, but skip checks that reach live sites"
+	@echo "  make bench                 local agentic-search benchmark (offline)"
 	@echo "  make engine               boot engine in foreground"
 	@echo "  make bench-browser        browser efficiency benchmark"
 	@echo "  make bench-harness        harnessX efficiency benchmark"

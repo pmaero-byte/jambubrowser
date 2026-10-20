@@ -12,13 +12,14 @@ import argparse
 
 from cli.jambu_cli import core
 from cli.jambu_cli.commands import audit as audit_cmds
+from cli.jambu_cli.commands import bench as bench_cmds
 from cli.jambu_cli.commands import mesh as mesh_cmds
 from cli.jambu_cli.commands import monitors as monitor_cmds
 from cli.jambu_cli.commands import qa as qa_cmds
 from cli.jambu_cli.commands import status as status_cmds
 
 # Every command module contributes its subparsers here.
-COMMAND_MODULES = (audit_cmds, status_cmds, monitor_cmds, qa_cmds, mesh_cmds)
+COMMAND_MODULES = (audit_cmds, status_cmds, monitor_cmds, qa_cmds, mesh_cmds, bench_cmds)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -52,6 +53,7 @@ DISPATCH = {
     "share": audit_cmds.cmd_share,
     "report": audit_cmds.cmd_report,
     "tiers": audit_cmds.cmd_tiers,
+    "bench": bench_cmds.cmd_bench,
     "diff": audit_cmds.cmd_diff,
     "health": status_cmds.cmd_health,
     "status": status_cmds.cmd_status,

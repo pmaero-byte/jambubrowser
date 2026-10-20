@@ -64,20 +64,27 @@ async def web_search(
     top_k: Annotated[int, "Maximum number of results to return"] = 10,
     engines: Annotated[Optional[list[str]], "Search engines to use (SearXNG, DDG, Google)"] = None,
 ) -> dict:
-    """Search the web via SearXNG → DuckDuckGo → Google fallback chain."""
+    """Search the web via SearXNG → DuckDuckGo → Google fallback chain.
+
+    The query is expanded into related phrasings, results from every engine are
+    merged and de-duplicated, and the survivors are ranked — a single phrasing
+    of a question retrieves one slice of the web, and duplicates otherwise
+    crowd out documents that answer the question.
+    """
     try:
-        from backend.modules.search import multi_engine_search
-        results = await multi_engine_search(query, engines=engines)
+        from backend.modules.retrieval import search_and_rank
+
+        results = await search_and_rank(query, limit=top_k)
         return {
             "query": query,
             "results": [
                 {
                     "title": r.get("title", ""),
                     "url": r.get("url", ""),
-                    "snippet": r.get("content", "")[:300],
+                    "snippet": (r.get("content") or "")[:300],
                     "engine": r.get("engine", ""),
                 }
-                for r in results[:top_k]
+                for r in results
             ],
             "count": len(results),
         }
