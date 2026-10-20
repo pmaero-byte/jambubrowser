@@ -135,13 +135,54 @@ not a result.
    handles. We did not paper over them by adding "second generation → G2" to
    the thesaurus — that would be overfitting the eval and would not generalise.
 
+### Dense and hybrid retrieval — measured
+
+`backend/modules/semantic.py` adds a dense backend and a fusion layer, so the
+claim can be tested rather than asserted:
+
+- **`LsaEmbedder`** — TF-IDF + truncated SVD over the corpus. A real dense
+  representation, computable with numpy alone, so the dense path is measurable
+  offline.
+- **`SentenceTransformerEmbedder`** — the neural encoder. The project already
+  depends on `sentence-transformers` (the RAG store uses `all-MiniLM-L6-v2`), so
+  this adds no new dependency — but it needs the model on disk, which this
+  machine does not have.
+- **`HybridIndex`** — reciprocal rank fusion, with a per-list weight.
+
+`jambu bench --retriever-compare`, same policy and same grader:
+
+| Retriever | Score | 95% CI |
+|---|---|---|
+| **lexical** (BM25 + expansion) | **0.7292** | [0.5000, 0.9375] |
+| dense (LSA) | 0.6153 | [0.3875, 0.8375] |
+| hybrid (RRF, dense weight 0.5) | 0.7292 | [0.5000, 0.9375] |
+
+**Read this honestly: the dense backend contributed nothing, and at equal weight
+it actively hurt** (hybrid at weight 1.0 scored **0.5417**, well below lexical
+alone). Two reasons, and the second is the important one:
+
+1. A 44-document corpus has no co-occurrence statistics worth learning. LSA
+   needs a corpus; this is one.
+2. **Fusing a strong ranker with a weak one at equal weight makes things
+   worse**, because the weak side promotes documents the strong side had
+   already rejected. Hence the damping weight (0.5), which restores parity
+   rather than beating it.
+
+So the local suite is good at **detecting regressions** — it caught the
+re-ranking regression, the grader bug, and would catch a broken fusion — and
+**cannot demonstrate a semantic win**. That claim needs the neural encoder on
+a corpus large enough for it to mean something.
+
 ## 5. The plan, in priority order
 
-1. **A local embedding retriever.** The single highest-value item, and the
-   published evidence says it is worth ~66 points (3.86% → 70.1%). Jambubrowser
-   already depends on `sentence-transformers` and `sqlite-vec` for its RAG
-   store, so this is an index, not a new dependency. The lexical retriever stays
-   as the fallback when the model is not installed.
+1. **Evaluate the neural encoder on BrowseComp-Plus.** The dataset is
+   downloadable (`Tevatron/browsecomp-plus` on Hugging Face, a fixed
+   human-verified ~100K-document corpus with mined hard negatives), it is
+   contamination-free by construction, and it is the one public benchmark with
+   a local system on it. Jambubrowser already ships the dependency and the
+   model name. This is the measurement that would tell us whether the local
+   lane really opens up — 70.1% with a local encoder vs 59.9% for live-web
+   Google Search.
 2. **Cross-round evidence accumulation.** The protocol allows 25 rounds; a
    FindAll-style task needs entities gathered across many pages, deduplicated.
    We have the receipts and the typed extraction to do that safely.

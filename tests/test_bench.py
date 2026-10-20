@@ -193,6 +193,146 @@ class TestGraders:
 
 
 # ---------------------------------------------------------------------------
+# Dense and hybrid retrieval
+# ---------------------------------------------------------------------------
+
+class TestLsaEmbedder:
+    def _corpus(self):
+        return [
+            "Atlas Gripper G2 handles 40 kg payloads with adaptive finger control",
+            "The Atlas Sorter S1 sorts 2,400 parcels per hour on a conveyor line",
+            "Atlas Robotics pricing: Basic $500/month, Pro $2,000/month",
+        ]
+
+    def test_encodes_into_vectors(self):
+        from backend.modules.semantic import LsaEmbedder
+        embedder = LsaEmbedder(self._corpus())
+        vectors = embedder.encode(["gripper payload"])
+        assert vectors.shape[0] == 1
+        assert vectors.shape[1] > 0
+
+    def test_empty_input(self):
+        from backend.modules.semantic import LsaEmbedder
+        embedder = LsaEmbedder(self._corpus())
+        assert embedder.encode([]).shape[0] == 0
+
+    def test_related_terms_land_closer_than_unrelated(self):
+        """The whole point of a dense representation: co-occurring terms."""
+        from backend.modules.semantic import LsaEmbedder
+        import numpy as np
+        embedder = LsaEmbedder(self._corpus())
+        v = embedder.encode(["gripper payload"])[0]
+        docs = embedder.encode([
+            "Atlas Gripper G2 handles 40 kg payloads with adaptive finger control",
+            "Atlas Robotics pricing: Basic $500/month, Pro $2,000/month",
+        ])
+        norm = np.linalg.norm(v)
+        sims = (docs @ v) / (np.linalg.norm(docs, axis=1) * (norm or 1.0))
+        assert sims[0] > sims[1]
+
+
+class TestSemanticIndex:
+    def _docs(self):
+        return [
+            {"id": "a", "url": "https://a.test", "title": "Gripper payload", "content": "handles 40 kg"},
+            {"id": "b", "url": "https://b.test", "title": "Pricing", "content": "Basic $500/month"},
+        ]
+
+    def test_search_orders_by_similarity(self):
+        from backend.modules.semantic import SemanticIndex, LsaEmbedder
+        docs = self._docs()
+        index = SemanticIndex(documents=docs, embedder=LsaEmbedder([d["content"] for d in docs]))
+        assert index.build() is True
+        hits = index.search("gripper payload")
+        assert hits and hits[0]["url"] == "https://a.test"
+
+    def test_unavailable_backend_reports_instead_of_raising(self):
+        from backend.modules.semantic import SemanticIndex
+
+        class Broken:
+            def encode(self, texts):
+                raise RuntimeError("model missing")
+
+        index = SemanticIndex(documents=self._docs(), embedder=Broken())
+        assert index.build() is False
+        assert index.available is False
+        assert index.search("anything") == []
+
+
+class TestFusion:
+    def test_ranks_are_fused(self):
+        from backend.modules.semantic import reciprocal_rank_fusion
+        a = [{"url": "https://a.test"}, {"url": "https://b.test"}]
+        b = [{"url": "https://b.test"}, {"url": "https://a.test"}]
+        fused = reciprocal_rank_fusion([a, b])
+        urls = {row["url"] for row in fused}
+        assert urls == {"https://a.test", "https://b.test"}
+
+    def test_weight_damps_a_list(self):
+        """A weak ranker must not have equal say with a strong one."""
+        from backend.modules.semantic import reciprocal_rank_fusion
+        strong = [{"url": "https://strong.test"}]
+        weak = [{"url": "https://weak.test"}]
+        fused = reciprocal_rank_fusion([strong, weak], weights=[1.0, 0.1])
+        assert fused[0]["url"] == "https://strong.test"
+
+    def test_zero_weight_removes_a_list(self):
+        from backend.modules.semantic import reciprocal_rank_fusion
+        fused = reciprocal_rank_fusion(
+            [[{"url": "https://a.test"}], [{"url": "https://b.test"}]], weights=[1.0, 0.0])
+        assert [row["url"] for row in fused] == ["https://a.test"]
+
+
+class TestHybridIndex:
+    def test_falls_back_to_lexical_when_dense_is_unavailable(self):
+        from backend.bench.corpus import LocalIndex
+        from backend.modules.semantic import HybridIndex, SemanticIndex
+        from backend.bench.runner import local_suite_dir
+        lexical = LocalIndex.load(local_suite_dir() / "corpus.jsonl")
+        hybrid = HybridIndex(lexical=lexical, semantic=SemanticIndex(documents=[], available=False))
+        assert hybrid.search("gripper payload")
+        assert hybrid.available is False
+
+    def test_fuses_when_dense_is_available(self):
+        from backend.bench.corpus import LocalIndex
+        from backend.modules.semantic import HybridIndex, LsaEmbedder, SemanticIndex
+        from backend.bench.runner import local_suite_dir
+        lexical = LocalIndex.load(local_suite_dir() / "corpus.jsonl")
+        docs = [d.to_dict() for d in lexical.documents]
+        semantic = SemanticIndex(documents=docs, embedder=LsaEmbedder([d["content"] for d in docs]))
+        semantic.build()
+        hybrid = HybridIndex(lexical=lexical, semantic=semantic)
+        assert hybrid.search("gripper payload")
+
+
+class TestSemanticFactory:
+    def test_lsa_needs_no_model(self):
+        from backend.modules.semantic import build_embedder
+        embedder = build_embedder("lsa", ["a b c", "d e f"])
+        assert embedder is not None
+
+    def test_unknown_embedder_raises(self):
+        from backend.modules.semantic import build_embedder
+        with pytest.raises(ValueError):
+            build_embedder("magic", ["a"])
+
+    def test_missing_model_degrades_to_lexical(self):
+        """sentence-transformers is not installed here, so the dense side must
+        report unavailability and the hybrid must fall back — not crash."""
+        from backend.modules.semantic import build_index
+        docs = [{"id": "a", "url": "https://a.test", "title": "T", "content": "body"}]
+        built = build_index(docs, retriever="hybrid", embedder_kind="sentence-transformers")
+        assert built.available is False
+        assert built.search("body")
+
+    def test_unknown_retriever_raises(self):
+        from backend.modules.semantic import build_index
+        with pytest.raises(ValueError):
+            build_index([{"url": "https://a.test", "title": "t", "content": "c"}],
+                        retriever="telepathy")
+
+
+# ---------------------------------------------------------------------------
 # The corpus and the runner
 # ---------------------------------------------------------------------------
 

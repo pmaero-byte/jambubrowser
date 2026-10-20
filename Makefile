@@ -139,6 +139,10 @@ verify-fast:
 bench:
 	@$(PYTHON) -m cli.jambu bench --compare
 
+# The same benchmark across the three retrieval backends.
+bench-retrievers:
+	@$(PYTHON) -m cli.jambu bench --retriever-compare
+
 # ---------------------------------------------------------------------------
 # Help
 # ---------------------------------------------------------------------------
