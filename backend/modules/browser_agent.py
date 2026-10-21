@@ -458,6 +458,8 @@ class BrowserAgentSession:
         self._forbid_evaluate = False
         # Last API-step response, read by assert_status/json/latency/schema.
         self._last_api: Optional[dict] = None
+        self._last_api_request: Optional[dict] = None
+        self._assert_data: Optional[dict] = None
         # Last verified download, so a follow-up step can assert on its content
         # or a later step can parse the exported file.
         self._last_download: Optional[dict] = None
@@ -1394,6 +1396,8 @@ class BrowserAgentSession:
                 result["error"] = refusal.detail or refusal.reason
                 if refusal.candidates:
                     result["candidates"] = refusal.candidates
+                if getattr(refusal, "evidence", None):
+                    result["evidence"] = refusal.evidence
                 # Why it failed, in the terms of the DOM: found at all, on
                 # screen, actually clickable, or what is covering it. A
                 # Playwright call log says "waiting for locator" which is not
@@ -1692,10 +1696,15 @@ class BrowserAgentSession:
             # keeps only the plumbing (read state, raise on failure).
             from backend.modules.browser_assertions import evaluate_assert
 
+            self._assert_data = None
             passed, message = await evaluate_assert(self, step, state)
+            evidence = self._assert_data
+            self._assert_data = None
             if not passed:
-                raise SessionRefused("assertion_failed", message)
-            return message, {}
+                refusal = SessionRefused("assertion_failed", message)
+                refusal.evidence = evidence
+                raise refusal
+            return message, ({"evidence": evidence} if evidence else {})
 
         raise SessionRefused("unknown_action", f"unsupported action: {action}")
 

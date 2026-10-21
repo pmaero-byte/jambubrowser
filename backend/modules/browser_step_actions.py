@@ -418,13 +418,18 @@ async def run_api_step(session, action: str, step: dict, approve: bool) -> Optio
                 "approval_required",
                 f"{method} requests mutate remote state; re-send with approve=true",
             )
+        request = {"method": method, "url": url,
+                   "headers": step.get("headers") or {},
+                   "body": step.get("body", step.get("json", step.get("data"))),
+                   "timeout_ms": int(step.get("timeout", 15000))}
         response = await session._call_optional(
             "http_request", method, url,
-            headers=step.get("headers") or {},
-            body=step.get("body", step.get("json", step.get("data"))),
-            timeout_ms=int(step.get("timeout", 15000)),
+            headers=request["headers"], body=request["body"],
+            timeout_ms=request["timeout_ms"],
         )
         session._last_api = response
+        # Kept so assert_deterministic can replay the identical request.
+        session._last_api_request = request
         session._record(action, "ok" if response.get("ok") else "failed",
                      url=session.last_url,
                      detail=f"{method} {url} → {response.get('status')}")
