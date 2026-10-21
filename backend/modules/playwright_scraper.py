@@ -88,6 +88,104 @@ async def scrape_with_playwright(
         }
 
 
+class ActionError(ValueError):
+    """An /act action was malformed or unsupported (never silently skipped)."""
+
+
+SUPPORTED_ACTIONS = ("click", "type", "scroll", "click_xy", "wait", "goto")
+
+
+async def apply_action(page, action: Dict[str, Any], *, wait_until: str = "networkidle",
+                       timeout: int = 30000) -> str:
+    """Run one action on ``page``; returns a short detail string.
+
+    Raises :class:`ActionError` for an unknown action or missing arguments,
+    and lets Playwright errors (selector not found, timeout) propagate, so
+    the caller records a failure instead of pretending the step ran.
+    """
+    action_type = action.get("action")
+    selector = action.get("selector")
+    value = action.get("value")
+    x = action.get("x")
+    y = action.get("y")
+    if action_type not in SUPPORTED_ACTIONS:
+        raise ActionError(f"unsupported action {action_type!r}; "
+                          f"supported: {', '.join(SUPPORTED_ACTIONS)}")
+    if action_type == "click":
+        if not selector:
+            raise ActionError("click needs a selector")
+        await page.click(selector, timeout=timeout)
+        return f"clicked {selector}"
+    if action_type == "type":
+        if not selector or value is None:
+            raise ActionError("type needs a selector and a value")
+        await page.fill(selector, str(value), timeout=timeout)
+        return f"filled {selector}"
+    if action_type == "scroll":
+        try:
+            dy = float(value)
+        except (TypeError, ValueError):
+            raise ActionError(f"scroll needs a numeric value, got {value!r}")
+        await page.evaluate("dy => window.scrollBy(0, dy)", dy)
+        return f"scrolled {dy:g}px"
+    if action_type == "click_xy":
+        if x is None or y is None:
+            raise ActionError("click_xy needs x and y (viewport percent)")
+        hit = await page.evaluate(
+            "([px, py]) => { const el = document.elementFromPoint("
+            "window.innerWidth * px / 100, window.innerHeight * py / 100);"
+            " if (!el) return false; el.click(); return true; }",
+            [float(x), float(y)],
+        )
+        if not hit:
+            raise ActionError(f"click_xy found no element at ({x}%, {y}%)")
+        return f"clicked at ({x}%, {y}%)"
+    if action_type == "wait":
+        try:
+            ms = int(float(value))
+        except (TypeError, ValueError):
+            raise ActionError(f"wait needs a numeric value in ms, got {value!r}")
+        if ms < 0:
+            raise ActionError("wait value must be >= 0")
+        await page.wait_for_timeout(ms)
+        return f"waited {ms}ms"
+    # goto
+    if not value:
+        raise ActionError("goto needs a URL value")
+    await page.goto(value, wait_until=wait_until, timeout=timeout)
+    return f"navigated to {value}"
+
+
+async def run_actions(page, actions: List[Dict[str, Any]], *, wait_until: str = "networkidle",
+                      timeout: int = 30000) -> List[Dict[str, Any]]:
+    """Run every action, recording an outcome for each (ok or error)."""
+    results: List[Dict[str, Any]] = []
+    for index, action in enumerate(actions):
+        entry: Dict[str, Any] = {"index": index, "action": action.get("action")}
+        try:
+            entry["detail"] = await apply_action(page, action, wait_until=wait_until,
+                                                 timeout=timeout)
+            entry["ok"] = True
+        except Exception as e:
+            log.error("Action %s failed: %s", action.get("action"), e)
+            entry["ok"] = False
+            entry["error"] = f"{type(e).__name__}: {e}"
+        results.append(entry)
+    return results
+
+
+def summarize_action_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    failed = [r for r in results if not r.get("ok")]
+    if not failed:
+        status = "ok"
+    elif len(failed) == len(results):
+        status = "failed"
+    else:
+        status = "partial"
+    return {"status": status, "action_results": results, "failed_actions": failed,
+            "actions_failed": len(failed), "actions_total": len(results)}
+
+
 async def perform_actions_with_playwright(
     url: str,
     actions: List[Dict[str, Any]],
@@ -119,36 +217,11 @@ async def perform_actions_with_playwright(
             try:
                 await page.goto(url, wait_until=wait_until, timeout=timeout)
                 
-                # Execute each action
-                for action in actions:
-                    action_type = action.get("action")
-                    selector = action.get("selector")
-                    value = action.get("value")
-                    x = action.get("x")
-                    y = action.get("y")
-                    
-                    try:
-                        if action_type == "click" and selector:
-                            await page.click(selector)
-                        elif action_type == "type" and selector and value:
-                            await page.fill(selector, value)
-                        elif action_type == "scroll" and value:
-                            await page.evaluate(f"window.scrollBy(0, {value})")
-                        elif action_type == "click_xy" and x is not None and y is not None:
-                            # Calculate viewport coordinates
-                            vx = f"window.innerWidth * {x / 100}"
-                            vy = f"window.innerHeight * {y / 100}"
-                            await page.evaluate(
-                                f"{{ const el = document.elementFromPoint({vx}, {vy}); if(el) el.click(); }}"
-                            )
-                        elif action_type == "wait" and value:
-                            await page.wait_for_timeout(int(value))
-                        elif action_type == "goto" and value:
-                            await page.goto(value, wait_until=wait_until, timeout=timeout)
-                    except Exception as e:
-                        log.error("Action %s failed: %s", action_type, e)
-                        continue
-                
+                # Execute each action; a failure is recorded, never skipped.
+                results = await run_actions(page, actions, wait_until=wait_until,
+                                            timeout=timeout)
+                summary = summarize_action_results(results)
+
                 # Get final page content
                 content = await page.content()
                 title = await page.title()
@@ -162,12 +235,19 @@ async def perform_actions_with_playwright(
                 
                 await browser.close()
                 
-                return {
-                    "success": True,
+                result = {
+                    "success": summary["status"] == "ok",
                     "content": markdown_content[:10000],
                     "title": title,
                     "url": url,
+                    **summary,
                 }
+                if summary["failed_actions"]:
+                    first = summary["failed_actions"][0]
+                    result["error"] = (
+                        f"{summary['actions_failed']}/{summary['actions_total']} action(s) failed; "
+                        f"first: #{first['index']} {first['action']}: {first['error']}")
+                return result
             except Exception as e:
                 await browser.close()
                 return {

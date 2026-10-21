@@ -218,6 +218,7 @@ from backend.modules.browser_flow import (  # noqa: E402,F401
     parse_dialog_spec,
     record_flow_savings,
     render_flow_report,
+    strip_binary,
     summarize_flow_diagnostics,
     token_savings,
 )
@@ -381,6 +382,34 @@ def download_dir_for(session_id: str, artifacts_dir: Optional[str] = None) -> st
     return base
 
 
+
+
+MAX_WAIT_MS = 60_000
+_WAIT_CONDITION_KEYS = ("js", "selector", "text", "url_contains", "network_idle", "networkidle")
+
+
+def _wait_duration_ms(step: dict) -> Optional[int]:
+    """The fixed pause a wait step asks for, in ms (None when not given).
+
+    Accepts ``ms``, ``duration_ms`` or ``sleep_ms``. Capped at
+    :data:`MAX_WAIT_MS` so a typo cannot park a session for an hour; a
+    negative or non-numeric value is refused rather than ignored.
+    """
+    for key in ("ms", "duration_ms", "sleep_ms"):
+        if step.get(key) is None or step.get(key) == "":
+            continue
+        try:
+            value = int(float(step[key]))
+        except (TypeError, ValueError):
+            raise SessionRefused("invalid_step", f"wait {key} must be a number, got {step[key]!r}")
+        if value < 0:
+            raise SessionRefused("invalid_step", f"wait {key} must be >= 0, got {value}")
+        return min(value, MAX_WAIT_MS)
+    return None
+
+
+def _has_wait_condition(step: dict) -> bool:
+    return any(step.get(k) for k in _WAIT_CONDITION_KEYS)
 
 
 class BrowserAgentSession:
@@ -1474,6 +1503,7 @@ class BrowserAgentSession:
             (s.get("action") or "").lower() == "evaluate" for s in normalized
         )
         report["tokens_estimate"] = estimate_tokens(report)
+        report["binary_chars_excluded"] = strip_binary(report)[1]
         # The answer to "is this actually cheaper?": the same script driven as
         # MCP primitives costs one call per action plus a fresh page state
         # after every mutation that moves the DOM.
@@ -1633,9 +1663,21 @@ class BrowserAgentSession:
             return "evaluated", {"evaluated": text}
 
         if action in ("wait", "wait_for"):
+            # `ms` (aliases duration_ms / sleep_ms) is a fixed pause. Alone it
+            # is exactly that sleep; next to a condition it is extra settle
+            # time after the condition holds. It used to be ignored, so
+            # `{"action": "wait", "ms": 1500}` waited ~600ms for network quiet.
+            ms = _wait_duration_ms(step)
+            if ms is not None and not _has_wait_condition(step):
+                await asyncio.sleep(ms / 1000)
+                await self._read_state()
+                return f"waited {ms}ms", {"waited_ms": ms}
             await self._run_wait(step, timeout, approve)
+            if ms:
+                await asyncio.sleep(ms / 1000)
             await self._read_state()
-            return "waited", {}
+            return ("waited" + (f" (+{ms}ms)" if ms else "")), (
+                {"waited_ms": ms} if ms else {})
 
         if action == "screenshot":
             b64 = await self._call_optional("screenshot", bool(step.get("full_page", False)))

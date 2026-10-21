@@ -24,6 +24,7 @@ from backend.employees import (
     ALL_EMPLOYEES,
     QUICK_SCAN_EMPLOYEES,
     AuditData,
+    EmployeeError,
     Finding,
 )
 from backend.employees.export import (
@@ -378,6 +379,15 @@ async def _audit_event_stream(req: AuditRunRequest, on_collected=None):
     except Exception as e:
         log.warning("Product context extraction failed: %s", e)
         product_context = None
+        product_context_error = f"product context crashed: {e}"
+    else:
+        product_context_error = getattr(product_context, "error", "") or ""
+        if product_context_error:
+            # A placeholder context ("Unable to determine") is not context;
+            # do not prime the employees with it, and report the failure.
+            product_context = None
+    if product_context_error:
+        yield ("product_context_error", {"error": product_context_error})
 
     # Phase 2: Dispatch employees in parallel
     yield ("status", {"phase": "analyzing", "employees": [e.name for e in employees]})
@@ -392,22 +402,35 @@ async def _audit_event_stream(req: AuditRunRequest, on_collected=None):
                 emp.system_prompt = context_prompt + "\n\n" + emp.system_prompt
             findings = await emp.analyze(data)
             elapsed = round((time.time() - start) * 1000)
-            return emp.name, emp.emoji, findings, elapsed, None
+            return emp.name, emp.emoji, findings, elapsed, None, ""
+        except EmployeeError as e:
+            elapsed = round((time.time() - start) * 1000)
+            log.warning("%s failed (%s): %s", emp_cls.name, e.kind, e.reason)
+            return (emp_cls.name, emp_cls.emoji, e.partial_findings, elapsed,
+                    e.reason, e.kind)
         except Exception as e:
             elapsed = round((time.time() - start) * 1000)
             log.exception("%s failed", emp_cls.name)
-            return emp_cls.name, emp_cls.emoji, [], elapsed, str(e)
+            return emp_cls.name, emp_cls.emoji, [], elapsed, str(e), "crashed"
 
     tasks = [asyncio.create_task(run_employee(e)) for e in employees]
 
     all_findings: list[Finding] = []
+    employee_errors: list[dict] = []
     for coro in asyncio.as_completed(tasks):
-        name, emoji, findings, elapsed, error = await coro
+        name, emoji, findings, elapsed, error, kind = await coro
         if error:
+            # Rule-based findings produced before the failure are still real
+            # findings; keep them, but the employee is reported as failed.
+            all_findings.extend(findings)
+            employee_errors.append({"employee": name, "kind": kind, "error": error,
+                                    "partial_findings": len(findings)})
             await _emit("error", {"message": f"{name}: {error}"})
             yield ("employee_error", {
                 "employee": name, "emoji": emoji,
-                "error": error, "elapsed_ms": elapsed,
+                "error": error, "kind": kind, "elapsed_ms": elapsed,
+                "findings_count": len(findings),
+                "findings": [f.to_dict() for f in findings],
             })
         else:
             all_findings.extend(findings)
@@ -443,8 +466,18 @@ async def _audit_event_stream(req: AuditRunRequest, on_collected=None):
         req.url, data.title, req.mode, active_findings, by_severity,
     )
 
+    errors = list(employee_errors)
+    if product_context_error:
+        errors.append({"employee": "Product Context", "kind": "product_context",
+                       "error": product_context_error, "partial_findings": 0})
     yield ("done", {
         "audit_id": audit_id,
+        # "incomplete" means at least one employee (or the product-context
+        # step) failed: the finding count is a lower bound, not a clean bill.
+        "status": "incomplete" if errors else "complete",
+        "errors": errors,
+        "employees_failed": len(employee_errors),
+        "employees_total": len(employees),
         "total_findings": len(active_findings),
         "dismissed_count": len(suppressed_findings),
         "dismissed": suppressed_findings,

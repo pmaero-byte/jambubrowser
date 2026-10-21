@@ -86,7 +86,7 @@ per-step `scrub` overrides the session. The report states which policy ran.
 | `press` | `key`, optional `target`/`ref` | e.g. `Enter` |
 | `hover` / `select` / `check` / `uncheck` | `target`/`ref`, `value` | |
 | `reload` / `back` / `forward` | — | |
-| `wait` | `selector` \| `text` \| `url_contains` \| `js` \| `network_idle` | `js` is a page predicate (`approve=true`). `selector`/`text` wait for **rendered** content by default (`visible: false` opts into existence). With no condition it settles on network quiet |
+| `wait` | `selector` \| `text` \| `url_contains` \| `js` \| `network_idle` \| `ms` | `ms` (aliases `duration_ms`, `sleep_ms`) is a fixed pause in milliseconds, capped at 60000; alone it is exactly that sleep, next to a condition it is extra settle time after the condition holds. Negative or non-numeric `ms` fails the step. `js` is a page predicate (`approve=true`). `selector`/`text` wait for **rendered** content by default (`visible: false` opts into existence). With no condition it settles on network quiet |
 | `dialog` | `dialog` | answers the dialog raised by the **next** action — see below |
 | `upload` | `target`/`ref`/`selector`, `files`, `approve: true`, `chooser?` | file input vs. the OS picker |
 | `download` | `target`/`ref`/`selector`, `match?`, `min_bytes?`, `sha256?`, `contains?` | saved under `JAMBU_DOWNLOAD_DIR`; content bounds are enforced |
