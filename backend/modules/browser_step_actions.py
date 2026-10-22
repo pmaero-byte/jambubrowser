@@ -422,6 +422,10 @@ async def run_api_step(session, action: str, step: dict, approve: bool) -> Optio
                    "headers": step.get("headers") or {},
                    "body": step.get("body", step.get("json", step.get("data"))),
                    "timeout_ms": int(step.get("timeout", 15000))}
+        # Forget the previous response first: if this request raises, a later
+        # assert_status must not pass on the *previous* call's 200.
+        session._last_api = None
+        session._last_api_request = None
         response = await session._call_optional(
             "http_request", method, url,
             headers=request["headers"], body=request["body"],

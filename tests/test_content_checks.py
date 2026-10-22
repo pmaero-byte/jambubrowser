@@ -129,6 +129,15 @@ class TestCoverageAndHash:
         assert report["tokens"] == 3
         assert abs(report["coverage"] - 2 / 3) < 1e-9
 
+    def test_prompt_coverage_counts_split_words_once(self):
+        # Oviyan reports "படிக்கிறாள்" as two pieces split at the virama.
+        report = cc.prompt_coverage("ஒரு சிறுமி புத்தகம் படிக்கிறாள்",
+                                    ["ஒரு", "படிக", "கிறாள"])
+        assert report["tokens"] == 4
+        assert report["unmatched_words"] == ["ஒரு", "படிக்கிறாள்"]
+        assert report["fragments"] == ["படிக", "கிறாள"]
+        assert abs(report["coverage"] - 0.5) < 1e-9
+
     def test_stable_hash_ignores_volatile_keys(self):
         a = {"svg": "<svg/>", "render_ms": 3, "meta": {"render_ms": 1, "k": 1}}
         b = {"svg": "<svg/>", "render_ms": 9, "meta": {"render_ms": 7, "k": 1}}
@@ -136,3 +145,21 @@ class TestCoverageAndHash:
         assert cc.stable_hash(a, ignore=["render_ms"]) == cc.stable_hash(b, ignore=["render_ms"])
         assert cc.stable_hash(a, path="svg") == cc.stable_hash("<svg/>")
         assert cc.stable_hash(a).startswith("sha256:")
+
+
+class TestElementCountSelectors:
+    SVG = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">'
+           '<g data-expert="world.balloon"><path d="M0,0L1,1"/></g>'
+           '<g data-expert="world.sky"/><path d="M1,1L2,2"/></svg>')
+
+    def _counts(self, rule):
+        return {r["check"]: r["ok"] for r in cc.svg_checks(self.SVG, {"element_counts": rule})}
+
+    def test_attribute_and_tag_selectors(self):
+        got = self._counts({'[data-expert="world.balloon"]': 1, "[data-expert]": 2,
+                            'g[data-expert="world.sky"]': 1, "path": {"min": 2}})
+        assert all(got.values()), got
+
+    def test_bad_selector_is_rejected(self):
+        with pytest.raises(ValueError):
+            cc.svg_checks(self.SVG, {"element_counts": {"g > path": 1}})

@@ -93,6 +93,30 @@ class TestBaseline:
         result = gr.compare_to_baseline(str(base), _png(REFERENCE, width=300))
         assert result["size_mismatch"] and result["diff_pct"] == 100.0
 
+    def test_normalize_width_compares_the_picture_not_the_layout(self, tmp_path):
+        # The same picture laid out at 2/3 size (the Studio canvas follows the
+        # window) matches once both are resampled; a changed picture does not.
+        def scaled(bars, factor):
+            img = Image.open(io.BytesIO(_png(bars, 220, 60)))
+            img = img.resize((round(220 * factor), round(60 * factor)), Image.LANCZOS)
+            buf = io.BytesIO()
+            img.save(buf, "PNG")
+            return buf.getvalue()
+
+        base = tmp_path / "b.png"
+        gr.compare_to_baseline(str(base), scaled(REFERENCE, 1.5))
+        small = scaled(REFERENCE, 1.0)
+        assert gr.compare_to_baseline(str(base), small)["size_mismatch"]
+        same = gr.compare_to_baseline(str(base), small, normalize_width=110)
+        assert same["normalized_to"] == [110, 30] and same["diff_pct"] < 1.0
+        changed = gr.compare_to_baseline(str(base), scaled(REFERENCE[:3], 1.0),
+                                         normalize_width=110)
+        assert changed["diff_pct"] > 5.0
+        # A different shape is still a mismatch, resampling or not.
+        wide = gr.compare_to_baseline(str(base), _png(REFERENCE, width=400),
+                                      normalize_width=110)
+        assert wide["size_mismatch"]
+
 
 def _svg(text: str) -> str:
     return ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 40">'

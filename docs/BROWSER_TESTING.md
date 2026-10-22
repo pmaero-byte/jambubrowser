@@ -499,6 +499,35 @@ Any client driving a session can record it into a reusable flow:
 placeholders (`{{email}}`, `{{password}}`) rather than being stored verbatim.
 CLI: `jambu record --session <id> [--stop --out flow.json]`.
 
+## Content assertions and test packs
+
+These assertions check what an app *returns and draws*, not only its DOM. They
+read the last `api` response (`path` picks a JSON value) or, with `selector`,
+the live element's `outerHTML`.
+
+| Action | Checks |
+|---|---|
+| `assert_json` | `path` with `op`: `exists`, `not_exists`, `equals`, `not_equals`, `regex`, `contains`, `gte`, `lte`, `length` or `type`. |
+| `assert_json_schema` | A JSON-Schema subset: type, required, properties, additionalProperties, items, enum, const, pattern, min/max, anyOf. Unknown keywords are refused, never ignored. |
+| `assert_body` | `contains`, `not_contains` or `regex`. On failure it says what the body *does* contain or lack. |
+| `assert_svg` | `checks`: `no_nan`, `unique_ids`, `no_script`, `within_viewbox`, `element_counts` (`tag`, `[attr]`, `[attr="v"]`, `tag[attr="v"]`), `text_contains`, `script` and `max_bytes`. Well-formedness is always checked. |
+| `assert_text_fidelity` | The drawn text equals `expected` codepoint by codepoint. It names a dropped mark such as U+0BC1. |
+| `assert_glyph_fidelity` | Rasterises a region and compares it with the `expected` string shaped by a reference `font`. Use it when the text metadata can lie. |
+| `assert_prompt_coverage` | The share of query words with no `unmatched_tokens` piece is at least `min`. A word split into fragments counts once. |
+| `assert_deterministic` | Replays the last api request `runs` times and compares hashes of the body or `path`. `ignore` lists volatile keys. |
+| `assert_screenshot` | `baseline_dir` uses Pillow and writes a red diff overlay. `normalize_width` compares an element whose pixel size follows the layout. A size mismatch is reported as such. |
+
+A **test pack** bundles flows like these with their baselines and named
+findings. See `packs/oviyan/README.md` and `backend/modules/test_packs.py`.
+
+```bash
+python cli/jambu.py pack list
+python cli/jambu.py pack run oviyan --base http://127.0.0.1:7878 --json out.json
+```
+
+Each flow runs in its own ephemeral session. A flow that clicks or types sets
+`"approve": true` in the pack.
+
 ## Token accounting
 
 | Scenario | Calls (before) | Calls (now) |

@@ -286,12 +286,18 @@ async def rasterize_svg_region(context, svg: str, region_selector: str, *,
 
 
 def compare_to_baseline(baseline_path: str, current_png, *, tolerance: int = 16,
-                        diff_dir: Optional[str] = None, name: str = "") -> dict:
+                        diff_dir: Optional[str] = None, name: str = "",
+                        normalize_width: Optional[int] = None) -> dict:
     """Pillow comparison of a capture against a stored PNG baseline.
 
     A channel difference at or below ``tolerance`` counts as equal. A
     missing baseline is created (``baseline_created``). On a difference the
     current frame and a red-on-grey diff image are written to ``diff_dir``.
+
+    ``normalize_width`` resamples both images to that width before diffing,
+    for an element whose pixel size follows the page layout. The aspect
+    ratios must still agree within 2%; fine detail below the sampled
+    resolution is not compared.
     """
     _require_pillow()
     if isinstance(current_png, str):
@@ -306,6 +312,14 @@ def compare_to_baseline(baseline_path: str, current_png, *, tolerance: int = 16,
     cur = Image.open(io.BytesIO(current_png)).convert("RGB")
     result: dict = {"baseline_path": baseline_path, "engine": "pillow",
                     "baseline_size": list(base.size), "current_size": list(cur.size)}
+    if normalize_width:
+        ratio_b = base.size[1] / max(base.size[0], 1)
+        ratio_c = cur.size[1] / max(cur.size[0], 1)
+        if abs(ratio_b - ratio_c) <= 0.02 * ratio_b:  # same shape: resample both
+            size = (int(normalize_width), max(1, round(normalize_width * ratio_b)))
+            base = base.resize(size, Image.LANCZOS)
+            cur = cur.resize(size, Image.LANCZOS)
+            result["normalized_to"] = list(size)
     if base.size != cur.size:
         result.update({"size_mismatch": True, "diff_pct": 100.0,
                        "diff_pixels": base.size[0] * base.size[1]})

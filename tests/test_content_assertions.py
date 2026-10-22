@@ -136,8 +136,14 @@ class TestSvgAndText:
             {"action": "api", "url": "https://example.com/api/scene/svg?id=x"},
             {"action": "assert_body", "not_contains": ["No such file"]},
             {"action": "assert_body", "contains": ["<svg"]},
+            {"action": "assert_body", "contains": ["<path"]},
         ])
-        assert statuses(report) == ["passed", "failed", "passed"]
+        assert statuses(report) == ["passed", "failed", "passed", "failed"]
+        # Failures say what the body does, not what was expected.
+        failed = [str(s.get("error") or s.get("detail")) for s in report["steps"]
+                  if s["status"] == "failed"]
+        assert "contains forbidden 'No such file'" in failed[0]
+        assert "lacks '<path'" in failed[1]
 
 
 class TestCoverageAndDeterminism:
@@ -248,3 +254,16 @@ class TestScreenshotThreshold:
                               "update_baseline": True}])
         assert "rewritten" in report["steps"][-1]["detail"]
         assert page.kwargs["update"] is True
+
+    def test_size_mismatch_is_named_and_normalize_width_is_passed(self):
+        page = ShotPage({"size_mismatch": True, "diff_pct": 100.0,
+                         "baseline_size": [782, 1107], "current_size": [521, 738]})
+        report = flow(page, [{"action": "assert_screenshot", "name": "plate",
+                              "normalize_width": 130}])
+        step = report["steps"][-1]
+        assert step["status"] == "failed"
+        assert "[521, 738]" in str(step.get("error") or step.get("detail"))
+        assert page.kwargs["normalize_width"] == 130
+        # Adapters that predate the option are not handed an unknown keyword.
+        flow(page, [{"action": "assert_screenshot", "name": "plate"}])
+        assert "normalize_width" not in page.kwargs

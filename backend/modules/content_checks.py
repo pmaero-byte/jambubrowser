@@ -332,6 +332,26 @@ def _has_transform(el, parents: dict) -> bool:
     return False
 
 
+_SIMPLE_SELECTOR = re.compile(
+    r"""^([A-Za-z][\w-]*|\*)?(?:\[([\w:.-]+)(?:=(?:"([^"]*)"|'([^']*)'|([^\]]*)))?\])?$""")
+
+
+def _matches_simple_selector(el, selector: str) -> bool:
+    """``tag``, ``[attr]``, ``[attr="v"]`` or ``tag[attr="v"]`` (one attribute)."""
+    m = _SIMPLE_SELECTOR.match(selector.strip())
+    if not m or not (m.group(1) or m.group(2)):
+        raise ValueError(f"element_counts key {selector!r}: use tag, [attr] or "
+                         f"tag[attr=\"value\"]")
+    tag, attr = m.group(1), m.group(2)
+    if tag and tag != "*" and _local(el.tag) != tag:
+        return False
+    if not attr:
+        return True
+    value = next((v for v in m.group(3, 4, 5) if v is not None), None)
+    got = el.get(attr)
+    return got is not None and (value is None or got == value)
+
+
 SVG_CHECKS = ("well_formed", "no_nan", "unique_ids", "element_counts", "text_contains",
               "within_viewbox", "no_script", "script", "max_bytes")
 
@@ -383,7 +403,7 @@ def svg_checks(svg: str, checks: dict) -> list:
                                    else f"{len(seen)} unique ids")})
 
     for tag, rule in (checks.get("element_counts") or {}).items():
-        n = sum(1 for el in elements if _local(el.tag) == tag)
+        n = sum(1 for el in elements if _matches_simple_selector(el, tag))
         if isinstance(rule, dict):
             lo, hi = rule.get("min"), rule.get("max")
         else:
@@ -586,10 +606,21 @@ def prompt_coverage(query: str, unmatched: Iterable[str],
     """
     tokens = tokenize(query)
     unmatched = [u for u in (unmatched or []) if u]
-    total = total_tokens if total_tokens is not None else len(tokens)
-    total = max(total, len(unmatched))
-    coverage = 1.0 - (len(unmatched) / total) if total else 0.0
-    return {"tokens": total, "unmatched": unmatched, "coverage": coverage}
+    # A compiler may report pieces of a word (a tokenizer that splits Tamil at
+    # the virama reports "படிக்கிறாள்" as "படிக", "கிறாள"). Count query words
+    # touched by any unmatched piece, and name the pieces that are not words.
+    missed = [t for t in tokens if any(u == t or u in t for u in unmatched)]
+    fragments = [u for u in unmatched if u not in tokens]
+    if total_tokens is not None or not tokens:
+        total = max(total_tokens or 0, len(unmatched))
+        count = len(unmatched)
+    else:
+        total = len(tokens)
+        count = len(missed) + sum(1 for u in fragments if not any(u in t for t in tokens))
+        total = max(total, count)
+    coverage = 1.0 - (count / total) if total else 0.0
+    return {"tokens": total, "unmatched": unmatched, "coverage": coverage,
+            "unmatched_words": missed, "fragments": fragments}
 
 
 def stable_hash(payload: Any, *, path: str = "", ignore: Iterable[str] = ()) -> str:

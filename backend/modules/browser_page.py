@@ -1267,7 +1267,9 @@ class PlaywrightPage:
                 }
                 return false;
             }""",
-            [text], timeout=timeout_ms,
+            # Playwright takes the argument by keyword only; passed positionally
+            # every real `wait {text}` raised TypeError before waiting at all.
+            arg=[text], timeout=timeout_ms,
         )
 
     # -- selector dispatch (CSS/XPath direct addressing) ---------------------
@@ -1591,7 +1593,8 @@ class PlaywrightPage:
                               threshold: float = 0.005,
                               masks: Optional[list] = None, *,
                               baseline_dir: str = "", update: bool = False,
-                              tolerance: int = 16) -> dict:
+                              tolerance: int = 16,
+                              normalize_width: Optional[int] = None) -> dict:
         """Compare the live frame to a stored baseline; create it if absent.
 
         Baselines live under ``<artifacts>/baselines/`` so a session with
@@ -1629,7 +1632,8 @@ class PlaywrightPage:
                                        "diffs")
                 result = await asyncio.to_thread(
                     glyph_raster.compare_to_baseline, baseline_path, current_b64,
-                    tolerance=tolerance, diff_dir=out_dir, name=safe)
+                    tolerance=tolerance, diff_dir=out_dir, name=safe,
+                    normalize_width=normalize_width)
                 result["threshold"] = threshold
                 return result
 

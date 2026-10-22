@@ -529,11 +529,20 @@ async def assert_screenshot(session, kind: str, selector: str,
     if not name:
         raise SessionRefused("invalid_step", "assert_screenshot needs a 'name'")
     threshold = float(step.get("threshold", 0.005) or 0.0)
+    extra = {}
+    if step.get("normalize_width"):
+        # Compare both images resampled to this width: for a canvas whose
+        # pixel size follows the page layout but whose picture must not change.
+        extra["normalize_width"] = int(step["normalize_width"])
     shots = await session._call_optional(
         "diff_screenshot", name, selector, threshold, step.get("masks") or [],
         baseline_dir=step.get("baseline_dir") or "",
         update=bool(step.get("update_baseline")),
-        tolerance=int(step.get("tolerance", 16)))
+        tolerance=int(step.get("tolerance", 16)), **extra)
+    if shots.get("size_mismatch"):
+        return False, (f"capture is {shots.get('current_size')} but baseline {name!r} is "
+                       f"{shots.get('baseline_size')} — the element laid out at another "
+                       f"size or shape; no pixel comparison was possible")
     if shots.get("baseline_updated"):
         return True, f"baseline {name!r} rewritten (update mode) — nothing asserted"
 
@@ -947,22 +956,25 @@ async def assert_content(session, kind: str, step: dict, value: str):
 
     if kind == "body":
         text, origin = await content_source(session, step)
+        # (ok, label when it holds, label when it does not): a failure must say
+        # what the body actually does, not restate the expectation.
         checks = []
         for needle in step.get("contains") or ([] if step.get("regex") else [value] if value
                                                else []):
-            checks.append((needle in text, f"contains {needle!r}"))
+            checks.append((needle in text, f"contains {needle!r}", f"lacks {needle!r}"))
         for needle in step.get("not_contains") or []:
-            checks.append((needle not in text, f"lacks {needle!r}"))
+            checks.append((needle not in text, f"lacks {needle!r}",
+                           f"contains forbidden {needle!r}"))
         if step.get("regex"):
             import re
             checks.append((re.search(step["regex"], text) is not None,
-                           f"matches /{step['regex']}/"))
+                           f"matches /{step['regex']}/", f"does not match /{step['regex']}/"))
         if not checks:
             raise SessionRefused("invalid_step",
                                  "assert_body needs contains, not_contains or regex")
-        failed = [label for ok, label in checks if not ok]
+        failed = [bad for ok, _good, bad in checks if not ok]
         snippet = text[:160].replace("\n", " ")
-        return (not failed), (f"{origin}: " + ("; ".join(label for _, label in checks)
+        return (not failed), (f"{origin}: " + ("; ".join(good for _ok, good, _bad in checks)
                                                if not failed else
                                                "FAILED " + "; ".join(failed)
                                                + f" — body starts {snippet!r}"))
@@ -1017,11 +1029,14 @@ async def assert_content(session, kind: str, step: dict, value: str):
         minimum = float(step.get("min", step.get("threshold", value or 0.8)))
         _note(session, {"prompt_coverage": report})
         ok = report["tokens"] > 0 and report["coverage"] >= minimum
+        understood = round(report["coverage"] * report["tokens"])
+        fragments = report.get("fragments") or []
         return ok, (f"prompt coverage {report['coverage']:.0%} "
-                    f"({report['tokens'] - len(report['unmatched'])}/{report['tokens']} "
-                    f"tokens, min {minimum:.0%})"
+                    f"({understood}/{report['tokens']} tokens, min {minimum:.0%})"
                     + (f"; unmatched: {', '.join(report['unmatched'][:8])}"
-                       if report["unmatched"] else ""))
+                       if report["unmatched"] else "")
+                    + (f"; reported as word fragments (tokenizer split a word?): "
+                       f"{', '.join(fragments[:8])}" if fragments else ""))
 
     if kind == "deterministic":
         request = getattr(session, "_last_api_request", None)
