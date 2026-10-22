@@ -263,6 +263,9 @@ async def evaluate_assert(session, step: dict, state: dict) -> tuple[bool, str]:
         ok, detail = await assert_selector(session, kind, selector, value)
         return ok, f"{note}{detail}" if note else detail
 
+    handled = await assert_content(session, kind, step, value)
+    if handled is not None:
+        return handled
     handled = await assert_page_health(session, kind, step, value, state)
     if handled is not None:
         return handled
@@ -526,25 +529,42 @@ async def assert_screenshot(session, kind: str, selector: str,
     if not name:
         raise SessionRefused("invalid_step", "assert_screenshot needs a 'name'")
     threshold = float(step.get("threshold", 0.005) or 0.0)
-    shots = await session._call_optional("diff_screenshot", name, selector,
-                                         threshold, step.get("masks") or [])
+    extra = {}
+    if step.get("normalize_width"):
+        # Compare both images resampled to this width: for a canvas whose
+        # pixel size follows the page layout but whose picture must not change.
+        extra["normalize_width"] = int(step["normalize_width"])
+    shots = await session._call_optional(
+        "diff_screenshot", name, selector, threshold, step.get("masks") or [],
+        baseline_dir=step.get("baseline_dir") or "",
+        update=bool(step.get("update_baseline")),
+        tolerance=int(step.get("tolerance", 16)), **extra)
+    if shots.get("size_mismatch"):
+        return False, (f"capture is {shots.get('current_size')} but baseline {name!r} is "
+                       f"{shots.get('baseline_size')} — the element laid out at another "
+                       f"size or shape; no pixel comparison was possible")
+    if shots.get("baseline_updated"):
+        return True, f"baseline {name!r} rewritten (update mode) — nothing asserted"
 
     if shots.get("baseline_created"):
         return True, (f"baseline {name!r} created — no comparison on the first "
                       f"run; re-run to assert")
     if kind == "not_screenshot":
         differing = float(shots.get("diff_pct", 0.0))
-        return differing > threshold, (
+        return differing / 100.0 > threshold, (
             f"differs from baseline {name!r} by {differing:.2f}% "
             f"(want > {threshold * 100:.2f}%)")
+    if shots.get("error"):
+        return False, f"screenshot baseline {name!r}: {shots['error']}"
     diff_pct = float(shots.get("diff_pct", 0.0))
-    if diff_pct <= threshold:
+    if diff_pct / 100.0 <= threshold:
         return True, (f"matches baseline {name!r} ({diff_pct:.2f}% differing, "
                       f"threshold {threshold * 100:.2f}%)")
     return False, (
         f"differs from baseline {name!r} by {diff_pct:.2f}% "
         f"({shots.get('diff_pixels')} pixels, threshold "
-        f"{threshold * 100:.2f}%) — capture is saved for inspection")
+        f"{threshold * 100:.2f}%) — capture is saved for inspection"
+        + (f" ({shots['diff_path']})" if shots.get("diff_path") else ""))
 
 
 async def assert_selector(session, kind: str, selector: str, value: str) -> tuple[bool, str]:
@@ -712,6 +732,17 @@ async def assert_api_response(session, kind: str, step: dict, value: str) -> tup
         path = (step.get("path") or step.get("json_path") or "")
         expected = (step.get("expected") if step.get("expected") is not None
                     else step.get("value"))
+        op = step.get("op") or ("regex" if step.get("regex") else "")
+        if op:
+            # Typed comparison (equals compares JSON values, not strings).
+            from backend.modules.content_checks import json_path_check
+            try:
+                ok, detail = json_path_check(
+                    payload, path, op, step.get("regex") if op == "regex" and
+                    step.get("regex") else expected)
+            except ValueError as exc:
+                raise SessionRefused("invalid_step", str(exc)) from exc
+            return ok, detail
         got = json_path(payload, path) if path else payload
         if expected is None or expected == "":
             ok = got is not None
@@ -841,3 +872,231 @@ def _contains(haystack, needle) -> bool:
         return all(any(_contains(item, want) for item in haystack)
                    for want in needle)
     return haystack == needle
+
+
+# --------------------------------------------------------------------------
+# Content assertions: JSON schema, SVG structure, text fidelity, prompt
+# coverage, determinism and raster glyph fidelity. The checks themselves are
+# pure functions in ``content_checks`` / ``glyph_raster``; these wrappers only
+# fetch the content to check and format the outcome.
+
+CONTENT_KINDS = ("json_schema", "body", "svg", "text_fidelity", "prompt_coverage",
+                 "deterministic", "glyph_fidelity")
+
+
+def _note(session, data: dict) -> None:
+    """Attach structured evidence to the current assertion's step result."""
+    try:
+        session._assert_data = data
+    except AttributeError:  # pragma: no cover - exotic session doubles
+        pass
+
+
+async def content_source(session, step: dict) -> tuple:
+    """Return ``(text, origin)`` for a content assertion.
+
+    ``selector`` reads the first match's ``outerHTML`` from the live page;
+    otherwise the last ``api`` response is used: ``path`` picks a JSON
+    value, else the full response body.
+    """
+    from backend.modules.content_checks import _MISSING, resolve_path
+
+    selector = (step.get("selector") or "").strip()
+    if selector and (step.get("source") or "page") == "page":
+        html_text = await session._call_optional(
+            "evaluate",
+            "sel => { const el = document.querySelector(sel);"
+            " return el ? el.outerHTML : null; }",
+            selector,
+        )
+        if html_text is None:
+            raise SessionRefused("assertion_failed", f"no element matches {selector!r}")
+        return str(html_text), f"page {selector}"
+    if session._last_api is None:
+        raise SessionRefused("assertion_failed", "no api step ran before this assertion")
+    path = step.get("path") or step.get("json_path") or ""
+    if path:
+        payload = session._last_api.get("json")
+        if payload is None:
+            raise SessionRefused("assertion_failed", "api response was not JSON")
+        got = resolve_path(payload, path)
+        if got is _MISSING:
+            raise SessionRefused("assertion_failed", f"json {path} missing")
+        return (got if isinstance(got, str) else json.dumps(got, ensure_ascii=False)), \
+            f"api json {path}"
+    body = session._last_api.get("body")
+    if body is None:
+        body = session._last_api.get("text") or ""
+    return str(body), "api body"
+
+
+async def assert_content(session, kind: str, step: dict, value: str):
+    from backend.modules import content_checks as cc
+
+    if kind not in CONTENT_KINDS:
+        return None
+
+    if kind == "json_schema":
+        if session._last_api is None:
+            return False, "no api step ran before this assertion"
+        payload = session._last_api.get("json")
+        if payload is None:
+            return False, "api response was not JSON"
+        schema = step.get("schema")
+        if not isinstance(schema, dict):
+            raise SessionRefused("invalid_step", "assert_json_schema needs a 'schema' object")
+        path = step.get("path") or ""
+        target = cc.resolve_path(payload, path) if path else payload
+        if target is cc._MISSING:
+            return False, f"json {path} missing"
+        errors = cc.validate_schema(target, schema, "$" + ("." + path if path else ""))
+        _note(session, {"schema_errors": errors})
+        return (not errors), (f"schema ok ({path or '<root>'})" if not errors else
+                              f"{len(errors)} schema error(s): " + "; ".join(errors[:5]))
+
+    if kind == "body":
+        text, origin = await content_source(session, step)
+        # (ok, label when it holds, label when it does not): a failure must say
+        # what the body actually does, not restate the expectation.
+        checks = []
+        for needle in step.get("contains") or ([] if step.get("regex") else [value] if value
+                                               else []):
+            checks.append((needle in text, f"contains {needle!r}", f"lacks {needle!r}"))
+        for needle in step.get("not_contains") or []:
+            checks.append((needle not in text, f"lacks {needle!r}",
+                           f"contains forbidden {needle!r}"))
+        if step.get("regex"):
+            import re
+            checks.append((re.search(step["regex"], text) is not None,
+                           f"matches /{step['regex']}/", f"does not match /{step['regex']}/"))
+        if not checks:
+            raise SessionRefused("invalid_step",
+                                 "assert_body needs contains, not_contains or regex")
+        failed = [bad for ok, _good, bad in checks if not ok]
+        snippet = text[:160].replace("\n", " ")
+        return (not failed), (f"{origin}: " + ("; ".join(good for _ok, good, _bad in checks)
+                                               if not failed else
+                                               "FAILED " + "; ".join(failed)
+                                               + f" — body starts {snippet!r}"))
+
+    if kind == "svg":
+        text, origin = await content_source(session, step)
+        checks = step.get("checks") or {"no_nan": True, "unique_ids": True}
+        try:
+            results = cc.svg_checks(text, checks)
+        except ValueError as exc:
+            raise SessionRefused("invalid_step", str(exc)) from exc
+        _note(session, {"svg_checks": results})
+        failed = [r for r in results if not r["ok"]]
+        return (not failed), (f"{origin}: {len(results) - len(failed)}/{len(results)} svg "
+                              f"checks passed" + ("" if not failed else "; FAILED "
+                                                  + "; ".join(f"{r['check']}: {r['detail']}"
+                                                              for r in failed)))
+
+    if kind == "text_fidelity":
+        text, origin = await content_source(session, step)
+        expected = str(step.get("expected") or value or "")
+        if not expected:
+            raise SessionRefused("invalid_step", "assert_text_fidelity needs 'expected'")
+        if text.lstrip().startswith("<"):
+            root, error = cc.parse_svg(text)
+            runs = cc.svg_text_runs(root) if root is not None else [text]
+        else:
+            runs = [text]
+        reports = [cc.text_fidelity(expected, run) for run in runs] or \
+            [cc.text_fidelity(expected, "")]
+        best = next((r for r in reports if r["ok"]), None) or min(
+            reports, key=lambda r: (len(r["dropped_marks"]) + r["dropped_spaces"]
+                                    + sum(r["foreign_letters"].values()),
+                                    abs(len(r["actual"]) - len(expected))))
+        _note(session, {"text_fidelity": best})
+        return best["ok"], f"{origin}: {cc.describe_fidelity(best)}"
+
+    if kind == "prompt_coverage":
+        if session._last_api is None:
+            return False, "no api step ran before this assertion"
+        payload = session._last_api.get("json") or {}
+        field = step.get("unmatched_path") or "unmatched_tokens"
+        unmatched = cc.resolve_path(payload, field)
+        if unmatched is cc._MISSING or not isinstance(unmatched, list):
+            return False, f"json {field} missing or not a list"
+        query = step.get("query")
+        if query is None:
+            from urllib.parse import parse_qs, urlsplit
+            url = (getattr(session, "_last_api_request", None) or {}).get("url", "")
+            query = (parse_qs(urlsplit(url).query).get(step.get("param") or "q") or [""])[0]
+        report = cc.prompt_coverage(query, unmatched)
+        minimum = float(step.get("min", step.get("threshold", value or 0.8)))
+        _note(session, {"prompt_coverage": report})
+        ok = report["tokens"] > 0 and report["coverage"] >= minimum
+        understood = round(report["coverage"] * report["tokens"])
+        fragments = report.get("fragments") or []
+        return ok, (f"prompt coverage {report['coverage']:.0%} "
+                    f"({understood}/{report['tokens']} tokens, min {minimum:.0%})"
+                    + (f"; unmatched: {', '.join(report['unmatched'][:8])}"
+                       if report["unmatched"] else "")
+                    + (f"; reported as word fragments (tokenizer split a word?): "
+                       f"{', '.join(fragments[:8])}" if fragments else ""))
+
+    if kind == "deterministic":
+        request = getattr(session, "_last_api_request", None)
+        if not request:
+            return False, "no api step ran before this assertion"
+        runs = max(2, min(int(step.get("runs", value or 3) or 3), 20))
+        path = step.get("path") or ""
+        ignore = step.get("ignore") or []
+
+        def digest(response: dict) -> str:
+            if path or ignore:
+                payload = response.get("json")
+                if payload is None:
+                    return "not-json:" + cc.stable_hash(response.get("body")
+                                                        or response.get("text") or "")
+                return cc.stable_hash(payload, path=path, ignore=ignore)
+            return cc.stable_hash(response.get("body") or response.get("text") or "")
+
+        hashes = [digest(session._last_api)]
+        for _ in range(runs - 1):
+            response = await session._call_optional(
+                "http_request", request["method"], request["url"],
+                headers=request.get("headers") or {}, body=request.get("body"),
+                timeout_ms=int(request.get("timeout_ms", 15000)))
+            hashes.append(digest(response))
+        distinct = sorted(set(hashes))
+        _note(session, {"hashes": hashes})
+        return len(distinct) == 1, (
+            f"{runs} identical responses ({distinct[0][:23]}…)" if len(distinct) == 1 else
+            f"{len(distinct)} distinct results over {runs} runs: "
+            + ", ".join(h[:19] for h in distinct))
+
+    # glyph_fidelity
+    text, origin = await content_source(session, step)
+    expected = str(step.get("expected") or value or "")
+    region = step.get("region") or ""
+    if not expected or not region:
+        raise SessionRefused("invalid_step", "assert_glyph_fidelity needs 'expected' and "
+                                             "'region' (a selector inside the SVG)")
+    result = await session._call_optional(
+        "glyph_compare", text, region, expected,
+        font_path=step.get("font") or step.get("font_path") or "",
+        font_family=step.get("font_family") or "",
+        scale=int(step.get("scale", 4)),
+        artifact_name=step.get("name") or "",
+    )
+    if result.get("error"):
+        _note(session, result)
+        return False, f"{origin}: {result['error']}"
+    from backend.modules.glyph_raster import glyph_verdict
+    ok, reasons = glyph_verdict(
+        result["metrics"], min_coverage=step.get("min_coverage"),
+        min_window_coverage=step.get("min_window_coverage"),
+        max_aspect_delta=step.get("max_aspect_delta"),
+        match_word_gaps=step.get("match_word_gaps"))
+    _note(session, result)
+    m = result["metrics"]
+    summary = (f"coverage {m['coverage']:.3f}, window {m['min_window_coverage']:.3f}, "
+               f"width Δ {m['aspect_ratio_delta']:.1%}, gaps "
+               f"{m['word_gaps_actual']}/{m['word_gaps_reference']}")
+    return ok, (f"{origin} {region}: {expected!r} drawn as the reference shapes it ({summary})"
+                if ok else f"{origin} {region}: {expected!r} does not match the reference "
+                f"shaping — {'; '.join(reasons)} ({summary})")

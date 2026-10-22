@@ -20,6 +20,7 @@ from cli.jambu_cli import core
 def _export_findings(
     args, url: str, done_findings: list | None, fallback_findings: list,
     by_severity: dict, dismissed_count: int, mode: str,
+    errors: list | None = None,
 ) -> int:
     """Write SARIF / canonical JSON / Markdown exports when requested.
 
@@ -46,21 +47,28 @@ def _export_findings(
 
     raw = done_findings if done_findings is not None else fallback_findings
     findings = [Finding.from_dict(f) for f in raw]
+    errors = list(errors or [])
     summary = {
         "mode": mode,
+        "status": "incomplete" if errors else "complete",
         "total_findings": len(findings),
         "by_severity": by_severity,
         "dismissed_count": dismissed_count,
         "engine": core.get_engine_url(),
     }
+    if errors:
+        summary["failed"] = "; ".join(
+            f"{e.get('employee', '?')}: {e.get('error', 'failed')}" for e in errors)
 
     if args.sarif:
         sarif = findings_to_sarif(
             findings, audited_url=url, run_id=f"jambu-{int(time.time())}",
+            errors=errors,
         )
         core._write_export(args.sarif, sarif_to_json(sarif), "SARIF")
     if args.json_out:
-        body = findings_to_canonical_json(findings, audited_url=url, summary=summary)
+        body = findings_to_canonical_json(findings, audited_url=url, summary=summary,
+                                          errors=errors)
         core._write_export(args.json_out, json.dumps(body, indent=2, default=str), "JSON")
     if args.markdown:
         md = findings_to_markdown(findings, audited_url=url, summary=summary)
@@ -93,6 +101,10 @@ def cmd_audit(args, mode: str = "full") -> int:
     done_findings = None
     by_severity: dict = {}
     dismissed_count = 0
+    # Every failed employee / pipeline step. A failure is never a clean
+    # result: it is printed, exported and turns the exit code non-zero.
+    errors: list[dict] = []
+    saw_done = False
     try:
         buffer = ""
         for chunk in iter(lambda: resp.read(4096), b""):
@@ -143,15 +155,41 @@ def cmd_audit(args, mode: str = "full") -> int:
 
                 elif event_type == "employee_error":
                     name = data.get("employee", "?")
-                    error = data.get("error", "?")
-                    print(f"\n   ❌ {name}: {error[:100]}")
+                    error = str(data.get("error", "?"))
+                    partial = data.get("findings") or []
+                    print(f"\n   ❌ {name} FAILED ({data.get('kind', 'error')}): {error[:160]}")
+                    if partial:
+                        print(f"      (kept {len(partial)} deterministic rule finding(s))")
+                        for f in partial:
+                            sev = f.get("severity", "?")
+                            icon = core.SEVERITY_ICONS.get(sev, "?")
+                            label = core.SEVERITY_LABELS.get(sev, "?")
+                            print(f"      {icon} [{label}] {f.get('title', '?')}")
+                        findings.extend(partial)
+                    errors.append({"employee": name, "kind": data.get("kind", "error"),
+                                   "error": error, "partial_findings": len(partial)})
+
+                elif event_type == "product_context_error":
+                    error = str(data.get("error", "?"))
+                    print(f"\n   ❌ Product context FAILED: {error[:160]}")
 
                 elif event_type == "done":
+                    saw_done = True
+                    # The done event is authoritative when it lists errors
+                    # (it also covers product-context failures).
+                    if data.get("errors"):
+                        errors = list(data["errors"])
                     total = data.get("total_findings", 0)
                     by_severity = data.get("by_severity", {})
                     dismissed_count = data.get("dismissed_count", 0)
                     done_findings = data.get("findings")
                     print(f"\n{'─' * 60}")
+                    if errors:
+                        print(f"   ⚠ INCOMPLETE: {len(errors)} step(s) failed — "
+                              f"{total} finding(s) is a lower bound, not a clean result")
+                        for e in errors:
+                            print(f"      ❌ {e.get('employee', '?')}: "
+                                  f"{str(e.get('error', 'failed'))[:120]}")
                     print(f"   📋 TOTAL: {total} findings")
                     sev_parts = []
                     for s in core.SEVERITY_ORDER:
@@ -173,8 +211,14 @@ def cmd_audit(args, mode: str = "full") -> int:
         print("\n\n   ⚠ Cancelled by user")
         return core.EXIT_ENGINE_ERROR
 
+    if not saw_done:
+        errors.append({"employee": "engine", "kind": "stream_truncated",
+                       "error": "audit stream ended without a 'done' event"})
+        print("\n   ❌ Audit stream ended without a 'done' event")
+
     code = _export_findings(
         args, url, done_findings, findings, by_severity, dismissed_count, mode,
+        errors=errors,
     )
     if code != core.EXIT_OK:
         return code
@@ -188,6 +232,14 @@ def cmd_audit(args, mode: str = "full") -> int:
             print(f"\n❌ Gate failed: {failing} finding(s) at or above '{fail_on}'")
             return core.EXIT_GATE_FAILED
         print(f"\n✅ Gate passed: no findings at or above '{fail_on}'")
+
+    if errors:
+        if getattr(args, "allow_partial", False):
+            print(f"\n⚠ {len(errors)} step(s) failed; --allow-partial keeps exit 0")
+        else:
+            print(f"\n❌ Audit incomplete: {len(errors)} step(s) failed "
+                  f"(exit {core.EXIT_ENGINE_ERROR}; pass --allow-partial to accept)")
+            return core.EXIT_ENGINE_ERROR
 
     if findings and mode == "full" and not (args.sarif or args.json_out or args.markdown):
         print(f"\n💡 Tip: jambu share <id> to generate a shareable link")

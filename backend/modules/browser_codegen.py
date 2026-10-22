@@ -144,7 +144,11 @@ def _step_to_ts(step: dict, state: Optional[dict] = None) -> list[str]:
         fn = "check" if action == "check" else "uncheck"
         lines.append(f"  await page.getByLabel({_s(target)}).{fn}();")
     elif action in ("wait", "wait_for"):
-        if step.get("js"):
+        pause = step.get("ms", step.get("duration_ms", step.get("sleep_ms")))
+        has_condition = any(step.get(k) for k in ("js", "selector", "text", "url_contains"))
+        if pause not in (None, "") and not has_condition:
+            lines.append(f"  await page.waitForTimeout({int(float(pause))});")
+        elif step.get("js"):
             lines.append(f"  await page.waitForFunction({_s(step['js'])});")
         elif step.get("selector"):
             lines.append(f"  await page.waitForSelector({_s(step['selector'])});")
@@ -560,6 +564,9 @@ def _parse_line(line: str, symbols: dict):
         return {"action": "wait", "url_contains": pattern}
     if "page.waitForLoadState(" in stripped:
         return {"action": "wait"}
+    wait_ms = re.search(r"page\.waitForTimeout\(\s*(\d+)\s*\)", stripped)
+    if wait_ms:
+        return {"action": "wait", "ms": int(wait_ms.group(1))}
     wait_resp = re.search(r"page\.waitFor(?:Response|Request)\((.+)\)", stripped)
     if wait_resp and (pattern := _quoted(wait_resp.group(1), 0)):
         return {"action": "assert_made_request", "value": pattern}
