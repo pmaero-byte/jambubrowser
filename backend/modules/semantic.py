@@ -204,6 +204,12 @@ class SemanticIndex:
             log.info("semantic index failed to build: %r", e)
             return False
 
+    def get_document(self, docid: str) -> Optional[dict]:
+        for doc in self.documents:
+            if str(doc.get("id")) == str(docid) or str(doc.get("url")) == str(docid):
+                return doc
+        return None
+
     def search(self, query: str, limit: int = 10) -> List[dict]:
         """Dense retrieval, cosine similarity, most similar first."""
         if not self.available or self._vectors is None or not self.documents:
@@ -294,6 +300,15 @@ class HybridIndex:
     @property
     def available(self) -> bool:
         return bool(getattr(self.semantic, "available", False))
+
+    def get_document(self, docid: str) -> Optional[dict]:
+        if self.lexical is not None and hasattr(self.lexical, "get_document"):
+            doc = self.lexical.get_document(docid)
+            if doc:
+                return doc
+        if self.semantic is not None:
+            return self.semantic.get_document(docid)
+        return None
 
     def search(self, query: str, limit: int = 10) -> List[dict]:
         lexical_rows = self.lexical.search(query, limit=limit) if self.lexical else []
