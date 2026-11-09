@@ -125,8 +125,6 @@ impl CdpClient {
 
     /// Go back in tab history.
     pub async fn go_back(&self, tab: &Tab) -> Result<(), String> {
-        // CDP uses Page.navigateToHistoryEntry with a delta of -1
-        // First, get the current history index
         let history = self
             .send_cdp(
                 &tab.ws_url,
@@ -134,15 +132,12 @@ impl CdpClient {
                 json!({}),
             )
             .await?;
-        let current_idx = history["currentIndex"].as_i64().unwrap_or(0);
-        if current_idx <= 0 {
-            return Err("No previous page in history".into());
-        }
-        // Navigate to the previous entry
+        let entry_id = history_entry_id(&history, -1)
+            .ok_or_else(|| "No previous page in history".to_string())?;
         self.send_cdp(
             &tab.ws_url,
             "Page.navigateToHistoryEntry",
-            json!({"entryId": current_idx - 1}),
+            json!({"entryId": entry_id}),
         )
         .await?;
         Ok(())
@@ -157,15 +152,12 @@ impl CdpClient {
                 json!({}),
             )
             .await?;
-        let current_idx = history["currentIndex"].as_i64().unwrap_or(0);
-        let entries = history["entries"].as_array().map(|a| a.len()).unwrap_or(0) as i64;
-        if current_idx + 1 >= entries {
-            return Err("No next page in history".into());
-        }
+        let entry_id = history_entry_id(&history, 1)
+            .ok_or_else(|| "No next page in history".to_string())?;
         self.send_cdp(
             &tab.ws_url,
             "Page.navigateToHistoryEntry",
-            json!({"entryId": current_idx + 1}),
+            json!({"entryId": entry_id}),
         )
         .await?;
         Ok(())
@@ -450,6 +442,20 @@ impl CdpClient {
     }
 }
 
+/// Resolve the CDP `entryId` for the history entry `delta` steps from
+/// `currentIndex`. Entry ids are opaque and non-sequential, so they must
+/// be read from `entries[target].id`, never derived from the index.
+/// Returns `None` when history is missing/empty or the target is out of bounds.
+fn history_entry_id(history: &Value, delta: i64) -> Option<i64> {
+    let current_idx = history["currentIndex"].as_i64()?;
+    let entries = history["entries"].as_array()?;
+    let target_idx = current_idx.checked_add(delta)?;
+    if target_idx < 0 || target_idx as usize >= entries.len() {
+        return None;
+    }
+    entries[target_idx as usize]["id"].as_i64()
+}
+
 /// Simple URL encoding for the `url` query parameter in CDP HTTP requests.
 fn urlencoding(s: &str) -> String {
     // Only encode what's needed for the `url=` query param
@@ -533,4 +539,40 @@ where
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn history() -> Value {
+        json!({
+            "currentIndex": 1,
+            "entries": [
+                {"id": 42, "url": "https://a.example/"},
+                {"id": 1007, "url": "https://b.example/"},
+                {"id": 9001, "url": "https://c.example/"}
+            ]
+        })
+    }
+
+    #[test]
+    fn history_entry_id_uses_entry_id_not_index() {
+        assert_eq!(history_entry_id(&history(), -1), Some(42));
+        assert_eq!(history_entry_id(&history(), 1), Some(9001));
+    }
+
+    #[test]
+    fn history_entry_id_bounds_and_missing_data() {
+        let at_start = json!({"currentIndex": 0, "entries": [{"id": 42}]});
+        assert_eq!(history_entry_id(&at_start, -1), None);
+        let at_end = json!({"currentIndex": 0, "entries": [{"id": 42}]});
+        assert_eq!(history_entry_id(&at_end, 1), None);
+        assert_eq!(history_entry_id(&json!({}), -1), None);
+        assert_eq!(history_entry_id(&json!({"currentIndex": 0}), 1), None);
+        assert_eq!(
+            history_entry_id(&json!({"currentIndex": 0, "entries": []}), 1),
+            None
+        );
+    }
 }

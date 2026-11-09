@@ -274,9 +274,9 @@ pub fn run() {
 
                 let (profile_dir, persistent) = chromium::manager::initial_profile_dir();
 
-                match ChromiumManager::launch(&chrome_path, 9222, profile_dir, persistent).await {
+                match ChromiumManager::launch(&chrome_path, 0, profile_dir, persistent).await {
                     Ok(mgr) => {
-                        eprintln!("[jambu] Chromium engine started on port 9222");
+                        eprintln!("[jambu] Chromium engine started on port {}", mgr.debug_port());
                         let mut locked = state.lock().await;
                         *locked = Some(mgr);
                         let _ = handle.emit("browser-ready", ());

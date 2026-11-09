@@ -15,7 +15,7 @@ that powers both the audits and free-form research.
 
 ### Prerequisites
 - Python 3.9+
-- Node.js 18+
+- Node.js 20+
 - **Ollama** (for local LLM via Ollama) **or** **MLX** (Apple Silicon-native inference, recommended)
 
 ### Backend
@@ -99,12 +99,26 @@ V2 endpoints exposed by the running engine:
 
 ### Test
 ```bash
-# Unit tests (~22 tests)
-python3 -m pytest tests/test_backend.py -v
+# One-time bootstrap: creates .venv, installs dev deps, installs frontend deps
+make install
 
-# E2E tests (~30 tests, requires running backend)
-python3 -m pytest tests/test_e2e.py -v
+# Core backend suite (117 tests, mock providers, no engine needed)
+make test-backend
+
+# Frontend typecheck + lint + vitest (109 tests in the browser/layout/store suites)
+make test-browser
+
+# Full inventory: 117 Python test files under tests/, 50 frontend test files
 ```
+
+### Docker
+```bash
+docker build -t jambubrowser-engine .
+docker run -p 8001:8001 jambubrowser-engine   # serves /health on :8001
+docker-compose config                          # validates the compose stack
+```
+
+Release process and verified gates: see `docs/RELEASE.md`.
 
 ---
 

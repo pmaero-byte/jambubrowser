@@ -1,0 +1,9 @@
+# Dev/test dependencies — runtime deps plus the test/lint toolchain.
+# CI and `make install` use this file; production installs use
+# requirements.txt only. Canonical runtime source: pyproject.toml.
+-r requirements.txt
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+anyio>=4.0.0
+ruff>=0.1.0
+mypy>=1.7.0

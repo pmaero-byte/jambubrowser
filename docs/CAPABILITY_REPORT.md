@@ -66,3 +66,25 @@ Scale figures were also understated: backend is **57,755** LOC across 196 files
 ## 3. Next finishable increments
 Two-node smoke test (P2P/mesh/consensus) → native-tab parity + hardening (downloads/find/copy/crash-fallback/privacy review) → MeshPay receipt export → Stripe checkout or roadmap label → AEGIS mutation surface (product decision).
 Full per-breadth depth audit: `docs/BREADTH_DEPTH.md`.
+
+## 4. Release-readiness addendum (2026-11-10)
+
+Fixes landed after the counts above; see `docs/CHANGELOG.md` and
+`docs/RELEASE.md` for detail.
+
+- CDP history navigation (`entryId` bug), hardcoded debug-port 9222
+  collision, DevTools tab-ID bug, and the unsanitised Reader Mode
+  rendering path are fixed and live-verified (Tauri launch, headless
+  Chrome, DOMPurify payload probe).
+- Favicons no longer leak hostnames to Google's favicon service.
+- Packaging is single-source: `pyproject.toml` canonical,
+  `requirements.txt` runtime mirror, new `requirements-dev.txt`
+  for tests/CI, `make install` bootstrap for fresh checkouts.
+- Docker image verified end-to-end (build, healthy container as
+  `jambu`, `/health` v3.4.0); torch is CPU-only in the image.
+- Corrected test inventory: **117** Python test files under
+  `tests/` and **50** frontend test files (earlier 126/48 figures
+  and the README's "~22 tests" were stale).
+- Still open from §2: native-tab Phase-3/4 parity, publishing and
+  signing (human credentials), Stripe checkout, Windows/Linux
+  desktop verification.

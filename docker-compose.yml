@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # ── Jambubrowser Engine ──────────────────────────────────────────
   engine:
@@ -11,9 +9,16 @@ services:
       - JAMBU_LLM_PROVIDER=ollama
       - SEARXNG_URL=http://searxng:8080/search
       - OLLAMA_BASE_URL=http://ollama:11434
+    # ollama is profile-gated (`llm`): `required: false` (Compose
+    # spec, Compose v2.20+) makes this dependency optional, so the
+    # engine starts without the profile instead of hard-failing on
+    # the missing service. With `--profile llm` it still waits for
+    # ollama to become healthy. On older Compose without `required`
+    # support, delete this depends_on block and use the profile.
     depends_on:
       ollama:
         condition: service_healthy
+        required: false
     networks:
       - searxng-net
     restart: unless-stopped
@@ -74,7 +79,6 @@ services:
       - searxng-net
     volumes:
       - sandbox-code:/code:ro
-      - sandbox-tmp:/tmp:rw
     command: python -c "print('Jambu Sandbox ready')"
     security_opt:
       - no-new-privileges:true
@@ -96,13 +100,13 @@ services:
     working_dir: /app
     command: >
       sh -c "
-        pip install pytest pytest-asyncio httpx cryptography psutil fastapi uvicorn pydantic sentence-transformers numpy sqlite-vec crawl4ai &&
+        pip install -r requirements-dev.txt &&
         cd /app &&
         python -m pytest tests/ -v --tb=short
       "
     environment:
-      - JAMBU_DB_PATH=:memory:
-      - JAMBU_VAULT_KEY=test-key-do-not-use-in-production-32bytes!
+      - "JAMBU_DB_PATH=:memory:"
+      - "JAMBU_VAULT_KEY=test-key-do-not-use-in-production-32bytes!"
     profiles:
       - test
 

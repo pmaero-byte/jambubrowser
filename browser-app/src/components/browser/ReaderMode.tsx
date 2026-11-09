@@ -1,6 +1,36 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { X, BookOpen } from "lucide-react";
+import DOMPurify from "dompurify";
+
+/**
+ * Sanitize extracted article HTML before it reaches
+ * `dangerouslySetInnerHTML`. The extraction script runs in the page
+ * and only strips a few tags, so untrusted markup (event handlers,
+ * `javascript:` links, iframes, forms, SVG/MathML vectors) must be
+ * removed here. DOMPurify's defaults already drop event-handler
+ * attributes and dangerous URL schemes; the explicit forbids below
+ * are defence-in-depth so those vectors stay blocked even if the
+ * default allowlists change.
+ */
+export function sanitizeArticleHtml(html: string): string {
+  return DOMPurify.sanitize(html, {
+    FORBID_TAGS: [
+      "script", "style", "noscript", "iframe", "frame", "frameset",
+      "form", "input", "button", "textarea", "select", "option",
+      "object", "embed", "svg", "math", "link", "meta", "base", "title",
+    ],
+    FORBID_ATTR: [
+      "style", "srcset", "formaction", "xlink:href",
+      "onclick", "ondblclick", "onerror", "onload", "onmouseover",
+      "onmouseenter", "onmouseleave", "onfocus", "onblur",
+      "onanimationstart", "onanimationend", "ontransitionend",
+      "onsubmit", "onchange", "oninput", "onkeydown", "onkeyup",
+      "onkeypress", "ontoggle", "onpointerdown", "onpointerup",
+      "onwheel", "onscroll", "onresize", "onhashchange", "onpopstate",
+    ],
+  });
+}
 
 interface Article {
   title: string;
@@ -58,9 +88,20 @@ const READER_SCRIPT = `(function() {
     }
   }
   if (!best) return null;
-  // Strip scripts and styles from the extracted subtree.
+  // Strip scripts and styles from the extracted subtree. This is a
+  // first pass only — the React side re-sanitizes with DOMPurify
+  // before rendering, so anything missed here is still removed.
   const clone = best.cloneNode(true);
-  clone.querySelectorAll("script, style, noscript, iframe").forEach(n => n.remove());
+  clone.querySelectorAll("script, style, noscript, iframe, form, object, embed, svg, math").forEach(n => n.remove());
+  clone.querySelectorAll("*").forEach(el => {
+    for (const attr of Array.from(el.attributes || [])) {
+      const name = attr.name.toLowerCase();
+      const value = (attr.value || "").trim().toLowerCase();
+      if (name.startsWith("on") || ((name === "href" || name === "src" || name === "xlink:href") && /^(javascript|vbscript|data\\s*:\\s*text\\/html)/.test(value))) {
+        el.removeAttribute(attr.name);
+      }
+    }
+  });
   return {
     title: document.title || "",
     byline: (document.querySelector('meta[name="author"]') || {}).content || "",
@@ -78,6 +119,11 @@ export function ReaderMode({ tabId, open, onClose }: {
   const [article, setArticle] = useState<Article | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const sanitizedContentHtml = useMemo(
+    () => (article ? sanitizeArticleHtml(article.contentHtml) : ""),
+    [article],
+  );
 
   useEffect(() => {
     if (!open || !tabId) return;
@@ -183,7 +229,7 @@ export function ReaderMode({ tabId, open, onClose }: {
                 </div>
                 <div
                   className="space-y-4 [&_a]:text-accent [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-accent/40 [&_blockquote]:pl-4 [&_blockquote]:italic [&_h2]:mt-8 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mt-6 [&_h3]:text-lg [&_h3]:font-semibold [&_img]:my-4 [&_img]:max-w-full [&_img]:rounded-lg [&_p]:text-foreground/85 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-muted/30 [&_pre]:p-3 [&_pre]:text-xs [&_ul]:list-disc [&_ul]:pl-6"
-                  dangerouslySetInnerHTML={{ __html: article.contentHtml }}
+                  dangerouslySetInnerHTML={{ __html: sanitizedContentHtml }}
                 />
                 <div className="mt-8 border-t border-border/30 pt-4 text-xs text-muted-foreground/50">
                   Original: <a href={article.sourceUrl} target="_blank" rel="noreferrer" className="text-accent hover:underline">{article.sourceUrl}</a>

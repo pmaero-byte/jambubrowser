@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { ChevronRight, ChevronDown, FileCode, RefreshCw, AlertTriangle } from "lucide-react";
-import { useDevtoolsStore } from "../../store/devtoolsStore";
+import { useAppStore } from "../../store/appStore";
 
 interface DomNode {
   tag: string | null;
@@ -54,14 +54,14 @@ const EXTRACT_SCRIPT = `(function(){
 const pathKey = (path: number[]): string => path.join(".");
 
 export function ElementsTab() {
-  const { activeTab } = useDevtoolsStore();
+  const browserTabId = useAppStore((s) => s.activeBrowserTabId);
   const [state, setState] = useState<ElementsState>({
     root: null, loading: false, error: null, selected: null, expanded: new Set(["0"]), rev: 0,
   });
   const abortRef = useRef<AbortController | null>(null);
 
   const refresh = useCallback(async () => {
-    if (!activeTab) return;
+    if (!browserTabId) return;
     abortRef.current?.abort();
     const ctrl = new AbortController();
     abortRef.current = ctrl;
@@ -71,7 +71,7 @@ export function ElementsTab() {
         core: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> };
       };
       const raw = await tauri.core.invoke("browser_evaluate", {
-        tabId: activeTab,
+        tabId: browserTabId,
         expression: EXTRACT_SCRIPT,
       });
       if (ctrl.signal.aborted) return;
@@ -86,7 +86,7 @@ export function ElementsTab() {
       if (ctrl.signal.aborted) return;
       setState((s) => ({ ...s, loading: false, error: String(e) }));
     }
-  }, [activeTab]);
+  }, [browserTabId]);
 
   useEffect(() => {
     refresh();
@@ -109,7 +109,7 @@ export function ElementsTab() {
         <div className="flex-1" />
         <button
           onClick={refresh}
-          disabled={state.loading}
+          disabled={state.loading || !browserTabId}
           className="rounded-md p-1 text-muted-foreground/50 transition-all duration-150 hover:bg-muted/30 hover:text-foreground disabled:opacity-40"
           title="Refresh DOM"
         >
@@ -134,7 +134,13 @@ export function ElementsTab() {
             onSelect={(key) => setState((s) => ({ ...s, selected: key }))}
           />
         )}
-        {!state.error && !state.root && !state.loading && (
+        {!browserTabId && (
+          <div className="flex flex-col items-center justify-center py-8 text-muted-foreground/40">
+            <FileCode size={24} className="mb-2" />
+            <span className="text-[10px]">No active browser tab.</span>
+          </div>
+        )}
+        {!!browserTabId && !state.error && !state.root && !state.loading && (
           <div className="flex flex-col items-center justify-center py-8 text-muted-foreground/40">
             <FileCode size={24} className="mb-2" />
             <span className="text-[10px]">No DOM to display.</span>

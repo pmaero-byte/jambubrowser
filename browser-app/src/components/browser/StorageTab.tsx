@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { Database, RefreshCw, Trash2, AlertTriangle, Cookie, HardDrive, Layers } from "lucide-react";
-import { useDevtoolsStore } from "../../store/devtoolsStore";
+import { useAppStore } from "../../store/appStore";
 
 type StorageKind = "localStorage" | "sessionStorage" | "cookies";
 
@@ -21,7 +21,7 @@ const SCRIPTS: Record<StorageKind, string> = {
 };
 
 export function StorageTab() {
-  const { activeTab } = useDevtoolsStore();
+  const browserTabId = useAppStore((s) => s.activeBrowserTabId);
   const [kind, setKind] = useState<StorageKind>("localStorage");
   const [state, setState] = useState<StorageState>({
     kind: "localStorage", data: [], loading: false, error: null, rev: 0,
@@ -29,7 +29,7 @@ export function StorageTab() {
   const abortRef = useRef<AbortController | null>(null);
 
   const refresh = useCallback(async () => {
-    if (!activeTab) return;
+    if (!browserTabId) return;
     abortRef.current?.abort();
     const ctrl = new AbortController();
     abortRef.current = ctrl;
@@ -39,7 +39,7 @@ export function StorageTab() {
         core: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> };
       };
       if (kind === "cookies") {
-        const raw = await tauri.core.invoke("browser_get_cookies", { tabId: activeTab });
+        const raw = await tauri.core.invoke("browser_get_cookies", { tabId: browserTabId });
         if (ctrl.signal.aborted) return;
         const arr = Array.isArray(raw) ? (raw as Array<Record<string, unknown>>) : [];
         const data = arr.map((c) => ({
@@ -49,7 +49,7 @@ export function StorageTab() {
         setState((s) => ({ ...s, kind, data, loading: false, error: null }));
       } else {
         const raw = await tauri.core.invoke("browser_evaluate", {
-          tabId: activeTab,
+          tabId: browserTabId,
           expression: SCRIPTS[kind],
         });
         if (ctrl.signal.aborted) return;
@@ -61,30 +61,30 @@ export function StorageTab() {
       if (ctrl.signal.aborted) return;
       setState((s) => ({ ...s, kind, loading: false, error: String(e) }));
     }
-  }, [activeTab, kind]);
+  }, [browserTabId, kind]);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
 
   const clearKind = useCallback(async () => {
-    if (!activeTab) return;
+    if (!browserTabId) return;
     if (!confirm(`Clear all ${kind}?`)) return;
     const tauri = (window as unknown as Record<string, unknown>).__TAURI__ as {
       core: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> };
     };
     if (kind === "cookies") {
-      try { await tauri.core.invoke("browser_clear_cookies", { tabId: activeTab }); } catch { /* */ }
+      try { await tauri.core.invoke("browser_clear_cookies", { tabId: browserTabId }); } catch { /* */ }
     } else {
       try {
         await tauri.core.invoke("browser_evaluate", {
-          tabId: activeTab,
+          tabId: browserTabId,
           expression: `try { ${kind}.clear(); } catch(e){}`,
         });
       } catch { /* */ }
     }
     refresh();
-  }, [activeTab, kind, refresh]);
+  }, [browserTabId, kind, refresh]);
 
   return (
     <div className="flex h-full flex-col">
@@ -93,14 +93,14 @@ export function StorageTab() {
         <span className="text-[11px] text-muted-foreground/70 font-medium">Storage</span>
         <div className="flex-1" />
         <button
-          onClick={clearKind} disabled={state.loading}
+          onClick={clearKind} disabled={state.loading || !browserTabId}
           title={`Clear all ${state.kind}`}
           className="rounded-md p-1 text-muted-foreground/50 transition-all duration-150 hover:bg-red-500/15 hover:text-red-400 disabled:opacity-40"
         >
           <Trash2 size={11} />
         </button>
         <button
-          onClick={refresh} disabled={state.loading}
+          onClick={refresh} disabled={state.loading || !browserTabId}
           className="rounded-md p-1 text-muted-foreground/50 transition-all duration-150 hover:bg-muted/30 hover:text-foreground disabled:opacity-40"
           title="Refresh"
         >
@@ -119,7 +119,13 @@ export function StorageTab() {
             <span>{state.error}</span>
           </div>
         )}
-        {!state.error && state.data.length === 0 && !state.loading && (
+        {!browserTabId && (
+          <div className="flex flex-col items-center justify-center py-8 text-muted-foreground/40">
+            <Database size={24} className="mb-2" />
+            <span className="text-[10px]">No active browser tab.</span>
+          </div>
+        )}
+        {!!browserTabId && !state.error && state.data.length === 0 && !state.loading && (
           <div className="flex flex-col items-center justify-center py-8 text-muted-foreground/40">
             <Database size={24} className="mb-2" />
             <span className="text-[10px]">No entries in {state.kind}.</span>

@@ -28,7 +28,8 @@
 # ---------------------------------------------------------------------------
 
 REPO_ROOT   := $(shell pwd)
-PYTHON      := $(REPO_ROOT)/mlx-venv/bin/python3
+# Prefer legacy mlx-venv, then canonical .venv, else system python3.
+PYTHON      := $(shell if [ -x "$(REPO_ROOT)/mlx-venv/bin/python3" ]; then echo "$(REPO_ROOT)/mlx-venv/bin/python3"; elif [ -x "$(REPO_ROOT)/.venv/bin/python3" ]; then echo "$(REPO_ROOT)/.venv/bin/python3"; else echo python3; fi)
 BROWSER_APP := $(REPO_ROOT)/browser-app
 TESTS       := $(REPO_ROOT)/tests
 
@@ -45,6 +46,14 @@ export PYTHONPATH         := $(REPO_ROOT)
 # Core unit/integration tests — kept in sync with .github/workflows/test.yml
 # (the backend job). These are the honest green set.
 CORE_TESTS := tests/test_backend.py tests/test_llm_layer.py tests/test_memory_system.py tests/test_agent_loop.py
+
+.PHONY: install
+install:
+	@echo "==> creating .venv and installing dev deps (runtime + test toolchain)"
+	[ -d .venv ] || python3 -m venv .venv
+	.venv/bin/python -m pip install --upgrade pip
+	.venv/bin/python -m pip install -r requirements-dev.txt
+	cd $(BROWSER_APP) && npm ci
 
 .PHONY: test
 test: test-backend test-browser

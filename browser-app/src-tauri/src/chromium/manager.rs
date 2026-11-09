@@ -49,6 +49,19 @@ pub fn uuid_v4_like() -> String {
 }
 use super::tab::{Tab, TabInfo};
 
+/// Ask the OS for a currently-free localhost port. A fixed 9222
+/// collides with other Chromium browsers (e.g. Brave/Chrome already
+/// listening there returns 404 to our CDP probe and launch fails),
+/// so callers pass 0 and we bind port 0 to get an unused port.
+/// The listener is dropped before Chrome binds; the small race is
+/// far less likely than a fixed-port collision.
+fn pick_free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|l| l.local_addr())
+        .map(|a| a.port())
+        .unwrap_or(9222)
+}
+
 /// Manages a Chromium browser process and its tabs.
 pub struct ChromiumManager {
     /// Path to the Chrome/Chromium binary. Kept around so restart() can
@@ -90,7 +103,7 @@ impl ChromiumManager {
     ) -> Result<Self, String> {
         // Generate a short random profile name for isolation
         let port = if debug_port == 0 {
-            rand::thread_rng().gen_range(9222..9999)
+            pick_free_port()
         } else {
             debug_port
         };

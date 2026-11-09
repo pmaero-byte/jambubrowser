@@ -1,6 +1,6 @@
 [package]
 name = "browser-app"
-version = "0.1.0"
+version = "3.4.0"
 description = "Jambubrowser — Sovereign Autonomous Research Agent"
 authors = ["Jambu AI <hi@jambu.ai>"]
 license = "MIT"

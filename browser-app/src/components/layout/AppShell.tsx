@@ -54,6 +54,7 @@ export function AppShell({ children, inspector }: AppShellProps) {
           transition={{ type: "spring", stiffness: 400, damping: 30 }}
           className="shrink-0 overflow-hidden border-r border-border bg-card"
           aria-hidden={!sidebarOpen}
+          inert={!sidebarOpen}
         >
           <div className="w-[240px] h-full">
             <Sidebar />
@@ -73,6 +74,7 @@ export function AppShell({ children, inspector }: AppShellProps) {
           transition={{ type: "spring", stiffness: 400, damping: 30 }}
           className="shrink-0 overflow-hidden border-l border-border bg-card"
           aria-hidden={!inspectorOpen}
+          inert={!inspectorOpen}
         >
           <div className="w-[320px] h-full overflow-hidden">{inspectorOpen && inspector}</div>
         </motion.aside>

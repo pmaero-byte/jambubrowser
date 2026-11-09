@@ -58,10 +58,15 @@ function saveJson(key: string, value: unknown): void {
 
 // ── Favicon URL helper ───────────────────────────────────────────
 
-function faviconUrl(url: string): string {
+export function faviconUrl(url: string): string {
   try {
-    const host = new URL(url).hostname;
-    return `https://www.google.com/s2/favicons?domain=${host}&sz=32`;
+    const parsed = new URL(url);
+    // Use the site's own favicon so visited/bookmarked hostnames are
+    // never sent to a third-party favicon service. Only the origin
+    // already being visited/bookmarked is contacted; the <img>
+    // onError handlers at every call site hide the icon on a 404.
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+    return `${parsed.origin}/favicon.ico`;
   } catch { return ""; }
 }
 
@@ -1096,7 +1101,7 @@ return { filled: true, hasUser: !!bestUser, hasPass: true };
               className="flex items-center gap-1 shrink-0 rounded-md px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-all duration-150 max-w-[160px]"
               title={bm.url}
             >
-              <img src={faviconUrl(bm.url)} alt="" className="w-3.5 h-3.5 rounded-sm" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+              {faviconUrl(bm.url) && <img key={faviconUrl(bm.url)} src={faviconUrl(bm.url)} alt="" className="w-3.5 h-3.5 rounded-sm" onLoad={(e) => { (e.target as HTMLImageElement).style.display = ""; }} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />}
               <span className="truncate">{bm.title || bm.url}</span>
               <X size={10} className="opacity-0 group-hover:opacity-100 hover:text-red-400 shrink-0 ml-0.5"
                 onClick={(e) => { e.stopPropagation(); removeBookmark(bm.id); }} />
@@ -1311,8 +1316,9 @@ return { filled: true, hasUser: !!bestUser, hasPass: true };
                       i === selectedSuggestion ? "bg-muted/60" : "hover:bg-muted/30"
                     }`}
                   >
-                    <img src={faviconUrl(s.url)} alt="" className="w-4 h-4 rounded-sm shrink-0"
-                      onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                    {faviconUrl(s.url) && <img key={faviconUrl(s.url)} src={faviconUrl(s.url)} alt="" className="w-4 h-4 rounded-sm shrink-0"
+                      onLoad={(e) => { (e.target as HTMLImageElement).style.display = ""; }}
+                      onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />}
                     <div className="flex-1 min-w-0">
                       <div className="truncate font-medium">{s.title || s.url}</div>
                       <div className="truncate text-[10px] text-muted-foreground">{s.url}</div>
@@ -1365,8 +1371,9 @@ return { filled: true, hasUser: !!bestUser, hasPass: true };
                   transition={{ type: "spring", stiffness: 380, damping: 30 }} />
               )}
               {/* Favicon */}
-              <img src={faviconUrl(tab.url)} alt="" className="relative w-3.5 h-3.5 rounded-sm shrink-0"
-                onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+              {faviconUrl(tab.url) && <img key={faviconUrl(tab.url)} src={faviconUrl(tab.url)} alt="" className="relative w-3.5 h-3.5 rounded-sm shrink-0"
+                onLoad={(e) => { (e.target as HTMLImageElement).style.display = ""; }}
+                onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />}
               {/* Bookmark pin for bookmarked tabs */}
               {isBookmarked(tab.url) && <Star size={8} className="relative shrink-0 text-amber-400" fill="currentColor" />}
               <span className="relative truncate">{tab.title || tab.url || "New Tab"}</span>

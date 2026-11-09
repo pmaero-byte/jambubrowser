@@ -4,6 +4,40 @@ All notable changes to Jambubrowser.
 
 ## [Unreleased]
 
+### Fixed — release readiness (2026-11-10)
+
+- **CDP back/forward navigation** used the history index as the CDP
+  `entryId`; it now resolves `entries[target].id`, with bounds checks
+  and unit tests. Live-verified against headless Chrome, where entry
+  IDs diverge from indices.
+- **Chromium startup failed when port 9222 was already taken** (for
+  example by Brave, which answers the CDP probe with a 404). The
+  desktop app now asks the OS for a free port instead of hardcoding
+  9222. Live-verified in the Tauri app alongside Brave.
+- **DevTools Elements/Storage tabs** passed the DevTools panel name
+  as the browser tab ID; they now use the active browser tab ID and
+  show a clear empty state when there is none.
+- **Reader Mode XSS**: article HTML is sanitised with DOMPurify
+  before rendering. Favicons no longer leak visited hostnames to
+  Google's favicon service; the visited origin's own icon is used.
+
+### Changed — packaging, Docker, and test installs
+
+- Python dependencies have one canonical source (`pyproject.toml`),
+  mirrored by `requirements.txt` for runtime and a new
+  `requirements-dev.txt` for the test toolchain. `make install`
+  bootstraps a fresh checkout; CI installs the dev file.
+- The Docker image runs as the `jambu` user with a readable home,
+  ships the CLI and Playwright Chromium, uses CPU-only torch (the
+  CUDA wheels added ~3 GB a container can never use), and validates
+  with `docker-compose config`. Verified: image builds, container
+  reports healthy, `/health` serves v3.4.0.
+- Frontend buttons gained a visible focus ring, and closed
+  sidebar/inspector panels are now `inert`.
+- Desktop crate version aligned to 3.4.0 everywhere.
+
+See `docs/RELEASE.md` for the verified release checklist.
+
 ### Fixed — four latent bugs that static analysis surfaced
 
 All four were paths that *could never work*: the branch referenced a name
