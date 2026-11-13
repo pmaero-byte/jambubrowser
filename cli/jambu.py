@@ -23,8 +23,18 @@ from __future__ import annotations
 
 import sys
 
-from cli.jambu_cli import build_parser, core, main as _main
-from cli.jambu_cli.commands.audit import (
+if not __package__:
+    # Run as a script (`python cli/jambu.py ...`): sys.path[0] is cli/, so the
+    # `cli` package is not importable. Put the repo root first, the same root
+    # `python -m cli.jambu` and the `jambu` console script already use.
+    from pathlib import Path
+
+    _repo_root = str(Path(__file__).resolve().parent.parent)
+    if _repo_root not in sys.path:
+        sys.path.insert(0, _repo_root)
+
+from cli.jambu_cli import build_parser, core, main as _main  # noqa: E402
+from cli.jambu_cli.commands.audit import (  # noqa: E402
     cmd_audit,
     cmd_diff,
     cmd_history,
@@ -33,9 +43,9 @@ from cli.jambu_cli.commands.audit import (
     cmd_share,
     cmd_tiers,
 )
-from cli.jambu_cli.commands.mesh import cmd_dcm, cmd_sim, cmd_vpn
-from cli.jambu_cli.commands.monitors import cmd_monitor
-from cli.jambu_cli.commands.qa import (
+from cli.jambu_cli.commands.mesh import cmd_dcm, cmd_sim, cmd_vpn  # noqa: E402
+from cli.jambu_cli.commands.monitors import cmd_monitor  # noqa: E402
+from cli.jambu_cli.commands.qa import (  # noqa: E402
     cmd_dev_servers,
     cmd_export,
     cmd_import,
@@ -46,7 +56,7 @@ from cli.jambu_cli.commands.qa import (
     cmd_test,
     cmd_watch,
 )
-from cli.jambu_cli.commands.status import cmd_auth, cmd_health, cmd_status
+from cli.jambu_cli.commands.status import cmd_auth, cmd_health, cmd_status  # noqa: E402
 
 # Re-exported so `jambu.api_request` keeps resolving: it is the single patch
 # point every CLI test uses to keep the engine off the network.

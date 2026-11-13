@@ -1,6 +1,7 @@
 """Security Auditor — OWASP-focused web application security scanner."""
 
-from .base import BaseEmployee, AuditData
+from .base import AuditData, BaseEmployee, Finding
+from .security_rules import run_security_rules
 
 
 class SecurityAuditor(BaseEmployee):
@@ -94,6 +95,10 @@ RULES:
 - If all security headers are properly set, report that as an info finding.
 - One finding per distinct issue. Group similar items.
 - Always suggest the most secure configuration possible."""
+
+    def rule_findings(self, data: AuditData) -> list[Finding]:
+        """Deterministic header/cookie/markup checks; these need no LLM."""
+        return run_security_rules(data)
 
     def _prepare_data(self, data: AuditData) -> str:
         lines = [f"URL: {data.url}\n"]

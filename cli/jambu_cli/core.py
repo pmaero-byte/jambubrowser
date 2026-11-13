@@ -289,3 +289,8 @@ def _add_audit_options(p: argparse.ArgumentParser) -> None:
         help="Exit 1 when a finding at or above this severity exists "
              "(default: none — never fail)",
     )
+    p.add_argument(
+        "--allow-partial", dest="allow_partial", action="store_true",
+        help="Exit 0 even when an employee or the product-context step failed "
+             "(failures are still printed and exported)",
+    )

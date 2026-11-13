@@ -37,6 +37,10 @@ class ProductContext:
     conversion_flow: str
     competitive_advantage: str
     raw_analysis: str
+    # Non-empty when extraction did not produce a real analysis (LLM call
+    # failed, no real LLM configured, unparseable output). The audit pipeline
+    # reports it instead of silently feeding placeholder context onward.
+    error: str = ""
 
     def to_prompt_context(self) -> str:
         """Format as context for other employees' system prompts."""
@@ -175,6 +179,21 @@ RULES:
                 conversion_flow="Unknown",
                 competitive_advantage="Unknown",
                 raw_analysis=f"Extraction failed: {exc}",
+                error=f"llm call failed: {exc}",
+            )
+        if getattr(response, "provider", "") == "mock":
+            return ProductContext(
+                what_it_does="Unable to determine",
+                target_audience="Unknown",
+                key_features=[],
+                value_proposition="Unknown",
+                tech_stack=[],
+                business_model="Unknown",
+                user_journey="Unknown",
+                conversion_flow="Unknown",
+                competitive_advantage="Unknown",
+                raw_analysis="",
+                error="no real LLM configured (mock provider)",
             )
 
         try:
@@ -203,4 +222,5 @@ RULES:
                 conversion_flow="Unknown",
                 competitive_advantage="Unknown",
                 raw_analysis=raw,
+                error="unparseable LLM output",
             )

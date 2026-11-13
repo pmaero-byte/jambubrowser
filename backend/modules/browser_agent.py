@@ -218,6 +218,7 @@ from backend.modules.browser_flow import (  # noqa: E402,F401
     parse_dialog_spec,
     record_flow_savings,
     render_flow_report,
+    strip_binary,
     summarize_flow_diagnostics,
     token_savings,
 )
@@ -383,6 +384,34 @@ def download_dir_for(session_id: str, artifacts_dir: Optional[str] = None) -> st
 
 
 
+MAX_WAIT_MS = 60_000
+_WAIT_CONDITION_KEYS = ("js", "selector", "text", "url_contains", "network_idle", "networkidle")
+
+
+def _wait_duration_ms(step: dict) -> Optional[int]:
+    """The fixed pause a wait step asks for, in ms (None when not given).
+
+    Accepts ``ms``, ``duration_ms`` or ``sleep_ms``. Capped at
+    :data:`MAX_WAIT_MS` so a typo cannot park a session for an hour; a
+    negative or non-numeric value is refused rather than ignored.
+    """
+    for key in ("ms", "duration_ms", "sleep_ms"):
+        if step.get(key) is None or step.get(key) == "":
+            continue
+        try:
+            value = int(float(step[key]))
+        except (TypeError, ValueError):
+            raise SessionRefused("invalid_step", f"wait {key} must be a number, got {step[key]!r}")
+        if value < 0:
+            raise SessionRefused("invalid_step", f"wait {key} must be >= 0, got {value}")
+        return min(value, MAX_WAIT_MS)
+    return None
+
+
+def _has_wait_condition(step: dict) -> bool:
+    return any(step.get(k) for k in _WAIT_CONDITION_KEYS)
+
+
 class BrowserAgentSession:
     """One agent-facing session: catalog snapshots, gated actions, receipts."""
 
@@ -429,6 +458,8 @@ class BrowserAgentSession:
         self._forbid_evaluate = False
         # Last API-step response, read by assert_status/json/latency/schema.
         self._last_api: Optional[dict] = None
+        self._last_api_request: Optional[dict] = None
+        self._assert_data: Optional[dict] = None
         # Last verified download, so a follow-up step can assert on its content
         # or a later step can parse the exported file.
         self._last_download: Optional[dict] = None
@@ -1365,6 +1396,8 @@ class BrowserAgentSession:
                 result["error"] = refusal.detail or refusal.reason
                 if refusal.candidates:
                     result["candidates"] = refusal.candidates
+                if getattr(refusal, "evidence", None):
+                    result["evidence"] = refusal.evidence
                 # Why it failed, in the terms of the DOM: found at all, on
                 # screen, actually clickable, or what is covering it. A
                 # Playwright call log says "waiting for locator" which is not
@@ -1474,6 +1507,7 @@ class BrowserAgentSession:
             (s.get("action") or "").lower() == "evaluate" for s in normalized
         )
         report["tokens_estimate"] = estimate_tokens(report)
+        report["binary_chars_excluded"] = strip_binary(report)[1]
         # The answer to "is this actually cheaper?": the same script driven as
         # MCP primitives costs one call per action plus a fresh page state
         # after every mutation that moves the DOM.
@@ -1633,9 +1667,21 @@ class BrowserAgentSession:
             return "evaluated", {"evaluated": text}
 
         if action in ("wait", "wait_for"):
+            # `ms` (aliases duration_ms / sleep_ms) is a fixed pause. Alone it
+            # is exactly that sleep; next to a condition it is extra settle
+            # time after the condition holds. It used to be ignored, so
+            # `{"action": "wait", "ms": 1500}` waited ~600ms for network quiet.
+            ms = _wait_duration_ms(step)
+            if ms is not None and not _has_wait_condition(step):
+                await asyncio.sleep(ms / 1000)
+                await self._read_state()
+                return f"waited {ms}ms", {"waited_ms": ms}
             await self._run_wait(step, timeout, approve)
+            if ms:
+                await asyncio.sleep(ms / 1000)
             await self._read_state()
-            return "waited", {}
+            return ("waited" + (f" (+{ms}ms)" if ms else "")), (
+                {"waited_ms": ms} if ms else {})
 
         if action == "screenshot":
             b64 = await self._call_optional("screenshot", bool(step.get("full_page", False)))
@@ -1650,10 +1696,15 @@ class BrowserAgentSession:
             # keeps only the plumbing (read state, raise on failure).
             from backend.modules.browser_assertions import evaluate_assert
 
+            self._assert_data = None
             passed, message = await evaluate_assert(self, step, state)
+            evidence = self._assert_data
+            self._assert_data = None
             if not passed:
-                raise SessionRefused("assertion_failed", message)
-            return message, {}
+                refusal = SessionRefused("assertion_failed", message)
+                refusal.evidence = evidence
+                raise refusal
+            return message, ({"evidence": evidence} if evidence else {})
 
         raise SessionRefused("unknown_action", f"unsupported action: {action}")
 

@@ -114,7 +114,7 @@ async def browser_test_flow(url: str, steps: str = "[]", allow_domains: str = ""
         url: Starting URL (also the default allowlist host), e.g. http://localhost:3000
         steps: JSON array of step objects. Actions: navigate{url}, click{target|ref},
             type{target|ref,value}, press{key,target?}, hover, select{value},
-            check/uncheck, reload, back, forward, wait{selector|text|url_contains},
+            check/uncheck, reload, back, forward, wait{selector|text|url_contains|ms},
             screenshot, assert_visible/assert_not_visible/assert_text{value}/
             assert_text_equals/assert_value/assert_url/assert_title/assert_count/
             assert_checked/assert_unchecked/assert_enabled/assert_disabled/

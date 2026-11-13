@@ -1,0 +1,238 @@
+{
+  "name": "oviyan",
+  "description": "Oviyan Studio (oviyan serve) — API contract, SVG structure, determinism, Tamil lettering fidelity, Studio UI and visual regression. Fully deterministic; no model calls.",
+  "target": "Oviyan v0.4.x Studio, e.g. `oviyan serve 127.0.0.1:7878`",
+  "probe": "/api/capabilities",
+  "vars": {
+    "oviyan_root": {"env": "OVIYAN_ROOT", "default": ""},
+    "font": {"env": "OVIYAN_TAMIL_FONT", "default": "{oviyan_root}/assets/fonts/noto_sans_tamil/NotoSansTamil.ttf"}
+  },
+  "requires_vars": ["font"],
+  "findings": {
+    "OVY-TA-CAPTION": {
+      "title": "Tamil caption drops the U+0BC1 vowel sign and the word space: 'ஒரு சிறுமி' is drawn as 'ஒரசிறமி' while the <title> metadata says 'ஒரு சிறுமி' (a false clean)",
+      "severity": "high"
+    },
+    "OVY-TA-BALLOON": {
+      "title": "Tamil balloon text 'யாதும் ஊரே!' is drawn with Latin-looking glyph shapes, not Tamil letters",
+      "severity": "high"
+    },
+    "OVY-TA-PROMPT": {
+      "title": "The prompt compiler does not understand common Tamil words and splits words at the virama (படிக்கிறாள் → படிக, கிறாள)",
+      "severity": "medium"
+    },
+    "OVY-SCENE-SVG": {
+      "title": "/api/scene/svg without a debug view returns an SVG whose only text is 'No such file or directory (os error 2)'",
+      "severity": "high"
+    },
+    "OVY-ERRORS-AS-200": {
+      "title": "/api/scene/svg reports errors as HTTP 200 SVG bodies, so status-code monitoring cannot see them",
+      "severity": "medium"
+    },
+    "OVY-HEAD": {
+      "title": "HEAD / returns 404 while GET / returns 200, and the HEAD response carries a body ('not found') after Connection: close, which strict HTTP clients (Playwright's request API) reject as a parse error",
+      "severity": "low"
+    },
+    "OVY-PANEL-SCOPE": {
+      "title": "scope=panel with a page id answers UNSUPPORTED_ASSET ('Panel … was not found'), a misleading code for a scope/id mismatch",
+      "severity": "low"
+    }
+  },
+  "flows": [
+    {
+      "id": "capabilities-contract",
+      "title": "/api/capabilities matches the v0.4 contract and is deterministic",
+      "steps": [
+        {"action": "api", "path": "/api/capabilities"},
+        {"action": "assert_status", "value": "200"},
+        {"action": "assert_json_schema", "schema": {
+          "type": "object",
+          "required": ["version", "engine", "formats", "patch_operations", "runtime_dependencies",
+                       "debug_views", "editions"],
+          "properties": {
+            "version": {"type": "string", "pattern": "^0\\.4\\."},
+            "engine": {"const": "oviyan"},
+            "formats": {"type": "array", "minItems": 4,
+                        "items": {"enum": ["svg", "html", "cbz", "pdf", "gif"]}},
+            "patch_operations": {"type": "array", "minItems": 9, "maxItems": 9,
+                                 "items": {"type": "string"}},
+            "runtime_dependencies": {"type": "string", "pattern": "std-only"}
+          }
+        }},
+        {"action": "assert_json", "path": "formats", "op": "contains", "expected": "svg"},
+        {"action": "assert_json", "path": "formats", "op": "contains", "expected": "html"},
+        {"action": "assert_json", "path": "formats", "op": "contains", "expected": "cbz"},
+        {"action": "assert_json", "path": "formats", "op": "contains", "expected": "pdf"},
+        {"action": "assert_json", "path": "patch_operations", "op": "length", "expected": 9},
+        {"action": "assert_deterministic", "runs": 3}
+      ]
+    },
+    {
+      "id": "prompt-coverage-en",
+      "title": "English prompt compiles with full token coverage",
+      "steps": [
+        {"action": "api", "path": "/api/prompt",
+         "params": {"q": "angry elder with turban debating officer at temple"}},
+        {"action": "assert_status", "value": "200"},
+        {"action": "assert_json_schema", "schema": {
+          "type": "object", "required": ["spec", "trace", "unmatched_tokens"],
+          "properties": {"trace": {"type": "array", "minItems": 1},
+                         "unmatched_tokens": {"type": "array"}}}},
+        {"action": "assert_prompt_coverage", "min": 0.8}
+      ]
+    },
+    {
+      "id": "prompt-coverage-ta",
+      "title": "Tamil prompt compiles with at least 80% token coverage",
+      "steps": [
+        {"action": "api", "path": "/api/prompt",
+         "params": {"q": "ஒரு சிறுமி புத்தகம் படிக்கிறாள்"}},
+        {"action": "assert_status", "value": "200"},
+        {"action": "assert_prompt_coverage", "min": 0.8, "finding": "OVY-TA-PROMPT"}
+      ]
+    },
+    {
+      "id": "render-structure",
+      "title": "A render is well-formed SVG and byte-identical across runs",
+      "steps": [
+        {"action": "api", "path": "/api/render", "params": {"name": "Odysseus", "seed": 1}},
+        {"action": "assert_status", "value": "200"},
+        {"action": "assert_json", "path": "svg_hash", "op": "regex", "expected": "^[a-z0-9]+:[0-9a-f]{16,}$"},
+        {"action": "assert_json", "path": "spec_hash", "op": "regex", "expected": "^[a-z0-9]+:[0-9a-f]{16,}$"},
+        {"action": "assert_svg", "path": "svg", "checks": {
+          "well_formed": true, "no_nan": true, "unique_ids": true, "no_script": true,
+          "within_viewbox": true, "max_bytes": 4000000}},
+        {"action": "assert_deterministic", "runs": 3, "ignore": ["render_ms"]},
+        {"action": "assert_deterministic", "runs": 2, "path": "svg_hash"}
+      ]
+    },
+    {
+      "id": "caption-glyphs-ta",
+      "title": "Tamil caption 'ஒரு சிறுமி' is drawn as Noto Sans Tamil shapes it",
+      "steps": [
+        {"action": "api", "path": "/api/render", "params": {"name": "ஒரு சிறுமி", "seed": 1}},
+        {"action": "assert_status", "value": "200"},
+        {"action": "assert_text_fidelity", "path": "svg", "expected": "ஒரு சிறுமி",
+         "note": "passes: the <title> metadata is right; the drawn glyphs are checked next"},
+        {"action": "assert_glyph_fidelity", "path": "svg", "name": "caption-oru-sirumi",
+         "region": "[data-text-id=\"plate.caption\"]", "expected": "ஒரு சிறுமி",
+         "font": "{font}", "finding": "OVY-TA-CAPTION"}
+      ]
+    },
+    {
+      "id": "caption-glyphs-control",
+      "title": "Control: a Tamil caption without the U+0BC1 sign is drawn faithfully",
+      "steps": [
+        {"action": "api", "path": "/api/render", "params": {"name": "கடல மரம", "seed": 1}},
+        {"action": "assert_status", "value": "200"},
+        {"action": "assert_glyph_fidelity", "path": "svg", "name": "caption-kadala-maram",
+         "region": "[data-text-id=\"plate.caption\"]", "expected": "கடல மரம", "font": "{font}"}
+      ]
+    },
+    {
+      "id": "balloon-glyphs-ta",
+      "title": "Tamil speech balloon 'யாதும் ஊரே!' is drawn in Tamil letters",
+      "steps": [
+        {"action": "api", "path": "/api/render",
+         "params": {"name": "x", "balloon": "cloud_oval", "speech": "யாதும் ஊரே!", "seed": 1}},
+        {"action": "assert_status", "value": "200"},
+        {"action": "assert_svg", "path": "svg", "checks": {"element_counts": {"[data-expert=\"world.balloon\"]": 1}}},
+        {"action": "assert_glyph_fidelity", "path": "svg", "name": "balloon-yaadhum-oore",
+         "region": "[data-expert=\"world.balloon\"] [data-rule=\"EDITORIAL-HERSCHEY-GLYPH\"]",
+         "expected": "யாதும் ஊரே!", "font": "{font}", "finding": "OVY-TA-BALLOON"}
+      ]
+    },
+    {
+      "id": "scene-svg",
+      "title": "/api/scene/svg renders a pilot page with and without a debug view",
+      "steps": [
+        {"action": "api", "path": "/api/scene/svg",
+         "params": {"id": "pilot.seq1.p01", "scope": "page", "debug": "ids"}},
+        {"action": "assert_status", "value": "200"},
+        {"action": "assert_svg", "checks": {"well_formed": true, "no_nan": true,
+                                            "unique_ids": true, "no_script": true}},
+        {"action": "api", "path": "/api/scene/svg", "params": {"id": "pilot.seq1.p01", "scope": "page"}},
+        {"action": "assert_body", "not_contains": ["No such file or directory", "os error"],
+         "finding": "OVY-SCENE-SVG"},
+        {"action": "assert_svg", "checks": {"max_bytes": 100000000, "element_counts": {"path": {"min": 100}}},
+         "finding": "OVY-SCENE-SVG"}
+      ]
+    },
+    {
+      "id": "scene-svg-errors",
+      "title": "Scope/id mismatches are reported precisely and with an error status",
+      "steps": [
+        {"action": "api", "path": "/api/scene/svg", "params": {"id": "pilot.seq1.p01", "scope": "panel"}},
+        {"action": "assert_body", "not_contains": ["UNSUPPORTED_ASSET"], "finding": "OVY-PANEL-SCOPE"},
+        {"action": "assert_status", "value": "4xx", "finding": "OVY-ERRORS-AS-200"}
+      ]
+    },
+    {
+      "id": "http-head",
+      "title": "HEAD / answers like GET /",
+      "steps": [
+        {"action": "api", "path": "/"},
+        {"action": "assert_status", "value": "200"},
+        {"action": "api", "method": "HEAD", "path": "/", "finding": "OVY-HEAD"},
+        {"action": "assert_status", "value": "200", "finding": "OVY-HEAD"}
+      ]
+    },
+    {
+      "id": "validate-and-inspect",
+      "title": "Pilot page validates clean and inspects to resolved actors",
+      "steps": [
+        {"action": "api", "path": "/api/validate", "params": {"scope": "scene", "id": "pilot.seq1.p01"}},
+        {"action": "assert_status", "value": "200"},
+        {"action": "assert_json", "path": "status", "op": "equals", "expected": "ok"},
+        {"action": "assert_json", "path": "diagnostics", "op": "length", "expected": 0},
+        {"action": "assert_json", "path": "revision", "op": "regex", "expected": "^rev:"},
+        {"action": "api", "path": "/api/inspect", "params": {"id": "pilot.seq1.p01"}, "timeout": 60000},
+        {"action": "assert_status", "value": "200"},
+        {"action": "assert_json", "path": "inspection.actors", "op": "type", "expected": "array"},
+        {"action": "assert_deterministic", "runs": 2}
+      ]
+    },
+    {
+      "id": "studio-ui",
+      "title": "Studio loads, renders a clean plate, compiles an English prompt, matches its baseline",
+      "path": "/",
+      "approve": true,
+      "steps": [
+        {"action": "navigate", "url": "{base}/"},
+        {"action": "wait", "selector": "#svg-host svg", "timeout": 20000},
+        {"action": "wait", "ms": 800},
+        {"action": "assert_svg", "selector": "#svg-host svg",
+         "checks": {"well_formed": true, "no_nan": true, "unique_ids": true, "no_script": true}},
+        {"action": "assert_screenshot", "name": "studio-default-plate", "selector": "#svg-host",
+         "baseline_dir": "{baselines}", "threshold": 0.01, "normalize_width": 130,
+         "note": "#svg-host is fitted to a 100vh layout, so its pixel size varies with the Studio's other panels; compare the picture at 130px wide"},
+        {"action": "type", "selector": "#nlp-input", "value": "angry elder with turban debating officer at temple"},
+        {"action": "press", "selector": "#nlp-input", "key": "Enter"},
+        {"action": "wait", "text": "Compiled", "timeout": 20000},
+        {"action": "wait", "ms": 1500},
+        {"action": "assert_svg", "selector": "#svg-host svg",
+         "checks": {"well_formed": true, "no_nan": true, "unique_ids": true, "no_script": true}},
+        {"action": "assert_console_clean"}
+      ]
+    },
+    {
+      "id": "studio-ui-tamil-sample",
+      "title": "Studio 'தமிழ் அரசி' sample draws its Tamil balloon in Tamil letters",
+      "path": "/",
+      "approve": true,
+      "steps": [
+        {"action": "navigate", "url": "{base}/"},
+        {"action": "wait", "selector": "#svg-host svg", "timeout": 20000},
+        {"action": "click", "selector": "button:has-text(\"தமிழ் அரசி\")"},
+        {"action": "wait", "text": "Compiled", "timeout": 20000},
+        {"action": "wait", "ms": 1500},
+        {"action": "assert_svg", "selector": "#svg-host svg",
+         "checks": {"element_counts": {"[data-expert=\"world.balloon\"]": 1}}},
+        {"action": "assert_glyph_fidelity", "selector": "#svg-host svg", "name": "studio-sample-balloon",
+         "region": "[data-expert=\"world.balloon\"] [data-rule=\"EDITORIAL-HERSCHEY-GLYPH\"]",
+         "expected": "யாதும் ஊரே!", "font": "{font}", "finding": "OVY-TA-BALLOON"},
+        {"action": "assert_console_clean"}
+      ]
+    }
+  ]
+}

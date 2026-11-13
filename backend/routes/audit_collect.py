@@ -171,6 +171,79 @@ async def collect_screenshots(page, data: AuditData, req: "AuditCollectRequest")
             log.warning("Fullpage screenshot failed: %s", e)
 
 
+async def accessibility_snapshot_text(page) -> str:
+    """Accessibility tree of ``page`` as indented text, or ``""``.
+
+    ``page.accessibility`` was removed from Playwright (1.57+), so calling it
+    raised on every audit and the tree silently fell back to a DOM scrape.
+    Order of preference:
+
+    1. ``locator("body").aria_snapshot()`` — Playwright's supported API; a
+       YAML-ish outline (``- heading "Title" [level=1]``).
+    2. CDP ``Accessibility.getFullAXTree`` — Chromium only.
+    3. The legacy ``page.accessibility.snapshot()`` on old Playwright.
+    """
+    try:
+        locator = page.locator("body")
+        if hasattr(locator, "aria_snapshot"):
+            snap = await locator.aria_snapshot()
+            if snap and snap.strip():
+                return snap.strip()
+    except Exception as e:
+        log.debug("aria_snapshot failed: %s", e)
+    try:
+        cdp = await page.context.new_cdp_session(page)
+        try:
+            tree = await cdp.send("Accessibility.getFullAXTree")
+        finally:
+            try:
+                await cdp.detach()
+            except Exception:
+                pass
+        text = _format_cdp_ax_tree(tree.get("nodes") or [])
+        if text:
+            return text
+    except Exception as e:
+        log.debug("CDP accessibility tree failed: %s", e)
+    legacy = getattr(page, "accessibility", None)
+    if legacy is not None:
+        try:
+            snapshot = await legacy.snapshot()
+            if snapshot:
+                return _format_accessibility_tree(snapshot)
+        except Exception as e:
+            log.warning("Accessibility snapshot failed: %s", e)
+    return ""
+
+
+def _format_cdp_ax_tree(nodes: list, limit: int = 2000) -> str:
+    """Render CDP AX nodes (flat list with childIds) as an indented outline."""
+    by_id = {n.get("nodeId"): n for n in nodes if n.get("nodeId") is not None}
+    child_ids = {c for n in nodes for c in (n.get("childIds") or [])}
+    roots = [n for n in nodes if n.get("nodeId") not in child_ids]
+    lines: list[str] = []
+
+    def value_of(field):
+        return str((field or {}).get("value") or "")
+
+    def walk(node, depth):
+        if len(lines) >= limit:
+            return
+        role = value_of(node.get("role"))
+        name = value_of(node.get("name"))
+        shown = not node.get("ignored") and role not in ("", "none", "generic", "InlineTextBox")
+        if shown:
+            lines.append("  " * depth + (f'{role} "{name}"' if name else role))
+        for cid in node.get("childIds") or []:
+            child = by_id.get(cid)
+            if child is not None:
+                walk(child, depth + 1 if shown else depth)
+
+    for root in roots:
+        walk(root, 0)
+    return "\n".join(lines)
+
+
 async def collect_dom_snapshot(page, data: AuditData) -> None:
     """Fill ``dom_snapshot`` from the accessibility tree, else from the DOM.
 
@@ -180,12 +253,9 @@ async def collect_dom_snapshot(page, data: AuditData) -> None:
     links, buttons, inputs, images, forms and meta tags out of the DOM, so an
     audit always has *some* structure to reason about.
     """
-    try:
-        snapshot = await page.accessibility.snapshot()
-        if snapshot:
-            data.dom_snapshot = _format_accessibility_tree(snapshot)
-    except Exception as e:
-        log.warning("Accessibility snapshot failed: %s", e)
+    text = await accessibility_snapshot_text(page)
+    if text:
+        data.dom_snapshot = text
 
     # Fallback: extract basic DOM structure if accessibility tree is empty
     if not data.dom_snapshot:

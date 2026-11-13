@@ -57,6 +57,9 @@ MAX_TEXT_CHARS = 4000
 MAX_CAPTURED_BODY_BYTES = 64 * 1024
 
 
+# Upper bound on an api response body kept for content assertions.
+MAX_API_BODY_CHARS = 32 * 1024 * 1024
+
 class PageAdapter(Protocol):
     async def goto(self, url: str) -> None: ...
     async def snapshot(self) -> dict: ...
@@ -760,6 +763,10 @@ class PlaywrightPage:
                 "status": response.status, "ok": response.ok,
                 "method": method, "url": url, "latency_ms": latency_ms,
                 "json": parsed, "text": text[:4000],
+                # Full body for content assertions (svg, determinism);
+                # ``text`` stays truncated for reports.
+                "body": text[:MAX_API_BODY_CHARS],
+                "body_truncated": len(text) > MAX_API_BODY_CHARS,
                 "headers": dict(response.headers or {}),
             }
         # Fallback: in-page fetch (same origin/cookies, no custom headers
@@ -788,6 +795,7 @@ class PlaywrightPage:
             "status": result.get("status", 0), "ok": bool(result.get("ok")),
             "method": method, "url": url, "latency_ms": latency_ms,
             "json": result.get("json"), "text": (result.get("text") or "")[:4000],
+            "body": (result.get("text") or "")[:MAX_API_BODY_CHARS],
             "headers": {},
         }
 
@@ -1259,7 +1267,9 @@ class PlaywrightPage:
                 }
                 return false;
             }""",
-            [text], timeout=timeout_ms,
+            # Playwright takes the argument by keyword only; passed positionally
+            # every real `wait {text}` raised TypeError before waiting at all.
+            arg=[text], timeout=timeout_ms,
         )
 
     # -- selector dispatch (CSS/XPath direct addressing) ---------------------
@@ -1581,18 +1591,24 @@ class PlaywrightPage:
 
     async def diff_screenshot(self, name: str, selector: str = "",
                               threshold: float = 0.005,
-                              masks: Optional[list] = None) -> dict:
+                              masks: Optional[list] = None, *,
+                              baseline_dir: str = "", update: bool = False,
+                              tolerance: int = 16,
+                              normalize_width: Optional[int] = None) -> dict:
         """Compare the live frame to a stored baseline; create it if absent.
 
         Baselines live under ``<artifacts>/baselines/`` so a session with
         artifacts configured keeps them with its traces and HAR, and one
         without still gets a temp dir rather than writing into the repo.
+        ``baseline_dir`` overrides that (test packs keep their baselines
+        next to the pack); there the Pillow comparison is used, which also
+        writes a red diff overlay. ``update`` rewrites the baseline.
         ``threshold`` is the allowed fraction of differing pixels.
         """
 
 
-        directory = os.path.join(self.artifacts_dir or tempfile.gettempdir(),
-                                 "baselines")
+        directory = baseline_dir or os.path.join(
+            self.artifacts_dir or tempfile.gettempdir(), "baselines")
         safe = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-") or "baseline"
         baseline_path = os.path.join(directory, f"{safe}.png")
 
@@ -1600,6 +1616,26 @@ class PlaywrightPage:
         current_b64 = live.get("png_base64") or ""
         if not current_b64:
             return {"error": "no pixels captured", "diff_pct": 100.0}
+
+        if update:
+            os.makedirs(directory, exist_ok=True)
+            with open(baseline_path, "wb") as handle:
+                handle.write(base64.b64decode(current_b64))
+            return {"baseline_updated": True, "baseline_path": baseline_path,
+                    "diff_pct": 0.0, "threshold": threshold}
+
+        if baseline_dir:
+            from backend.modules import glyph_raster
+
+            if glyph_raster.Image is not None:
+                out_dir = os.path.join(self.artifacts_dir or tempfile.gettempdir(),
+                                       "diffs")
+                result = await asyncio.to_thread(
+                    glyph_raster.compare_to_baseline, baseline_path, current_b64,
+                    tolerance=tolerance, diff_dir=out_dir, name=safe,
+                    normalize_width=normalize_width)
+                result["threshold"] = threshold
+                return result
 
         if not os.path.exists(baseline_path):
             os.makedirs(directory, exist_ok=True)
@@ -1632,6 +1668,47 @@ class PlaywrightPage:
         return result
 
 
+
+    async def glyph_compare(self, svg: str, region: str, expected: str, *,
+                            font_path: str = "", font_family: str = "",
+                            scale: int = 4, artifact_name: str = "") -> dict:
+        """Raster-compare the lettering in ``region`` of ``svg`` to ``expected``.
+
+        Both images are drawn in scratch pages of this browser context: the
+        product's SVG clipped to the region, and ``expected`` shaped by
+        Chromium in the same font. Scripts are stripped from the SVG first.
+        """
+        from backend.modules import glyph_raster
+
+        if glyph_raster.Image is None:
+            return {"error": "Pillow is not installed; glyph checks need it"}
+        if font_path and not os.path.isfile(font_path):
+            return {"error": f"font not found: {font_path}"}
+        context = getattr(self._page, "context", None)
+        if context is None:
+            return {"error": "adapter has no browser context"}
+        clean = re.sub(r"(?is)<script\b.*?</script>", "", svg or "")
+        clean = re.sub(r"(?i)\son[a-z]+\s*=\s*(\"[^\"]*\"|'[^']*')", "", clean)
+        drawn = await glyph_raster.rasterize_svg_region(context, clean, region,
+                                                        scale=scale)
+        if not drawn["png"]:
+            return {"error": f"no visible element matches {region!r} in the svg",
+                    "matches": drawn["matches"]}
+        reference = await glyph_raster.render_reference_text(
+            context, expected, font_path=font_path, font_family=font_family)
+        metrics = await asyncio.to_thread(glyph_raster.compare_glyph_images,
+                                          drawn["png"], reference)
+        result = {"metrics": metrics, "box": drawn["box"], "matches": drawn["matches"]}
+        if self.artifacts_dir:
+            safe = re.sub(r"[^A-Za-z0-9._-]+", "-", artifact_name or region).strip("-")
+            out_dir = os.path.join(self.artifacts_dir, "glyphs")
+            os.makedirs(out_dir, exist_ok=True)
+            for suffix, png in (("actual", drawn["png"]), ("reference", reference)):
+                path = os.path.join(out_dir, f"{safe or 'glyph'}.{suffix}.png")
+                with open(path, "wb") as handle:
+                    handle.write(png)
+                result[f"{suffix}_path"] = path
+        return result
 
     async def set_viewport(self, width: int, height: int) -> dict:
         """Resize an already-open context.

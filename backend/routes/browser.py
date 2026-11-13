@@ -177,8 +177,18 @@ async def perform_actions(req: MultiActionRequest):
             action_dict["y"] = step.y
         actions.append(action_dict)
 
-    # Try crawl4ai first, fallback to Playwright
+    # Playwright first: it reports an outcome per action. crawl4ai's js_code
+    # path cannot say which action failed, so it is only used when Playwright
+    # is not installed, and its result is marked unverified.
     try:
+        import playwright.async_api  # noqa: F401
+        _have_playwright = True
+    except ImportError:
+        _have_playwright = False
+
+    try:
+        if _have_playwright:
+            raise ImportError("prefer playwright")
         from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
 
         js_lines = []
@@ -221,7 +231,8 @@ async def perform_actions(req: MultiActionRequest):
                 session_id=req.client_id,
             )
 
-            return {"status": "success", "markdown": sanitized_content}
+            return {"status": "success", "markdown": sanitized_content,
+                    "engine": "crawl4ai", "actions_verified": False}
     except ImportError:
         pass
     except Exception as e:
@@ -233,7 +244,8 @@ async def perform_actions(req: MultiActionRequest):
 
         result = await perform_actions_with_playwright(req.url, actions)
 
-        if result["success"]:
+        if result.get("action_results") is not None and result.get("content") is not None \
+                and result.get("status") in ("ok", "partial", "failed"):
             content = result["content"]
             sanitized_content, sanitization_result = sanitize_content_for_storage(content)
 
@@ -245,11 +257,23 @@ async def perform_actions(req: MultiActionRequest):
                     "content_length": len(sanitized_content),
                     "pii_removed": len(sanitization_result.pii_removed),
                     "engine": "playwright",
+                    "actions_failed": result.get("actions_failed", 0),
                 },
                 session_id=req.client_id,
             )
 
-            return {"status": "success", "markdown": sanitized_content}
+            status = {"ok": "success", "partial": "partial", "failed": "error"}[result["status"]]
+            body = {
+                "status": status,
+                "markdown": sanitized_content,
+                "engine": "playwright",
+                "actions_verified": True,
+                "action_results": result["action_results"],
+                "failed_actions": result["failed_actions"],
+            }
+            if result.get("error"):
+                body["message"] = result["error"]
+            return body
         return {"status": "error", "message": result.get("error", "Failed to perform actions")}
     except Exception as e:
         audit.log(

@@ -147,6 +147,30 @@ class AuditData:
 # BaseEmployee
 # ---------------------------------------------------------------------------
 
+def _mock_allowed() -> bool:
+    """Tests may opt in to treating the echo provider's output as analysis."""
+    import os
+    return os.environ.get("JAMBU_EMPLOYEES_ALLOW_MOCK", "").strip() in ("1", "true", "yes")
+
+
+class EmployeeError(RuntimeError):
+    """An employee could not complete its analysis.
+
+    ``kind`` is one of ``llm_failed``, ``llm_unavailable`` or
+    ``unparseable_output``. ``partial_findings`` holds whatever deterministic
+    rule findings were produced before the failure, so a report can show them
+    while still marking the employee as failed.
+    """
+
+    def __init__(self, employee: str, reason: str, *, kind: str = "llm_failed",
+                 partial_findings: Optional[list] = None):
+        super().__init__(reason)
+        self.employee = employee
+        self.reason = reason
+        self.kind = kind
+        self.partial_findings = list(partial_findings or [])
+
+
 class BaseEmployee:
     """Every AI employee extends this.
 
@@ -164,7 +188,18 @@ class BaseEmployee:
     temperature: float = 0.3
 
     async def analyze(self, data: AuditData) -> list[Finding]:
-        """Run this employee against audit data. Returns findings."""
+        """Run this employee against audit data. Returns findings.
+
+        Deterministic rule findings (:meth:`rule_findings`) always run. The
+        LLM part then runs on top of them. When the LLM part cannot produce a
+        real analysis — the call failed, only the offline ``mock`` provider is
+        configured, or the output did not parse — this raises
+        :class:`EmployeeError` carrying the rule findings as
+        ``partial_findings``. It never returns ``[]`` for a failure: an empty
+        list means "analysed, found nothing", and a crashed employee
+        reporting that is how an audit came out falsely clean.
+        """
+        rules = list(self.rule_findings(data))
         messages = self._build_messages(data)
         try:
             from backend.llm import ChatMessage, Role, get_registry, normalize_llm_response
@@ -177,11 +212,26 @@ class BaseEmployee:
                 max_tokens=self.max_tokens,
                 temperature=self.temperature,
             )
-            raw = normalize_llm_response(response.content)
-            return parse_findings(raw, self.name)
         except Exception as exc:
             log.error("%s failed: %s", self.name, exc)
-            return []
+            raise EmployeeError(self.name, f"llm call failed: {exc}",
+                                kind="llm_failed", partial_findings=rules) from exc
+        if getattr(response, "provider", "") == "mock" and not _mock_allowed():
+            raise EmployeeError(
+                self.name,
+                "no real LLM configured (only the offline mock provider); "
+                "LLM analysis skipped",
+                kind="llm_unavailable", partial_findings=rules)
+        raw = normalize_llm_response(response.content)
+        findings, parsed_ok = _parse_findings(raw, self.name)
+        if not parsed_ok:
+            raise EmployeeError(self.name, "LLM output was not parseable findings JSON",
+                                kind="unparseable_output", partial_findings=rules)
+        return rules + findings
+
+    def rule_findings(self, data: AuditData) -> list[Finding]:
+        """Deterministic, LLM-free checks. Subclasses override; default none."""
+        return []
 
     def _build_messages(self, data: AuditData) -> list:
         """Build the message list for the LLM call.
@@ -210,8 +260,8 @@ class BaseEmployee:
 _FINDING_JSON_RE = re.compile(r"\[\s*\{.*?\}\s*\]", re.DOTALL)
 
 
-def parse_findings(raw: str, employee_name: str) -> list[Finding]:
-    """Parse the LLM's JSON output into a list of Finding objects.
+def _parse_findings(raw: str, employee_name: str) -> tuple[list[Finding], bool]:
+    """Parse the LLM's JSON output; returns ``(findings, parsed_ok)``.
 
     Tolerates common LLM output quirks:
     - markdown code fences (```json ... ```)
@@ -229,7 +279,7 @@ def parse_findings(raw: str, employee_name: str) -> list[Finding]:
     # Try direct parse first
     try:
         parsed = json.loads(cleaned)
-        return _coerce_to_findings(parsed, employee_name)
+        return _coerce_to_findings(parsed, employee_name), _is_findings_shape(parsed)
     except json.JSONDecodeError:
         pass
 
@@ -238,7 +288,7 @@ def parse_findings(raw: str, employee_name: str) -> list[Finding]:
     if match:
         try:
             parsed = json.loads(match.group(0))
-            return _coerce_to_findings(parsed, employee_name)
+            return _coerce_to_findings(parsed, employee_name), True
         except json.JSONDecodeError:
             pass
 
@@ -249,12 +299,28 @@ def parse_findings(raw: str, employee_name: str) -> list[Finding]:
             obj = json.loads(single_re.group(0))
             findings = _coerce_to_findings(obj, employee_name)
             if findings:
-                return findings
+                return findings, True
         except json.JSONDecodeError:
             pass
 
     log.warning("%s returned unparseable output: %.200s...", employee_name, raw)
-    return []
+    return [], False
+
+
+def _is_findings_shape(parsed) -> bool:
+    """A list (possibly empty) or a single finding object counts as parsed."""
+    return isinstance(parsed, list) or (
+        isinstance(parsed, dict) and bool({"severity", "title", "category"} & set(parsed)))
+
+
+def parse_findings(raw: str, employee_name: str) -> list[Finding]:
+    """Parse the LLM's JSON output into a list of Finding objects.
+
+    Lenient wrapper kept for callers that only want findings; returns ``[]``
+    for unparseable output. :meth:`BaseEmployee.analyze` uses the strict
+    form and treats unparseable output as a failure.
+    """
+    return _parse_findings(raw, employee_name)[0]
 
 
 def _coerce_to_findings(parsed, employee_name: str) -> list[Finding]:

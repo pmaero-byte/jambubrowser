@@ -5,7 +5,7 @@ and produces structured findings (issues, risks, gaps, improvement suggestions).
 Employees run in parallel against a shared AuditData snapshot.
 """
 
-from .base import BaseEmployee, Finding, AuditData, Severity, parse_findings
+from .base import AuditData, BaseEmployee, EmployeeError, Finding, Severity, parse_findings
 from .security import SecurityAuditor
 from .performance import PerformanceInspector
 from .ux_ui import UXUIReviewer
@@ -30,7 +30,7 @@ QUICK_SCAN_EMPLOYEES: list[type[BaseEmployee]] = [
 ]
 
 __all__ = [
-    "BaseEmployee", "Finding", "AuditData", "Severity", "parse_findings",
+    "BaseEmployee", "EmployeeError", "Finding", "AuditData", "Severity", "parse_findings",
     "SecurityAuditor", "PerformanceInspector", "UXUIReviewer",
     "SEOAnalyzer", "AccessibilityAuditor", "CodeQualityScout",
     "ALL_EMPLOYEES", "QUICK_SCAN_EMPLOYEES",

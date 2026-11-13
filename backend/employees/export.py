@@ -171,13 +171,20 @@ def findings_to_sarif(
     tool_name: str = "Jambubrowser AI Employees",
     tool_version: str = "1.0.0",
     run_id: str | None = None,
+    errors: Iterable[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Convert an iterable of Finding objects to a SARIF 2.1.0 log.
+
+    ``errors`` lists employees (or pipeline steps) that failed. Each becomes
+    an error-level ``toolExecutionNotification`` and the invocation is marked
+    ``executionSuccessful: false``, so a CI consumer cannot read a crashed
+    audit as a clean one.
 
     The output is a single `runs[0]` invocation of the Jambubrowser tool.
     `audited_url` is added as an `originalUriBaseIds` so consumers can resolve
     relative locations against the audited page.
     """
+    error_list = [dict(e) for e in (errors or [])]
     results: list[dict[str, Any]] = []
     rules: dict[str, dict[str, Any]] = {}
     for i, f in enumerate(findings):
@@ -216,12 +223,24 @@ def findings_to_sarif(
                 },
                 "invocations": [
                     {
-                        "executionSuccessful": True,
+                        "executionSuccessful": not error_list,
+                        "toolExecutionNotifications": [
+                            {
+                                "level": "error",
+                                "descriptor": {"id": _slug(str(e.get("kind") or "employee_error"))
+                                               or "employee-error"},
+                                "message": {"text": f"{e.get('employee', '?')}: "
+                                                    f"{e.get('error', 'failed')}"},
+                                "properties": {"jambu": dict(e)},
+                            }
+                            for e in error_list
+                        ],
                         "properties": {
                             "jambu": {
                                 "audited_url": audited_url,
                                 "run_id": run_id or uuid.uuid4().hex,
                                 "finding_count": len(results),
+                                "status": "incomplete" if error_list else "complete",
                             }
                         },
                     }
@@ -238,8 +257,15 @@ def findings_to_canonical_json(
     *,
     audited_url: str,
     summary: Mapping[str, Any] | None = None,
+    errors: Iterable[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Lossless JSON of all findings + a small summary envelope."""
+    """Lossless JSON of all findings + a small summary envelope.
+
+    ``errors`` (failed employees/steps) are carried at top level with a
+    ``status`` of ``incomplete``, so a 0-finding report from a failed run is
+    distinguishable from a clean one.
+    """
+    error_list = [dict(e) for e in (errors or [])]
     items = [_finding_to_canonical_dict(f) for f in findings]
     by_severity: dict[str, int] = {}
     by_employee: dict[str, int] = {}
@@ -255,6 +281,8 @@ def findings_to_canonical_json(
     return {
         "audited_url": audited_url,
         "generated_at": _utc_now_iso(),
+        "status": "incomplete" if error_list else "complete",
+        "errors": error_list,
         "total_findings": len(items),
         "by_severity": by_severity,
         "by_employee": by_employee,

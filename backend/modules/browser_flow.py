@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any, Optional
 from urllib.parse import urlparse
 
@@ -303,12 +304,76 @@ def render_flow_report(report: dict, *, max_errors: int = 5) -> str:
     return "\n".join(lines)
 
 
+_BINARY_KEY_SUFFIXES = ("_base64", "_b64", "_png", "_jpeg", "_jpg", "_webp")
+_BINARY_KEYS = {"base64", "b64", "screenshot", "image", "png", "jpeg", "pdf", "bytes"}
+_DATA_URI_RE = re.compile(r"data:[\w.+-]+/[\w.+-]+(?:;[\w=.-]+)*;base64,[A-Za-z0-9+/=]+")
+_BASE64_RUN_RE = re.compile(r"[A-Za-z0-9+/]{1024,}={0,2}")
+
+
+def _looks_base64(run: str) -> bool:
+    return (any(c.isdigit() or c in "+/" for c in run)
+            and any(c.isupper() for c in run) and any(c.islower() for c in run))
+
+
+def _strip_binary_text(text: str) -> tuple[str, int]:
+    excluded = 0
+
+    def drop(match):
+        nonlocal excluded
+        if match.re is _BASE64_RUN_RE and not _looks_base64(match.group(0)):
+            return match.group(0)
+        excluded += len(match.group(0))
+        return "<binary>"
+
+    text = _DATA_URI_RE.sub(drop, text)
+    text = _BASE64_RUN_RE.sub(drop, text)
+    return text, excluded
+
+
+def strip_binary(payload) -> tuple[Any, int]:
+    """``payload`` with binary blobs (screenshots, data: URIs, long base64)
+    replaced by ``"<binary>"``, plus the number of characters removed.
+
+    Binary payloads are attachments, not context an agent reads, so counting
+    a 300 kB screenshot as 75 000 "tokens" inflated every savings claim.
+    """
+    if isinstance(payload, str):
+        return _strip_binary_text(payload)
+    if isinstance(payload, dict):
+        out, excluded = {}, 0
+        for key, value in payload.items():
+            lowered = str(key).lower()
+            if isinstance(value, (str, bytes, bytearray)) and value and (
+                    lowered.endswith(_BINARY_KEY_SUFFIXES) or lowered in _BINARY_KEYS):
+                if isinstance(value, str) and len(value) < 64 and not value.startswith("data:"):
+                    out[key] = value  # a path or short id, not a blob
+                    continue
+                out[key] = "<binary>"
+                excluded += len(value)
+                continue
+            out[key], n = strip_binary(value)
+            excluded += n
+        return out, excluded
+    if isinstance(payload, (list, tuple)):
+        out_list, excluded = [], 0
+        for item in payload:
+            clean, n = strip_binary(item)
+            out_list.append(clean)
+            excluded += n
+        return out_list, excluded
+    if isinstance(payload, (bytes, bytearray)):
+        return "<binary>", len(payload)
+    return payload, 0
+
+
 def estimate_tokens(payload) -> int:
     """Rough token estimate for a payload (~4 chars per token).
 
     Reports how much context a flow report actually costs the agent, so token
-    claims are measured rather than marketing.
+    claims are measured rather than marketing. Binary payloads (screenshot
+    base64, data: URIs) are excluded via :func:`strip_binary`.
     """
+    payload, _ = strip_binary(payload)
     if isinstance(payload, str):
         text = payload
     else:

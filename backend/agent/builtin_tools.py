@@ -596,7 +596,7 @@ def _register_browser_testing(r: ToolRegistry) -> None:
                         "JSON array of step objects. Actions: navigate{url}, "
                         "click{target|ref}, type{target|ref,value}, press{key}, "
                         "hover, select{value}, check/uncheck, reload, back, "
-                        "forward, wait{selector|text|url_contains}, screenshot, "
+                        "forward, wait{selector|text|url_contains|ms}, screenshot, "
                         "assert_visible/assert_not_visible/assert_text{value}/"
                         "assert_text_equals/assert_value/assert_url/assert_title/"
                         "assert_count/assert_checked/assert_console_clean/"

@@ -24,7 +24,7 @@ import re
 import socket
 from dataclasses import dataclass
 from typing import Any, Optional
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlparse
 
 _ALLOWED_REQUEST_SCHEMES = {"http", "https", "ws", "wss"}
 _BROWSER_INTERNAL_SCHEMES = {"about", "data", "blob"}
@@ -61,6 +61,44 @@ def _ip_is_non_public(address: str) -> bool:
     )
 
 
+_MAX_LOGGED_URL = 512
+
+
+def redact_url(raw: str) -> str:
+    """A loggable form of ``raw``: scheme, host, port and path kept; query
+    *values* replaced with ``<redacted>`` (keys kept, so ``?id=`` vs ``?q=`` is
+    still visible); userinfo and fragment dropped. Bounded to 512 chars.
+
+    The network log used to keep only ``scheme://host``, which made it useless
+    for telling which API endpoint a page hit; full URLs would leak tokens.
+    """
+    try:
+        parsed = urlparse(str(raw or ""))
+    except Exception:
+        return ""
+    scheme = (parsed.scheme or "").lower()
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return scheme
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    netloc = f"[{host}]" if ":" in host else host
+    if port:
+        netloc += f":{port}"
+    out = f"{scheme}://{netloc}{parsed.path or ''}"
+    if parsed.query:
+        keys = [k for k, _ in parse_qsl(parsed.query, keep_blank_values=True)]
+        if keys:
+            out += "?" + "&".join(f"{k}=<redacted>" for k in keys)
+        else:
+            out += "?<redacted>"
+    if len(out) > _MAX_LOGGED_URL:
+        out = out[: _MAX_LOGGED_URL - 3] + "..."
+    return out
+
+
 class NetworkPolicy:
     """Fail-closed policy applied to every browser-originated request.
 
@@ -78,6 +116,7 @@ class NetworkPolicy:
         self._resolver = resolver or self._default_resolver
         self.max_events = max_events
         self.seen: list[dict] = []
+        self._current_url = ""
         self.blocked: list[dict] = []
         self._websocket_supported: Optional[bool] = None
         self._routing_installed = False
@@ -92,7 +131,7 @@ class NetworkPolicy:
             "allowed": decision.allowed, "reason": decision.reason,
             "method": method, "kind": kind, "scheme": decision.scheme,
             "host": decision.host,
-            "url": f"{decision.scheme}://{decision.host}" if decision.host else decision.scheme,
+            "url": redact_url(self._current_url) if decision.host else decision.scheme,
             "detail": decision.detail,
         }
         self.seen.append(event)
@@ -106,6 +145,7 @@ class NetworkPolicy:
     def decide(self, url: str, *, method: str = "GET", kind: str = "http") -> NetworkDecision:
         """Return an allow/deny decision without performing network I/O itself."""
         raw = str(url or "")
+        self._current_url = raw
         try:
             parsed = urlparse(raw)
             scheme = (parsed.scheme or "").lower()

@@ -418,35 +418,38 @@ def test_finding_repr():
 
 
 @pytest.mark.asyncio
-async def test_analyze_with_mock_provider():
-    """When JAMBU_LLM_PROVIDER=mock, the employee loop runs without a real LLM.
+async def test_analyze_with_mock_provider(monkeypatch):
+    """With only the offline mock provider there is no real analysis.
 
-    The mock provider returns a canned response. We test that:
-    - No exception propagates
-    - The return value is a list (possibly empty if mock output is unparseable)
+    The employee must say so (EmployeeError, kind llm_unavailable) instead of
+    returning ``[]`` — an empty list reads as "analysed, nothing found", which
+    is how a crashed quick scan used to report a clean bill of health. The
+    Security Auditor's deterministic rule findings survive as partial output.
     """
-    import os
-    os.environ["JAMBU_LLM_PROVIDER"] = "mock"
+    from backend.employees import EmployeeError
+    monkeypatch.setenv("JAMBU_LLM_PROVIDER", "mock")
 
     emp = SecurityAuditor()
     data = AuditData(url="https://example.com")
-    findings = await emp.analyze(data)
-    # May be empty if mock output doesn't parse — but must not crash
-    assert isinstance(findings, list)
+    with pytest.raises(EmployeeError) as exc:
+        await emp.analyze(data)
+    assert exc.value.kind == "llm_unavailable"
+    titles = {f.title for f in exc.value.partial_findings}
+    assert "Missing Content-Security-Policy" in titles
 
 
 @pytest.mark.asyncio
-async def test_all_employees_analyze_with_mock():
-    """All 6 employees run through the analyze pipeline without crashing."""
-    import os
-    os.environ["JAMBU_LLM_PROVIDER"] = "mock"
+async def test_all_employees_analyze_with_mock(monkeypatch):
+    """All 6 employees report the missing LLM rather than a silent empty list."""
+    from backend.employees import EmployeeError
+    monkeypatch.setenv("JAMBU_LLM_PROVIDER", "mock")
 
     data = AuditData(url="https://example.com")
     for cls in [SecurityAuditor, PerformanceInspector, AccessibilityAuditor,
                 SEOAnalyzer, UXUIReviewer, CodeQualityScout]:
         emp = cls()
-        findings = await emp.analyze(data)
-        assert isinstance(findings, list), f"{cls.name} returned {type(findings)}"
+        with pytest.raises(EmployeeError):
+            await emp.analyze(data)
 
 
 # =========================================================================
